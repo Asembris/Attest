@@ -43,6 +43,27 @@ class Conflict:
         return f"{self.kind}: {self.detail}"
 
 
+def _cites_a_real_field(cited: str, known: set[str]) -> bool:
+    """Did the model cite a field the checker actually read?
+
+    Tolerant of transcription, strict about invention. Some checkers return a COMPOSITE
+    field path — `schemaMetadata.fields[email].globalTags + .glossaryTerms` names both
+    vocabularies in one string — and a model asked to cite its sources will reasonably
+    quote one half of it, or echo the "field:" label the prompt printed in front of it.
+    Neither is a fabrication, and treating them as one produced a conflict on every
+    correct classification explanation.
+
+    What this must never do is wave through a field the checker never looked at: an
+    explanation justified by `properties.description` when nothing read the description is
+    the model reaching for evidence it was not given, which is exactly the thing worth
+    catching.
+    """
+    cleaned = cited.strip().removeprefix("field:").strip()
+    if not cleaned:
+        return False
+    return any(cleaned == real or cleaned in real for real in known)
+
+
 def crosscheck(
     result: CheckResult,
     implied_verdict: str | None,
@@ -67,7 +88,7 @@ def crosscheck(
 
     known = {e.field for e in result.evidence}
     for field in cited_fields:
-        if field not in known:
+        if not _cites_a_real_field(field, known):
             conflicts.append(
                 Conflict(
                     kind="uncited-field",

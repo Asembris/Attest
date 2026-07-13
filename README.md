@@ -238,6 +238,25 @@ The verdict itself is never at risk, whatever the model does: verdicts come from
 never see agent text at all. A test asserts that the deterministic core imports no model
 client, so this cannot quietly stop being true.
 
+### Does the guard reject *truthful* explanations?
+
+It has to be asked, because a guard strict enough to reject everything is as useless as no
+guard at all: every answer would be the template and the semantic layer would be
+decorative. The offline suite cannot answer it — a fake model only lies when told to — so
+[`just live`](tests/test_live.py) runs the layer against a real `gpt-4o-mini`.
+
+The first live run rejected **2 of 9** truthful explanations, and every rejection was a bug
+in *Attest*, not a lie by the model: the explain prompt told the model to say the catalog
+was "SILENT" and the guard then rejected `SILENT` as an unevidenced capitalised token; the
+model expanded PII to "Personally Identifiable Information"; and it cited one half of a
+composite field path, which the cross-check called a fabrication. Fixed at the prompt and
+the cross-check — **not** by loosening the guard, which still passes every hallucination
+test. It now runs **9 of 9 model-authored, 0 fallbacks**, with all 4 claim types extracted
+from real agent prose and none dropped.
+
+The rule that fell out of it is worth keeping: when the guard rejects something truthful,
+**widen the evidence, never the guard**.
+
 **Prompt injection**, therefore, has nowhere to land. Attest ingests untrusted text by
 definition — the thing it audits is another agent's output — so
 [sanitize.py](src/attest/sanitize.py) strips instruction-like spans ("ignore previous
@@ -267,7 +286,8 @@ Everything runs through [`just`](https://github.com/casey/just):
 just setup     # install the package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path (Session 0 spike)
-just test      # the suite, against the live catalog
+just test      # the suite: live catalog, semantic layer offline. Free.
+just live      # the semantic layer against a REAL model. Costs money.
 just matrix    # just the 12-cell coverage assertion
 just lint
 just check     # lint + test
@@ -295,7 +315,8 @@ Metadata auth is disabled locally, so no token is needed.
 ```powershell
 just seed     # generate_seed.py, then `datahub ingest -c ./seed/recipe.yml`
 just probe    # proves READ / READ / WRITE / READ-BACK
-just test     # 113 tests: live catalog + the semantic layer, offline
+just test     # 113 tests: live catalog + the semantic layer (offline, free)
+just live     # 2 more, against a real gpt-4o-mini. Needs OPENAI_API_KEY.
 ```
 
 Expect `failures: []` and 90 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
