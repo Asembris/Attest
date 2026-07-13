@@ -79,6 +79,72 @@ def _field_scope(
     )
 
 
+def _decide_pii(
+    claim: ClassificationClaim,
+    where: str,
+    finding: policy.PiiFinding | None,
+    observed: tuple[str, ...],
+    complete: bool,
+    completeness_evidence: Evidence,
+) -> tuple[Verdict, str, list[Evidence]]:
+    """Decide a PII claim from the resolved signal.
+
+    Structurally identical to the four rules above — a signal firing plays the part
+    that an attached label plays for any other classification. `finding is None` is the
+    silent case, and it is the one that must not be mistaken for a denial: no signal
+    fired, so nobody has said this table is clean. Only a completeness marker can.
+    """
+    evidence: list[Evidence] = []
+
+    if finding is not None:
+        evidence.append(
+            Evidence(field=finding.field, value=finding.value, note=finding.note)
+        )
+        signal = f" ({finding.signal.description})" if finding.signal else ""
+
+        if finding.present:
+            verdict = Verdict.SUPPORTED if claim.present else Verdict.CONTRADICTED
+            phrasing = (
+                f"{where} carries PII{signal.rstrip('.')}."
+                if claim.present
+                else f"{where} carries PII{signal.rstrip('.')}, contradicting the claim "
+                f"that it is PII-free."
+            )
+            return verdict, f"{phrasing} {finding.note}", evidence
+
+        # An explicit NonPII tag: PII is positively denied at this grain.
+        verdict = Verdict.CONTRADICTED if claim.present else Verdict.SUPPORTED
+        phrasing = (
+            f"{where} is explicitly tagged NonPII, so the claim that it contains PII "
+            f"is contradicted."
+            if claim.present
+            else f"{where} is explicitly tagged NonPII, affirming the claim."
+        )
+        return verdict, f"{phrasing} {finding.note}", evidence
+
+    # --- no signal fired: the catalog is silent about PII at this grain -------
+    if complete:
+        evidence.append(completeness_evidence)
+        verdict = Verdict.CONTRADICTED if claim.present else Verdict.SUPPORTED
+        reason = (
+            f"No PII signal on {where}, and the table is marked "
+            f"classification-complete — so the omission is a reviewed finding, not an "
+            f"oversight."
+        )
+        return verdict, reason, evidence
+
+    evidence.append(completeness_evidence)
+    unclassified = "is unclassified" if not observed else "carries no PII signal"
+    return (
+        Verdict.INSUFFICIENT_COVERAGE,
+        f"{where} {unclassified}, and the table is not marked classification-complete. "
+        f"None of the recognized PII signals fired "
+        f"({', '.join(s.name for s in policy.PII_SIGNALS)}), but absence of a signal is "
+        f"not evidence of absence — nobody has reviewed it.",
+        evidence,
+    )
+
+
 def check_classification(
     claim: ClassificationClaim, snapshot: DatasetSnapshot
 ) -> CheckResult:
@@ -117,12 +183,35 @@ def check_classification(
         ),
     )
 
+    # PII is resolved by signal, not by exact URN match: three recognized signals, any
+    # one sufficient (policy.PII_SIGNALS). The grain passed in is what enforces
+    # precedence rule A — a column-scoped claim sees only the column's own labels, and
+    # never the table's properties, so a table-level signal cannot propagate down into
+    # a column that carries its own classification.
+    pii_finding = policy.resolve_pii(
+        labels=observed,
+        term_parents=snapshot.term_parents,
+        properties=(
+            {} if claim.field_path is not None else (snapshot.custom_properties or {})
+        ),
+    )
+
     verdicts: list[Verdict] = []
     reasons: list[str] = []
     evidence: list[Evidence] = [observed_evidence]
 
     for label in claim.labels:
         short = label.rsplit(":", 1)[-1]
+
+        if label == policy.PII_TAG:
+            verdict, reason, found = _decide_pii(
+                claim, where, pii_finding, observed, complete, completeness_evidence
+            )
+            verdicts.append(verdict)
+            reasons.append(reason)
+            evidence.extend(found)
+            continue
+
         attached = label in observed
         excluded_by = policy.contradicts(label, observed)
 

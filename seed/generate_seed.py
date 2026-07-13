@@ -73,6 +73,7 @@ from datahub.metadata.schema_classes import (
     CorpUserInfoClass,
     DatasetPropertiesClass,
     GlobalTagsClass,
+    GlossaryNodeInfoClass,
     GlossaryTermAssociationClass,
     GlossaryTermInfoClass,
     GlossaryTermsClass,
@@ -128,17 +129,58 @@ TAGS = {
     "Verified": "Reviewed by the data governance team.",
 }
 
-# term id -> (display name, definition)
+# --- the glossary hierarchy --------------------------------------------------
+# Terms live under nodes, and the PII node is what makes a term a PII *signal*
+# without anyone having to decide semantically that "EmailAddress sounds personal".
+# Membership of the node is a governance act someone performed in the catalog; Attest
+# reads the structure and infers nothing. This is the same move as policy.EXCLUSIONS:
+# the semantics are declared in the data, not guessed at by a model.
+#
+# CustomerIdentifier is deliberately NOT under the PII node, even though it is
+# customer-related and an agent will assume otherwise. A surrogate key is not personal
+# data, and a checker that treats "mentions customers" as "contains PII" flags every
+# table in the warehouse. That it sits outside the node is the edge case.
+
+PII_NODE = "PII"
+
+GLOSSARY_NODES = {
+    PII_NODE: (
+        "PII",
+        "Personally identifiable information. A term under this node marks data that "
+        "identifies a natural person.",
+    ),
+}
+
+
+def make_node_urn(node_id: str) -> str:
+    return f"urn:li:glossaryNode:{node_id}"
+
+
+# term id -> (display name, definition, parent node or None)
 TERMS = {
-    "EmailAddress": ("Email Address", "An address identifying a person's mailbox."),
-    "PhoneNumber": ("Phone Number", "A telephone number reaching a person."),
-    "PersonName": ("Person Name", "The given and/or family name of a natural person."),
-    "Revenue": ("Revenue", "Gross income from business activity before costs."),
+    "EmailAddress": (
+        "Email Address",
+        "An address identifying a person's mailbox.",
+        PII_NODE,
+    ),
+    "PhoneNumber": ("Phone Number", "A telephone number reaching a person.", PII_NODE),
+    "PersonName": (
+        "Person Name",
+        "The given and/or family name of a natural person.",
+        PII_NODE,
+    ),
+    "Revenue": ("Revenue", "Gross income from business activity before costs.", None),
     "CustomerIdentifier": (
         "Customer Identifier",
         "A surrogate key identifying a customer. Not itself personal data.",
+        None,
     ),
 }
+
+# The custom property an upstream classifier writes when it scans a table and finds
+# personal data. Seeded because real catalogs carry exactly this: a scanner's finding,
+# recorded as a property, with no tag and no glossary term behind it.
+HAS_PII_PROPERTY = "hasPII"
 
 USERS = {
     "alice.chen": ("Alice Chen", "alice.chen@example.com", "Data Engineer"),
@@ -172,6 +214,9 @@ class Dataset:
     owner: str | None
     tags: list[str] = field(default_factory=list)
     terms: list[str] = field(default_factory=list)
+    # Written as the `hasPII` custom property: an upstream classifier's finding.
+    # None means the property is absent — the scanner never ran, which is silence.
+    has_pii: bool | None = None
     stale: bool = False
     # Omit an aspect entirely, so the catalog is *silent* about it rather than
     # disagreeing. Insufficient-Coverage is only reachable when the aspect is
@@ -205,6 +250,7 @@ CATALOG: list[Dataset] = [
         owner="alice.chen",
         tags=["PII", "Tier1", "Verified"],
         terms=["EmailAddress", "PersonName", "CustomerIdentifier"],
+        has_pii=True,
         columns=[
             Column("customer_id", "string", "VARCHAR(36)", "Surrogate key.",
                    tags=["NonPII"], terms=["CustomerIdentifier"]),
@@ -251,6 +297,10 @@ CATALOG: list[Dataset] = [
         owner="bob.martinez",
         tags=["Tier1", "Verified"],
         terms=["Revenue", "CustomerIdentifier"],
+        # The scanner ran and found nothing. A negative finding is NOT a denial: this
+        # table's clean bill comes from the Verified tag (a human reviewed it), not from
+        # a scanner's miss. hasPII=false therefore fires no signal and licenses nothing.
+        has_pii=False,
         columns=[
             Column("order_id", "string", "VARCHAR(36)", "Order surrogate key.", tags=["NonPII"]),
             Column("customer_id", "string", "VARCHAR(36)", "FK to customer_profile.",
@@ -271,7 +321,14 @@ CATALOG: list[Dataset] = [
         ),
         owner="carol.davis",
         tags=["NonPII", "Tier2", "Verified"],
-        terms=["CustomerIdentifier"],
+        # The table carries EmailAddress (a term UNDER the PII node) while its email
+        # column is tagged NonPII. That is a real conflict, not an authoring mistake,
+        # and it is here on purpose: the table is *about* email, and the one column
+        # that held an address was de-identified. Production catalogs look like this
+        # constantly. Attest resolves it by precedence — see the module docstring of
+        # attest/checkers/policy.py — and the resolution is that the column-level
+        # NonPII tag wins over the table-level term.
+        terms=["CustomerIdentifier", "EmailAddress"],
         columns=[
             Column("campaign_id", "string", "VARCHAR(36)", "Campaign key.", tags=["NonPII"]),
             Column(
@@ -289,7 +346,10 @@ CATALOG: list[Dataset] = [
         note=(
             "The trap: `recipient_email_hash` looks like PII by name and is explicitly "
             "tagged NonPII. A claim that it contains PII must be Contradicted, not "
-            "Insufficient-Coverage."
+            "Insufficient-Coverage. Also the precedence case: the table carries the "
+            "EmailAddress term (under the PII node) and an explicit NonPII tag. A "
+            "column-scoped claim is decided by the column's own tag; the table's term "
+            "does not propagate down into it."
         ),
     ),
     Dataset(
@@ -339,6 +399,7 @@ CATALOG: list[Dataset] = [
         owner="dana.wu",
         tags=["PII", "Tier1"],
         terms=["EmailAddress", "PersonName"],
+        has_pii=True,
         columns=[
             Column("user_id", "string", "uuid", "Primary key.", tags=["NonPII"]),
             Column("email", "string", "varchar(255)", "Login email. Unique.",
@@ -448,6 +509,66 @@ CATALOG: list[Dataset] = [
             "and a checker that reads only one would pass every other test in the suite."
         ),
     ),
+    Dataset(
+        platform="postgres",
+        name="attest_db.public.marketing_leads",
+        description=(
+            "Inbound leads from the website. Classified with the glossary only — the "
+            "marketing domain adopted terms and never applied tags."
+        ),
+        owner="carol.davis",
+        # PII asserted ONLY by glossary terms under the PII node. No PII tag anywhere,
+        # at table or column grain. This is hr_headcount's mirror image, and it exists
+        # for the same reason: a checker that reads tags and forgets terms returns a
+        # confident "PII-free: Supported" here while EmailAddress and PersonName sit on
+        # the table. Between the two datasets, neither half of the union can be dropped
+        # without a test going red.
+        tags=["Tier2"],
+        terms=["EmailAddress", "PersonName"],
+        columns=[
+            Column("lead_id", "string", "uuid", "Primary key.", tags=["NonPII"]),
+            Column("work_email", "string", "varchar(255)", "Lead's work address.",
+                   terms=["EmailAddress"]),
+            Column("contact_name", "string", "varchar(200)", "Lead's full name.",
+                   terms=["PersonName"]),
+            Column("source_campaign", "string", "varchar(64)", "Attribution campaign."),
+        ],
+        exercises="Contradicted",
+        note=(
+            "PII signalled by glossary term alone — zero PII tags. A 'PII-free' claim "
+            "must be Contradicted on the strength of the terms' membership of the PII "
+            "node. Guards the term half of PII_SIGNALS."
+        ),
+    ),
+    Dataset(
+        platform="snowflake",
+        name="analytics.product.device_telemetry",
+        description=(
+            "Per-device app telemetry. Never manually classified; an automated scanner "
+            "found personal data in it and recorded the finding as a property."
+        ),
+        owner="dana.wu",
+        # PII asserted ONLY by the hasPII custom property — no tag, no term. This is how
+        # an upstream classifier reports a finding when nobody has done the governance
+        # work of tagging afterwards, and it is the third independent way a real catalog
+        # says "there is PII here". A checker reading only tags and terms calls this
+        # table clean.
+        tags=["Tier2"],
+        terms=[],
+        has_pii=True,
+        columns=[
+            Column("device_id", "string", "VARCHAR(64)", "Device installation key."),
+            Column("ip_address", "string", "VARCHAR(45)", "Last seen IP address."),
+            Column("app_version", "string", "VARCHAR(16)", "Client build."),
+            Column("seen_at", "time", "TIMESTAMP_NTZ", "Last heartbeat."),
+        ],
+        exercises="Contradicted",
+        note=(
+            "PII signalled by the hasPII custom property alone — no tag, no term. A "
+            "'PII-free' claim must be Contradicted. Guards the property half of "
+            "PII_SIGNALS."
+        ),
+    ),
     # --- aspect-silent stubs -------------------------------------------------
     # Insufficient-Coverage is only reachable when the relevant aspect is ABSENT.
     # Ownership and classification already have silent datasets above (raw_events,
@@ -519,7 +640,15 @@ def vocabulary_mcps() -> list[MetadataChangeProposalWrapper]:
             )
         )
 
-    for term_id, (name, definition) in TERMS.items():
+    for node_id, (name, definition) in GLOSSARY_NODES.items():
+        mcps.append(
+            MetadataChangeProposalWrapper(
+                entityUrn=make_node_urn(node_id),
+                aspect=GlossaryNodeInfoClass(name=name, definition=definition),
+            )
+        )
+
+    for term_id, (name, definition, parent) in TERMS.items():
         mcps.append(
             MetadataChangeProposalWrapper(
                 entityUrn=make_term_urn(term_id),
@@ -527,6 +656,10 @@ def vocabulary_mcps() -> list[MetadataChangeProposalWrapper]:
                     name=name,
                     definition=definition,
                     termSource="INTERNAL",
+                    # Membership of the PII node is what makes this term a PII signal.
+                    # Declared here, in the catalog, so Attest reads it rather than
+                    # inferring that "EmailAddress" sounds personal.
+                    parentNode=make_node_urn(parent) if parent else None,
                 ),
             )
         )
@@ -586,6 +719,13 @@ def dataset_mcps(ds: Dataset) -> list[MetadataChangeProposalWrapper]:
                 customProperties={
                     "seeded_by": "attest/seed/generate_seed.py",
                     "exercises_verdict": ds.exercises,
+                    # Absent unless a classifier scanned this table. Absence is silence,
+                    # not a clean bill — see PII_SIGNALS in attest/checkers/policy.py.
+                    **(
+                        {HAS_PII_PROPERTY: "true" if ds.has_pii else "false"}
+                        if ds.has_pii is not None
+                        else {}
+                    ),
                 },
             ),
         )
@@ -685,6 +825,13 @@ def ground_truth() -> dict:
         "fresh_timestamp": FRESH.isoformat(),
         "stale_timestamp": STALE.isoformat(),
         "verdict_property_urn": VERDICT_PROPERTY_URN,
+        # The three independent ways this catalog says "there is PII here". Recorded so
+        # the benchmark can assert that each one is load-bearing on its own.
+        "pii_node_urn": make_node_urn(PII_NODE),
+        "pii_node_terms": sorted(
+            make_term_urn(t) for t, (_, _, parent) in TERMS.items() if parent == PII_NODE
+        ),
+        "has_pii_property": HAS_PII_PROPERTY,
         "datasets": [
             {
                 "urn": ds.urn,
@@ -694,6 +841,7 @@ def ground_truth() -> dict:
                 "owner": ds.owner,
                 "tags": ds.tags,
                 "terms": ds.terms,
+                "has_pii": ds.has_pii,
                 "last_modified": ds.last_modified.isoformat() if ds.last_modified else None,
                 "is_stale": ds.stale,
                 "has_schema": not ds.no_schema,
@@ -764,7 +912,12 @@ def main() -> None:
 
     print(f"wrote {len(mcps)} MCPs -> {metadata_path}")
     print(f"  datasets:  {len(CATALOG)} across 2 platforms")
-    print(f"  vocabulary: {len(TAGS)} tags, {len(TERMS)} glossary terms, {len(USERS)} users")
+    pii_terms = sum(1 for _, _, parent in TERMS.values() if parent == PII_NODE)
+    print(
+        f"  vocabulary: {len(TAGS)} tags, {len(TERMS)} glossary terms "
+        f"({pii_terms} under the {PII_NODE} node), {len(GLOSSARY_NODES)} node(s), "
+        f"{len(USERS)} users"
+    )
     print(f"  exercises:  {by_verdict}")
     print("wrote seed/recipe.yml and seed/ground_truth.json")
     print("\nnext: datahub ingest -c ./seed/recipe.yml")
