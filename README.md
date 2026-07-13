@@ -254,8 +254,21 @@ the cross-check — **not** by loosening the guard, which still passes every hal
 test. It now runs **9 of 9 model-authored, 0 fallbacks**, with all 4 claim types extracted
 from real agent prose and none dropped.
 
-The rule that fell out of it is worth keeping: when the guard rejects something truthful,
-**widen the evidence, never the guard**.
+The rule that fell out of it is the governing principle of this layer:
+
+> **When the guard rejects something truthful, widen the evidence — never the guard.**
+
+If an explanation needs a word, a checker must put that word in the evidence. Loosening
+the guard to make a test go green is the one change that would quietly destroy the
+product's reason to exist, and it is exactly the change a build under time pressure
+reaches for.
+
+The two halves of the suite are blind to each other's failure mode, which is why
+[CLAUDE.md](CLAUDE.md) makes running both a rule rather than a habit: a guard that rejects
+*everything* passes the offline suite perfectly — every hallucination caught — while every
+explanation silently degrades to a template. `just check` proves the guard still catches
+lies; `just live` proves it still lets the truth through. `just preflight` runs both, and
+is required before any push that touches a prompt.
 
 **Prompt injection**, therefore, has nowhere to land. Attest ingests untrusted text by
 definition — the thing it audits is another agent's output — so

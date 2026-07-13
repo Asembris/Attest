@@ -160,3 +160,40 @@ def test_injected_instructions_never_reach_the_model():
     assert REDACTED in sent
     assert "<agent_output>" in sent
     assert result.is_suspicious
+
+
+def test_a_tls_failure_is_repaired_once_and_is_not_treated_as_a_bad_prompt():
+    """A missing root CA is not a model failure, and must not be "fixed" by re-prompting.
+
+    Behind a TLS-inspecting network certifi lacks the proxy's root CA and the SDK reports
+    CERTIFICATE_VERIFY_FAILED as a generic connection error. The repair is to retry the
+    SAME call against the OS certificate store — not to rewrite the prompt, which is what
+    the malformed-output path would have done with it.
+    """
+    import ssl
+
+    from attest.llm import _is_tls_failure
+
+    tls = ConnectionError("Connection error.")
+    tls.__cause__ = ssl.SSLCertVerificationError("CERTIFICATE_VERIFY_FAILED")
+    assert _is_tls_failure(tls)
+
+    # A real outage must NOT be mistaken for one, or we would silently swap the trust
+    # store on every blip and never learn why the network was down.
+    assert not _is_tls_failure(ConnectionError("Connection error."))
+    assert not _is_tls_failure(TimeoutError("timed out"))
+
+
+def test_certifi_is_tried_first_and_the_os_store_is_only_a_repair():
+    """Injecting the OS store up front would break the normal case to fix the odd one.
+
+    A slim container with no ca-certificates package has an empty OS trust store, where
+    certifi is the thing that works. So nothing is injected until a call has actually
+    failed TLS verification.
+    """
+    chat = FakeChat(replies=[reply({"claims": []})])
+    llm = LLM(client=chat)
+
+    decompose(AGENT_OUTPUT, llm=llm)
+
+    assert llm._truststore_injected is False, "the OS store must not be touched preemptively"

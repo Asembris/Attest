@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     datahub_gms_url: str = Field(default="http://localhost:8080", alias="DATAHUB_GMS_URL")
     datahub_token: str = Field(default="", alias="DATAHUB_TOKEN")
 
+    # Repair a TLS failure by falling back to the OS certificate store (see llm.py).
+    # Only ever attempted AFTER certifi's bundle has actually failed, so it costs a
+    # normal network nothing. Set false to keep certifi as the only trust source.
+    ssl_os_truststore: bool = Field(default=True, alias="ATTEST_SSL_TRUSTSTORE")
+
     model_default: str = Field(default="gpt-4o-mini", alias="ATTEST_MODEL_DEFAULT")
     model_claim_extraction: str | None = Field(
         default=None, alias="ATTEST_MODEL_CLAIM_EXTRACTION"

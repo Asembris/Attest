@@ -24,10 +24,22 @@ rejects nothing.
 from __future__ import annotations
 
 import pytest
-from tests.conftest import ALICE, COLUMN_ONLY_PII, DOCUMENTED, OWNED_BY_CAROL, STALE, UNREVIEWED
+from tests.conftest import (
+    ALICE,
+    COLUMN_ONLY_PII,
+    DANA,
+    DOCUMENTED,
+    NO_SCHEMA,
+    NO_TIMESTAMP,
+    OWNED_BY_CAROL,
+    STALE,
+    TAG_ONLY_PII,
+    UNREVIEWED,
+)
 
 from attest.checkers import check
 from attest.claims import (
+    Claim,
     ClassificationClaim,
     ColumnAssertion,
     FreshnessClaim,
@@ -49,43 +61,57 @@ pytestmark = [
 PII = "urn:li:tag:PII"
 
 
-def _claims():
-    """One claim per type, spanning all three verdicts."""
+def _claims() -> list[tuple[Claim, Verdict]]:
+    """The whole 12-cell matrix — four claim types x three verdicts — with a real model.
+
+    Every cell, because the interesting failures are lopsided: an Insufficient-Coverage
+    explanation is by far the hardest one to phrase without introducing a fact (there is
+    nothing in the evidence to talk about), and it was the cell that broke first.
+    """
     return [
-        FreshnessClaim(
-            target_urn=STALE, raw_text="revenue_daily is refreshed daily.", max_age_hours=24
-        ),
-        OwnershipClaim(
-            target_urn=OWNED_BY_CAROL,
-            raw_text="support_tickets is owned by dana.wu.",
-            owner_urn="urn:li:corpuser:dana.wu",
-        ),
-        OwnershipClaim(
-            target_urn=UNREVIEWED,
-            raw_text="raw_events is owned by alice.chen.",
-            owner_urn=ALICE,
-        ),
-        ClassificationClaim(
-            target_urn=COLUMN_ONLY_PII,
-            raw_text="audit_log is PII-free.",
-            labels=(PII,),
-            present=False,
-        ),
-        SchemaClaim(
-            target_urn=DOCUMENTED,
-            raw_text="customer_profile has an ssn column.",
-            columns=(ColumnAssertion(name="ssn"),),
-        ),
+        # --- freshness
+        (FreshnessClaim(target_urn=DOCUMENTED, raw_text="customer_profile is refreshed daily.",
+                        max_age_hours=24), Verdict.SUPPORTED),
+        (FreshnessClaim(target_urn=STALE, raw_text="revenue_daily is refreshed daily.",
+                        max_age_hours=24), Verdict.CONTRADICTED),
+        (FreshnessClaim(target_urn=NO_TIMESTAMP, raw_text="pipeline_scratch ran in the last day.",
+                        max_age_hours=24), Verdict.INSUFFICIENT_COVERAGE),
+        # --- ownership
+        (OwnershipClaim(target_urn=DOCUMENTED, raw_text="customer_profile is owned by alice.chen.",
+                        owner_urn=ALICE), Verdict.SUPPORTED),
+        (OwnershipClaim(target_urn=OWNED_BY_CAROL, raw_text="support_tickets is owned by dana.wu.",
+                        owner_urn=DANA), Verdict.CONTRADICTED),
+        (OwnershipClaim(target_urn=UNREVIEWED, raw_text="raw_events is owned by alice.chen.",
+                        owner_urn=ALICE), Verdict.INSUFFICIENT_COVERAGE),
+        # --- classification
+        (ClassificationClaim(target_urn=DOCUMENTED, raw_text="customer_profile contains PII.",
+                             labels=(PII,), present=True), Verdict.SUPPORTED),
+        (ClassificationClaim(target_urn=TAG_ONLY_PII, raw_text="hr_headcount contains no PII.",
+                             labels=(PII,), present=False), Verdict.CONTRADICTED),
+        (ClassificationClaim(target_urn=COLUMN_ONLY_PII, raw_text="audit_log is PII-free.",
+                             labels=(PII,), present=False), Verdict.CONTRADICTED),
+        (ClassificationClaim(target_urn=UNREVIEWED, raw_text="raw_events contains PII.",
+                             labels=(PII,), present=True), Verdict.INSUFFICIENT_COVERAGE),
+        # --- schema
+        (SchemaClaim(target_urn=DOCUMENTED,
+                     raw_text="customer_profile has an email column of type VARCHAR(255).",
+                     columns=(ColumnAssertion(name="email", native_type="VARCHAR(255)"),)),
+         Verdict.SUPPORTED),
+        (SchemaClaim(target_urn=DOCUMENTED, raw_text="customer_profile has an ssn column.",
+                     columns=(ColumnAssertion(name="ssn"),)), Verdict.CONTRADICTED),
+        (SchemaClaim(target_urn=NO_SCHEMA, raw_text="external_report has a revenue_amount column.",
+                     columns=(ColumnAssertion(name="revenue_amount"),)),
+         Verdict.INSUFFICIENT_COVERAGE),
     ]
 
 
 def test_explanations_are_faithful_and_the_verdict_is_never_moved(snapshot, now):
     """The invariant, live: nothing unfaithful ships, and the model changes no verdict."""
     llm = LLM()
-    authored = 0
-    claims = _claims()
+    cases = _claims()
+    fell_back: list[str] = []
 
-    for claim in claims:
+    for claim, expected in cases:
         result = check(claim, snapshot(claim.target_urn), now=now)
         written = explain(result, llm=llm)
 
@@ -97,16 +123,25 @@ def test_explanations_are_faithful_and_the_verdict_is_never_moved(snapshot, now)
         assert check_faithfulness(written.text, result).ok
 
         # The deterministic verdict is untouched by anything the model said.
-        assert result.verdict is check(claim, snapshot(claim.target_urn), now=now).verdict
-        assert result.verdict in Verdict
+        assert result.verdict is expected, f"the checker moved on {claim.raw_text}"
 
-        authored += written.source == "model"
+        if written.is_fallback:
+            fell_back.append(f"{claim.raw_text} -> {'; '.join(written.rejected)}")
 
-    # A guard that rejects every truthful explanation would be as useless as one that
-    # rejects none: the layer would be decorative and every answer would be the template.
-    assert authored >= len(claims) // 2, (
-        f"only {authored}/{len(claims)} explanations survived the guard — it is likely "
-        f"rejecting truthful prose. Widen the EVIDENCE, not the guard."
+    # THE FLOOR, and it is deliberately high: at most ONE of the twelve may fall back.
+    #
+    # A permissive floor is worse than none. The first version of this assertion read
+    # `authored >= len(claims) // 2` — a 40% floor — which would have gone green while
+    # most explanations silently degraded to templates. The layer would have been
+    # decorative and the test would have said everything was fine.
+    #
+    # This is a floor, not an equality: a single fallback is tolerable (a model has a bad
+    # day; the template is still true). Two is a regression, and the fix is to find what
+    # the guard rejected and WIDEN THE EVIDENCE — never the guard.
+    assert len(fell_back) <= 1, (
+        f"{len(fell_back)}/{len(cases)} explanations fell back to the template. The guard "
+        f"is rejecting truthful prose. Widen the EVIDENCE, not the guard:\n"
+        + "\n".join(fell_back)
     )
 
 
