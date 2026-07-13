@@ -159,10 +159,38 @@ just setup     # install package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
-just test      # the suite, against the live catalog
+just test      # the suite: live catalog, semantic layer offline. Free.
 just matrix    # just the 12-cell coverage assertion
-just check     # lint + test
+just check     # lint + test — what CI runs
+just live      # the semantic layer against a REAL model. Costs money.
+just preflight # lint + test + live — required before pushing semantic-layer changes
 ```
+
+## Verification cadence — a rule, not a habit
+
+**Run `just preflight` (lint + test + live) before any push that touches the semantic
+layer.** That means any change to `llm.py`, `decompose.py`, `explain.py`,
+`faithfulness.py`, `crosscheck.py`, `sanitize.py`, **or any prompt string in them**.
+`just check` is not enough for those files, and this is not a nicety:
+
+- **`just check` (offline, free) proves the guard still catches hallucinations.** It runs
+  against a scripted fake that lies on demand — `Sarah Jennings`, an invented `ssn` column,
+  a derived `417 days`, `PII` matched inside `NonPII`.
+- **`just live` (real `gpt-4o-mini`, costs a fraction of a cent) proves the guard still
+  lets the truth through.** It runs all 12 matrix cells and fails if more than one
+  explanation falls back to the template.
+
+**Each half is blind to the other's failure mode.** A guard that rejects *everything*
+passes `just check` with flying colours — every hallucination is caught — while the
+semantic layer silently degrades to templates and nobody notices until a demo. That is
+not hypothetical: the first live run rejected 2 of 9 *truthful* explanations, and the
+offline suite was green throughout.
+
+**When `just live` fails, widen the EVIDENCE, not the guard.** Every live failure so far
+has been a bug in Attest's prompts or cross-check, never a lie by the model. If an
+explanation needs a word, a checker must put that word in the evidence. Loosening the
+guard to make a test pass is the one change that would quietly destroy the product's
+reason to exist.
 
 ## Known deferred items — document, don't fix
 

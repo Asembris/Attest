@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -39,6 +40,25 @@ class LLMError(RuntimeError):
 
 class MalformedOutput(LLMError):
     """The model returned something that is not valid JSON for the schema it was given."""
+
+
+def _is_tls_failure(exc: Exception) -> bool:
+    """Is this a certificate-verification failure wearing a connection error's clothes?
+
+    The OpenAI SDK wraps every transport problem as APIConnectionError, so a genuine
+    outage and a missing root CA arrive looking identical. The distinguishing detail is
+    only in the cause chain, which is why this walks it rather than matching on the type.
+    """
+    seen: Exception | BaseException | None = exc
+    for _ in range(6):  # the SDK nests httpx -> httpcore -> ssl; six is generous
+        if seen is None:
+            return False
+        if isinstance(seen, ssl.SSLCertVerificationError):
+            return True
+        if "CERTIFICATE_VERIFY_FAILED" in str(seen):
+            return True
+        seen = seen.__cause__ or seen.__context__
+    return False
 
 
 class ChatClient(Protocol):
@@ -71,6 +91,7 @@ class LLM:
     client: ChatClient | None = None
     max_attempts: int = 2
     usage: list[Usage] = field(default_factory=list)
+    _truststore_injected: bool = False
 
     def _chat(self) -> ChatClient:
         if self.client is not None:
@@ -85,20 +106,40 @@ class LLM:
                 "the semantic layer does. Copy .env.example to .env and fill it in."
             )
 
-        # Trust the OS certificate store, not just certifi's bundle. Behind a
-        # TLS-inspecting corporate network the proxy presents a certificate signed by a
-        # root CA that certifi has never heard of, and every OpenAI call dies with
-        # CERTIFICATE_VERIFY_FAILED — which the SDK surfaces as a generic
-        # APIConnectionError and reads like an outage or a bad key. It is neither. The
-        # same landmine takes out `datahub docker quickstart`; see docs/datahub-setup.md.
+        return OpenAI(api_key=settings.openai_api_key).chat.completions  # type: ignore[return-value]
+
+    def _use_os_truststore(self) -> bool:
+        """Fall back to the OS certificate store after a TLS failure. Once, then never.
+
+        Deliberately NOT done up front. Behind a TLS-inspecting network the proxy presents
+        a certificate signed by a root CA that certifi has never heard of, and every call
+        dies with CERTIFICATE_VERIFY_FAILED — which the SDK reports as a generic
+        `APIConnectionError: Connection error`, reading like an outage or a bad key. The OS
+        store has that CA, so switching to it fixes the call.
+
+        But injecting it unconditionally would be a bad trade: on a machine whose OS trust
+        store is empty or minimal — a slim container with no `ca-certificates` package —
+        certifi is the thing that works, and pre-emptively replacing it would break the
+        normal case to fix the unusual one. So certifi goes first, the OS store is a repair
+        attempted only once TLS has actually failed, and if it is unavailable we say so and
+        re-raise the original error rather than swallowing it.
+        """
+        if self._truststore_injected or not settings.ssl_os_truststore:
+            return False
         try:
             import truststore
 
             truststore.inject_into_ssl()
-        except ImportError:  # pragma: no cover — truststore is a declared dependency
-            log.debug("truststore not installed; falling back to certifi's CA bundle")
+        except Exception as exc:  # pragma: no cover — needs a machine without truststore
+            log.warning("could not use the OS certificate store: %s", exc)
+            return False
 
-        return OpenAI(api_key=settings.openai_api_key).chat.completions  # type: ignore[return-value]
+        self._truststore_injected = True
+        log.warning(
+            "TLS verification failed against certifi's CA bundle — retrying with the OS "
+            "certificate store. This is what a TLS-inspecting network looks like."
+        )
+        return True
 
     def json(
         self,
@@ -130,12 +171,25 @@ class LLM:
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                response = self._chat().create(
-                    model=model,
-                    messages=messages,
-                    response_format=response_format,
-                    temperature=0,
-                )
+                try:
+                    response = self._chat().create(
+                        model=model,
+                        messages=messages,
+                        response_format=response_format,
+                        temperature=0,
+                    )
+                except Exception as exc:
+                    # A TLS failure is not a model failure, and it must not be repaired by
+                    # rewriting the prompt. Retry the same call once against the OS
+                    # certificate store; if that is not available, the original error stands.
+                    if not _is_tls_failure(exc) or not self._use_os_truststore():
+                        raise
+                    response = self._chat().create(
+                        model=model,
+                        messages=messages,
+                        response_format=response_format,
+                        temperature=0,
+                    )
                 content = response.choices[0].message.content or ""
                 parsed = json.loads(content)
                 if not isinstance(parsed, dict):

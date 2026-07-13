@@ -51,5 +51,10 @@ lint:
 # it on would bury every real diff under a whole-tree reformat. Run it deliberately or
 # not at all.
 
-# Everything CI would run.
+# Everything CI would run. Free, offline, no API key needed.
 check: lint test
+
+# What to run before pushing a change to the semantic layer. `check` proves the guard
+# still catches hallucinations; `live` proves it still lets the truth through. Neither
+# half is sufficient on its own -- see the cadence rule in CLAUDE.md.
+preflight: lint test live
