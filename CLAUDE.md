@@ -54,18 +54,31 @@ and all 12 must stay live-reachable against the seeded catalog.
 them a third of the checkers' logic would be dead code against real data and every test would
 still pass.
 
-**6. PII signals are an explicit named set, not a magic string.** The signals are: the `PII`
-global tag, the `hasPII` property, and glossary terms under the PII node. CLASSIFICATION reads
-**`globalTags` ∪ `glossaryTerms`** — a signal in *either* contradicts a "PII-free" claim. A
-term-only checker would certify `hr_headcount` (tagged PII, zero glossary terms) as clean,
-which is the worst verdict this product can produce.
+**6. PII signals are an explicit named set, not a magic string.** `PII_SIGNALS` in
+[policy.py](src/attest/checkers/policy.py) names three, and **any one is sufficient** to
+contradict a "PII-free" claim: the `PII` global tag (explicit), a glossary term filed under
+the `PII` glossary node (implied), and a truthy `hasPII` custom property (implied). Each has a
+witness dataset where it is the *only* signal — `hr_headcount` (tag), `marketing_leads` (term),
+`device_telemetry` (property) — so none can be dropped without a test going red. `hasPII=false`
+fires nothing in either direction: a scanner's miss is not a review.
+
+Nothing is inferred from a name. `EmailAddress` is a PII signal because it is filed under the
+PII node in the catalog's hierarchy; `CustomerIdentifier` is deliberately outside it.
+
+**When signals disagree, precedence resolves it.** (A) Column over table — a table-level signal
+never propagates into a column with its own classification, and a table tagged PII does not make
+its `signup_ts` column PII. (B) Within a grain, an explicit tag beats an implied signal — a
+human's classification act outranks a term's subject matter or a scanner's guess. The losing
+signal is still returned as evidence, so an explanation can say why the conflict resolved as it
+did. Worked example: `email_campaign_stats` is filed under `EmailAddress` while its
+`recipient_email_hash` column is tagged `NonPII`; the column's tag wins.
 
 Related, and easy to get wrong: **"PII-free" is not the mirror of "contains PII."** An untagged
 table cannot *support* a PII-free claim — nobody has looked. That is Insufficient-Coverage.
 Closed-world reasoning is never assumed by Attest; it is *granted by the catalog* per entity,
-via a `Verified` completeness marker someone deliberately applied. See
-[src/attest/checkers/policy.py](src/attest/checkers/policy.py), where all such governance
-semantics live as reviewable data rather than as an `if` buried in a checker.
+via a `Verified` completeness marker someone deliberately applied. All such governance semantics
+live in [policy.py](src/attest/checkers/policy.py) as reviewable data rather than as an `if`
+buried in a checker.
 
 ## Environment constraints — hard-won, do not rediscover
 
@@ -123,7 +136,7 @@ just check     # lint + test
 
 | Item | Today | Why deferred |
 | --- | --- | --- |
-| **Semantic glossary-term matching** | Label URNs compared by exact identity; `EmailAddress` does not imply `PII`. | Term-entails-classification is semantic entailment — the LLM layer's job, and it must be evidence-constrained. |
+| **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. |
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Entity-not-found propagation** | `fetch_dataset()` raises `EntityNotFoundError`; nothing above it catches that yet. | Correct at this layer — a missing entity is an error, not a verdict. How the pipeline surfaces it is a later decision. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |

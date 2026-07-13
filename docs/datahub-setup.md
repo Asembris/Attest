@@ -30,6 +30,8 @@ aspect Attest needs, verified directly against the running server:
 | `ownership` | ownership claims |
 | `globalTags` | classification claims |
 | `glossaryTerms` | classification claims |
+| `glossaryNode` + a term's `parentNodes` | the PII node — makes a term a PII *signal* |
+| `datasetProperties.customProperties` | the `hasPII` signal an upstream classifier writes |
 | `datasetProperties.lastModified` | freshness claims |
 | `structuredProperties` | writing Attest's verdicts back |
 
@@ -39,7 +41,7 @@ it, a verdict regression becomes indistinguishable from a server change. A tagge
 is the only base where "the catalog says X" means the same thing next month.
 
 The seed catalog ingests against v1.5.0.6 with **0 failures and 0 warnings**
-(76 records), and `spikes/datahub_probe.py` proves the full read/write round-trip.
+(86 records), and `spikes/datahub_probe.py` proves the full read/write round-trip.
 
 ## The `dataQualityCheck` incompatibility
 
@@ -77,7 +79,7 @@ what's true. See the emitter's docstring for the verdict-bucket design.
 datahub docker nuke                  # destroys containers AND volumes — catalog is gone
 datahub docker quickstart            # see landmines before trusting this
 python seed\generate_seed.py
-datahub ingest -c ./seed/recipe.yml  # expect failures: [], 76 records
+datahub ingest -c ./seed/recipe.yml  # expect failures: [], 86 records
 python spikes\datahub_probe.py       # expect ALL FOUR OPERATIONS PASSED
 ```
 
@@ -121,6 +123,12 @@ the way it does.
   the index is busy. Don't read a `total: 0` from search as a failed write: check the entity
   directly first. `spikes/datahub_probe.py` polls for up to 60s and reports the round-trip
   and the searchability separately, because they are separate claims.
+
+- **`datahub ingest` prints a wall of `CERTIFICATE_VERIFY_FAILED` after it succeeds.**
+  These are harmless: the ingest already worked. They come *after* `Pipeline finished
+  successfully` and are the CLI's usage telemetry failing to POST to `/mp/track` behind a
+  TLS-inspecting network — nothing to do with your data. The line that matters is
+  `'failures': []` in the summary above them. (`datahub telemetry disable` silences it.)
 
 - **DataHub rejects multi-`__type` introspection queries** as `BadFaithIntrospection`.
   Introspect one type per request.

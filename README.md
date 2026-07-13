@@ -18,7 +18,7 @@ doesn't say" is worse than no auditor.
 ## Status
 
 **Session 1 complete: the deterministic core.** Claim schema, DataHub client, and
-four checkers — freshness, ownership, classification, schema — with 58 tests against
+four checkers — freshness, ownership, classification, schema — with 72 tests against
 the live seeded catalog. There is no LLM anywhere in this layer, by design: the
 deterministic half is what has to be bulletproof, so it was built and tested in
 isolation before any model touches it.
@@ -98,21 +98,68 @@ table cannot *support* a PII-free claim — nobody has looked. A naive checker r
 Supported there and certifies an unreviewed table as clean, which is a groundedness
 auditor manufacturing false assurance. It is Insufficient-Coverage.
 
-### Classification is a union of tags and terms
+## How Attest decides what is PII
 
-DataHub carries two independent classification vocabularies — `globalTags` and
-`glossaryTerms` — and Attest treats **both as evidence, at table and column grain**. A
-PII signal in *either* is sufficient to contradict a "PII-free" claim.
+By a **named list**, not a string match. The list is
+[`PII_SIGNALS`](src/attest/checkers/policy.py), and **any one of the three is sufficient**
+to contradict a "PII-free" claim:
 
-This is not a detail. Real catalogs mark PII with tags routinely: tags are cheap and get
-applied, glossaries are a governance project most orgs never finish. A checker that read
-terms and forgot tags would return a confident *Supported* on "this table is PII-free"
-while a PII tag sat on the entity untouched — the worst verdict this product can
-produce. `hr_headcount` exists purely to make that unshippable: it is tagged PII and
-carries **no glossary term at all**, so a term-only checker certifies it as clean. Three
-tests in [test_classification.py](tests/test_classification.py) pin it, and the
-[snapshot](src/attest/datahub/snapshot.py) union was mutation-tested — breaking it fails
-9 tests.
+| Signal | What it is | Kind |
+| --- | --- | --- |
+| `urn:li:tag:PII` | The global tag. | explicit |
+| A glossary term under the **`PII` node** | `EmailAddress`, `PhoneNumber`, `PersonName`. | implied |
+| `hasPII` custom property, truthy | An upstream classifier's finding. | implied |
+
+Real catalogs mark PII in more than one place, and a checker that knows about one of them
+**certifies the others clean** — the worst verdict this product can return. So each signal
+has a dataset in the seed where it is the *only* signal present, and the test asserts both
+that the verdict is right and that the other two signals are genuinely absent:
+`hr_headcount` is tagged PII with **zero** glossary terms (a term-only checker calls it
+clean), `marketing_leads` carries PII-node terms with **zero** PII tags (a tag-only checker
+calls it clean), and `device_telemetry` has only `hasPII=true` (both call it clean). None of
+the three can be dropped without a test going red.
+
+Nothing here is inferred. `EmailAddress` is a PII signal because someone **filed it under
+the PII node** in the catalog's own hierarchy — not because the string reads as personal.
+`CustomerIdentifier` is deliberately *outside* that node: a surrogate key is not personal
+data, and a checker that reads "customer" as "PII" flags every table in the warehouse.
+
+`hasPII=false` fires **nothing** — in either direction. A scanner that looked and found
+nothing is not a review, and absence of evidence is not evidence of absence. A clean bill
+requires a `Verified` completeness marker, which is a human's act.
+
+### When signals disagree: precedence
+
+They *will* disagree, and the disagreement is usually meaningful rather than a mistake.
+
+**Rule A — column over table.** A table-level signal never propagates down into a column
+that carries its own classification.
+
+**Rule B — within one grain, an explicit tag beats an implied signal.** A tag is a
+classification act performed on that entity; a term is a coarser statement of subject
+matter and a property is a machine's guess. When a human's review and a machine's
+classification disagree, the review wins.
+
+The worked example is `email_campaign_stats`, and it is in the seed on purpose:
+
+- The **table** is filed under the `EmailAddress` term. The table genuinely *is* about
+  email.
+- The **column** `recipient_email_hash` is explicitly tagged `NonPII` — the one column that
+  held an address was hashed and de-identified.
+
+This is what a de-identified column in a subject-matter-tagged table looks like in
+production, and it happens constantly. By Rule A, a claim about the column is answered by
+the column's own tag: **`recipient_email_hash` is not PII, and "this column is PII-free"
+is Supported.** By Rule B, the table's `NonPII` tag outranks its own `EmailAddress` term,
+so "this table contains PII" is Contradicted.
+
+Precedence resolves the conflict; it does not hide it. The **losing signal is still
+returned as evidence**, so an explanation can say why a table filed under `EmailAddress`
+came back PII-free. The converse of Rule A matters just as much: a table tagged PII does
+*not* make its `signup_ts` column PII. Table-level PII means "somewhere in here", not
+"everywhere in here".
+
+[tests/test_pii_signals.py](tests/test_pii_signals.py) pins all of it.
 
 ## Known boundaries
 
@@ -121,7 +168,7 @@ rather than guessing, because a wrong verdict has the same confident shape as a 
 
 | Boundary | Today | Why it's deferred |
 | --- | --- | --- |
-| **Semantic term matching** | Label URNs are compared by exact identity. `EmailAddress` does not imply `PII`. | Deciding that a term *entails* a classification is semantic entailment — Session 2's job, and it must be evidence-constrained, not a vibe. |
+| **Semantic term matching** | A glossary term implies PII **iff the catalog files it under the PII node**. A term nobody filed there implies nothing, however personal it reads. | Structure is a declaration someone made; a name is a guess. Deciding that an *unfiled* term entails a classification is semantic entailment — Session 2's job, evidence-constrained, not a vibe. |
 | **Ownership type** | `ownershipType` (technical vs business vs data steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim than "Alice is an owner." Checking it needs a claim schema that carries the role, which is a schema change, not an `if`. |
 | **Entity-not-found propagation** | `fetch_dataset()` raises `EntityNotFoundError`. Nothing above it catches that yet. | Correct at this layer — a missing entity is an error, not a verdict. How a *pipeline* surfaces it (a fifth outcome? a hard failure?) is a Session 3 decision. |
 | **Cross-dialect types** | Both of DataHub's type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
@@ -161,10 +208,10 @@ Metadata auth is disabled locally, so no token is needed.
 ```powershell
 just seed     # generate_seed.py, then `datahub ingest -c ./seed/recipe.yml`
 just probe    # proves READ / READ / WRITE / READ-BACK
-just test     # 58 tests against the live catalog
+just test     # 72 tests against the live catalog
 ```
 
-Expect `failures: []` and 76 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
+Expect `failures: []` and 86 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
 the probe. The suite skips itself with a pointer to this section if DataHub isn't up —
 it will not silently pass against an empty catalog.
 
@@ -200,7 +247,7 @@ That's a feature, not a workaround. Attest verifies claims against *known* groun
 so its benchmark needs entities where we control exactly what is true.
 
 The metadata variation in the seed is therefore **not cosmetic — it's the benchmark's
-substrate**. `seed/generate_seed.py` emits 13 datasets across 2 platforms, each carrying an
+substrate**. `seed/generate_seed.py` emits 15 datasets across 2 platforms, each carrying an
 `exercises` field naming the headline verdict it's built for, plus a `note` explaining how.
 Both flow into `seed/ground_truth.json`, so the golden benchmark can be built from it and
 verdicts scored mechanically.
