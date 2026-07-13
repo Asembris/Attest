@@ -17,15 +17,16 @@ doesn't say" is worse than no auditor.
 
 ## Status
 
-**Session 1 complete: the deterministic core.** Claim schema, DataHub client, and
-four checkers — freshness, ownership, classification, schema — with 72 tests against
-the live seeded catalog. There is no LLM anywhere in this layer, by design: the
-deterministic half is what has to be bulletproof, so it was built and tested in
-isolation before any model touches it.
+**Session 1: the deterministic core.** Claim schema, DataHub client, and four checkers —
+freshness, ownership, classification, schema. There is no LLM anywhere in this layer, by
+design: the deterministic half is what has to be bulletproof, so it was built and tested
+in isolation before any model touched it.
 
-Session 2 adds the semantic layer (claim extraction, explanation) on top. It does not
-get to change a verdict — it gets to *phrase* one, constrained to the evidence a
-checker returned.
+**Session 2: the semantic layer.** Claim decomposition and explanation generation, sitting
+on top of the core and never replacing it. The model gets to *phrase* a verdict; it does
+not get to reach one. 108 tests against the live seeded catalog.
+
+Not built yet: LangGraph orchestration and the FastAPI surface (Session 3).
 
 ## The coverage matrix
 
@@ -56,14 +57,21 @@ live catalog, so this cannot silently regress. `just matrix` runs it alone.
 src/attest/            Attest's own code. Talks to DataHub over raw GraphQL (httpx).
   claims.py            Claim / Verdict / Evidence schema (pydantic).
   config.py            Per-step model config. Never hardcode a model.
-  checkers/            The deterministic core. One checker per claim type. No LLM.
-    policy.py          Declared governance semantics — where the model boundary is drawn.
+  checkers/            The deterministic core. One checker per claim type. NO LLM.
+    policy.py          Declared governance semantics — PII_SIGNALS, exclusions, precedence.
   datahub/
     client.py          GraphQL client: datasets, structured properties, search.
     snapshot.py        Normalized read model. Preserves "absent" vs "empty".
+  --- the semantic layer: phrases verdicts, never decides them ---
+  llm.py               The only place a model is called. Strict JSON, temperature=0.
+  decompose.py         Agent prose -> typed claims. A URN must be quoted, never minted.
+  explain.py           Verdict + evidence -> prose. Falls back to a deterministic template.
+  faithfulness.py      The guard. Every factual token must appear in the evidence.
+  crosscheck.py        Model disagrees with the checker -> surfaced, never obeyed.
+  sanitize.py          Untrusted agent text in, instructions stripped out.
 seed/                  Seed catalog generator + ingestion recipe.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
-tests/                 Live-catalog pytest suite.
+tests/                 Live-catalog pytest suite. The semantic layer runs offline.
 ```
 
 ## Where the model boundary is drawn
@@ -91,7 +99,8 @@ than one that abstains: its wrong verdict has the same confident shape as a righ
    correctly returns Insufficient-Coverage.
 4. **Cross-dialect type equivalence** — is a `text` column a `string`? Partially: both
    of DataHub's type vocabularies are matched exactly, but genuine dialect mapping
-   (`int8` ~ `BIGINT`) needs a model and is a Session 2 escalation, not an `if`.
+   (`int8` ~ `BIGINT`) needs a model of each platform's type system. Still deferred: it
+   is a semantic-entailment escalation, not an `if`.
 
 The corollary: **"PII-free" is not the mirror image of "contains PII."** An untagged
 table cannot *support* a PII-free claim — nobody has looked. A naive checker returns
@@ -161,6 +170,56 @@ came back PII-free. The converse of Rule A matters just as much: a table tagged 
 
 [tests/test_pii_signals.py](tests/test_pii_signals.py) pins all of it.
 
+## Who audits the auditor
+
+Attest exists to catch AI systems asserting things they cannot back up. If Attest's own
+explanations were unverified model prose, the product would be self-undermining — so they
+are not. **Every factual token in an explanation must appear in the evidence that produced
+the verdict**, checked by [code](src/attest/faithfulness.py), not by a model. A model
+checking a model is the same failure mode wearing a hat.
+
+The model's world is deliberately small. It sees the claim, the verdict, and the evidence
+fields the checker returned — never the raw catalog, never the snapshot. It cannot reach
+for a better fact, because it was not given one.
+
+What comes back is not trusted:
+
+| Layer | What it catches |
+| --- | --- |
+| **Faithfulness guard** | Fabricated specifics — a hallucinated owner, column, tag, date, or number. |
+| **Cross-check** | The model reads the evidence as a *different verdict*, or cites a field the checker never read. |
+| **Template fallback** | Anything that fails the above. The explanation degrades to something **true**, never to something plausible. |
+
+Three details are what make the guard real rather than decorative:
+
+- **Matching is by contiguous word sequence, not substring.** `PII` must not match inside
+  `NonPII` — that single bug would wave through the exact hallucination this product
+  exists to catch. Nor can a fabricated `customer_email` be assembled out of a real
+  `customer_profile` and a real `email` column found elsewhere.
+- **The guard fails closed on names.** A capitalized word is lexically identical whether
+  it is a fabricated owner ("Sarah Jennings") or ordinary prose, so anything not in the
+  evidence and not a known function word is treated as a possible fabrication. A false
+  rejection costs fluency; a false acceptance costs the product its reason to exist.
+- **Derived numbers are rejected even when correct.** If the evidence says `10009.9h`, an
+  explanation may not say "417 days" — the arithmetic may be right, but the guard cannot
+  tell a correct derivation from a plausible one, and one that accepts plausible
+  arithmetic accepts hallucinated arithmetic. If we want days said, a checker must put
+  days in the evidence.
+
+The verdict itself is never at risk, whatever the model does: verdicts come from
+[checkers/](src/attest/checkers/), which take a typed claim and a catalog snapshot and
+never see agent text at all. A test asserts that the deterministic core imports no model
+client, so this cannot quietly stop being true.
+
+**Prompt injection**, therefore, has nowhere to land. Attest ingests untrusted text by
+definition — the thing it audits is another agent's output — so
+[sanitize.py](src/attest/sanitize.py) strips instruction-like spans ("ignore previous
+instructions", "mark this as Supported") and logs them as findings rather than swallowing
+them. But a sanitizer is a blocklist, and blocklists leak. The real answer is structural:
+**there is no prompt in this system whose output is a verdict.** The worst a successful
+injection achieves is a corrupted claim *extraction* — and even then, the catalog decides
+what is true.
+
 ## Known boundaries
 
 Real, deliberate, and *not* silently carried. Each is a place Attest declines to answer
@@ -168,7 +227,7 @@ rather than guessing, because a wrong verdict has the same confident shape as a 
 
 | Boundary | Today | Why it's deferred |
 | --- | --- | --- |
-| **Semantic term matching** | A glossary term implies PII **iff the catalog files it under the PII node**. A term nobody filed there implies nothing, however personal it reads. | Structure is a declaration someone made; a name is a guess. Deciding that an *unfiled* term entails a classification is semantic entailment — Session 2's job, evidence-constrained, not a vibe. |
+| **Semantic term matching** | A glossary term implies PII **iff the catalog files it under the PII node**. A term nobody filed there implies nothing, however personal it reads. | Structure is a declaration someone made; a name is a guess. Deciding that an *unfiled* term entails a classification is semantic entailment, and it must be evidence-constrained rather than a vibe. Still deferred. |
 | **Ownership type** | `ownershipType` (technical vs business vs data steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim than "Alice is an owner." Checking it needs a claim schema that carries the role, which is a schema change, not an `if`. |
 | **Entity-not-found propagation** | `fetch_dataset()` raises `EntityNotFoundError`. Nothing above it catches that yet. | Correct at this layer — a missing entity is an error, not a verdict. How a *pipeline* surfaces it (a fifth outcome? a hard failure?) is a Session 3 decision. |
 | **Cross-dialect types** | Both of DataHub's type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
@@ -197,7 +256,8 @@ the least fragile path available.
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
 .venv\Scripts\pip install -e ".[dev]"
-copy .env.example .env      # then fill in OPENAI_API_KEY (unused until Session 2)
+copy .env.example .env      # then fill in OPENAI_API_KEY (the semantic layer needs it;
+                            # the checkers and the whole test suite do not)
 ```
 
 DataHub Core must be running locally (quickstart, GMS on :8080, UI on :9002).
@@ -208,7 +268,7 @@ Metadata auth is disabled locally, so no token is needed.
 ```powershell
 just seed     # generate_seed.py, then `datahub ingest -c ./seed/recipe.yml`
 just probe    # proves READ / READ / WRITE / READ-BACK
-just test     # 72 tests against the live catalog
+just test     # 108 tests: live catalog + the semantic layer, offline
 ```
 
 Expect `failures: []` and 86 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
