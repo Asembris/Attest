@@ -17,10 +17,27 @@ from typing import Any
 import httpx
 
 from attest.config import settings
+from attest.datahub.snapshot import DatasetSnapshot
 
 
 class DataHubError(RuntimeError):
     """A GraphQL request failed, or returned errors."""
+
+
+class EntityNotFoundError(DataHubError):
+    """The URN does not name anything in the catalog.
+
+    This is an ERROR, not a verdict. A claim about an entity that does not exist is
+    not contradicted by the catalog and it is not under-covered by the catalog —
+    the question itself was malformed, most likely a bad URN from upstream entity
+    resolution. Returning Insufficient-Coverage here would quietly launder a broken
+    input into a legitimate-looking audit result, and the bad URN would never be
+    seen. So it raises.
+    """
+
+    def __init__(self, urn: str) -> None:
+        super().__init__(f"No such entity in the catalog: {urn}")
+        self.urn = urn
 
 
 class DataHubClient:
@@ -77,6 +94,7 @@ class DataHubClient:
     query dataset($urn: String!) {
       dataset(urn: $urn) {
         urn
+        exists
         name
         platform { name }
         properties {
@@ -115,8 +133,34 @@ class DataHubClient:
     """
 
     def get_dataset(self, urn: str) -> dict[str, Any] | None:
-        """Fetch a dataset's schema, ownership, tags, terms, and properties."""
-        return self.execute(self.DATASET_QUERY, {"urn": urn}).get("dataset")
+        """Fetch a dataset's schema, ownership, tags, terms, and properties.
+
+        Returns None if no such dataset exists.
+
+        The None has to be computed, not read off the response. DataHub answers
+        `dataset(urn:)` for ANY well-formed dataset URN, synthesizing `urn`, `name`,
+        and `platform` back out of the URN string itself and nulling every aspect.
+        A dataset that was never ingested is therefore byte-identical to a real
+        dataset carrying no metadata, and a typo'd URN would sail through every
+        checker as Insufficient-Coverage. `exists` is the only field that tells them
+        apart, which is why the query asks for it and why this method is the only
+        supported way in.
+        """
+        dataset = self.execute(self.DATASET_QUERY, {"urn": urn}).get("dataset")
+        if not dataset or not dataset.get("exists"):
+            return None
+        return dataset
+
+    def fetch_dataset(self, urn: str) -> DatasetSnapshot:
+        """Fetch a dataset as a normalized snapshot, or raise EntityNotFoundError.
+
+        This is what checkers use: a missing entity must stop the check, not be
+        scored as one.
+        """
+        dataset = self.get_dataset(urn)
+        if dataset is None:
+            raise EntityNotFoundError(urn)
+        return DatasetSnapshot.from_graphql(dataset)
 
     # --- writes ------------------------------------------------------------
 
