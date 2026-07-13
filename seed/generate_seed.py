@@ -56,7 +56,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from datahub.emitter.mce_builder import (
@@ -96,7 +96,7 @@ SEED_DIR = Path(__file__).parent
 ENV = "PROD"
 ACTOR = "urn:li:corpuser:datahub"
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 FRESH = NOW - timedelta(hours=6)
 STALE = NOW - timedelta(days=417)
 
@@ -216,7 +216,10 @@ CATALOG: list[Dataset] = [
             Column("is_active", "boolean", "BOOLEAN", "Whether the account is active."),
         ],
         exercises="Supported",
-        note="Fully documented. Claims about its owner, PII columns, and terms should be Supported.",
+        note=(
+            "Fully documented. Claims about its owner, PII columns, and terms should "
+            "be Supported."
+        ),
     ),
     Dataset(
         platform="snowflake",

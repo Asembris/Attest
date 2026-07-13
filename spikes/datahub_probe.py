@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from attest.datahub import DataHubClient, DataHubError
@@ -35,7 +35,7 @@ SEARCH_TIMEOUT_S = 60
 
 # A value that changes every run, so a "successful" read-back can't be a stale
 # hit from a previous run.
-PROBE_VALUE = f"Supported@{datetime.now(timezone.utc).isoformat(timespec='seconds')}"
+PROBE_VALUE = f"Supported@{datetime.now(UTC).isoformat(timespec='seconds')}"
 
 
 class ProbeFailure(Exception):
@@ -67,7 +67,7 @@ def read_dataset(client: DataHubClient) -> dict[str, Any]:
 
     last_modified = (props.get("lastModified") or {}).get("time")
     if last_modified:
-        iso = datetime.fromtimestamp(last_modified / 1000, tz=timezone.utc).isoformat()
+        iso = datetime.fromtimestamp(last_modified / 1000, tz=UTC).isoformat()
         print(f"  lastModified: {iso}")
 
     owners = [
@@ -232,9 +232,8 @@ def main() -> int:
 
     print(f"\n{'=' * 72}")
     print("ALL FOUR OPERATIONS PASSED — read/write path is proven.")
-    print(
-        f"  verdict-filtered search: {'working' if searchable else 'NOT CONFIRMED (see note above)'}"
-    )
+    status = "working" if searchable else "NOT CONFIRMED (see note above)"
+    print(f"  verdict-filtered search: {status}")
     print("=" * 72)
     return 0
 

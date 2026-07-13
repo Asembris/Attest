@@ -68,7 +68,9 @@ def _field_scope(
 
     return column.labels, Evidence(
         field=f"schemaMetadata.fields[{claim.field_path}].globalTags + .glossaryTerms",
-        value=list(column.labels),
+        # None, not [] — an unclassified column is the catalog holding nothing, and
+        # Evidence spells "nothing" as None. An empty list would read as a value.
+        value=list(column.labels) or None,
         note=(
             f"Column '{claim.field_path}' carries {len(column.labels)} label(s)."
             if column.labels
@@ -90,7 +92,8 @@ def check_classification(
         observed = snapshot.labels
         observed_evidence = Evidence(
             field=TABLE_FIELD,
-            value=list(observed),
+            # None, not [] — see _field_scope. An unclassified table has no value here.
+            value=list(observed) or None,
             note=(
                 f"Table carries {len(observed)} label(s)."
                 if observed

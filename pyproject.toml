@@ -5,6 +5,14 @@ description = "Groundedness auditor: verifies AI agents' claims about data again
 requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
+dependencies = [
+    "httpx>=0.28",
+    "pydantic>=2.11",
+    "pydantic-settings>=2.14",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.9"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -15,7 +23,15 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-src = ["src", "seed", "spikes"]
+src = ["src", "seed", "spikes", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# tests/ is on the path so `from conftest import DOCUMENTED` works: the seeded URNs
+# are a shared vocabulary, and naming them by the role they play beats repeating URN
+# literals in every assertion.
+pythonpath = ["tests"]
+addopts = "-q --strict-markers"

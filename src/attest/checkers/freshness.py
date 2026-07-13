@@ -9,7 +9,7 @@ statement about the catalog's completeness, not about the data's freshness.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from attest.checkers.base import result
 from attest.claims import CheckResult, Evidence, FreshnessClaim, Verdict
@@ -25,7 +25,7 @@ def check_freshness(
 ) -> CheckResult:
     # `now` is injectable so a test asserting "this is 6 hours old" does not quietly
     # become a test of the system clock.
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
 
     if snapshot.last_modified is None:
         return result(
