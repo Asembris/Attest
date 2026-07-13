@@ -18,7 +18,7 @@ doesn't say" is worse than no auditor.
 ## Status
 
 **Session 1 complete: the deterministic core.** Claim schema, DataHub client, and
-four checkers — freshness, ownership, classification, schema — with 54 tests against
+four checkers — freshness, ownership, classification, schema — with 58 tests against
 the live seeded catalog. There is no LLM anywhere in this layer, by design: the
 deterministic half is what has to be bulletproof, so it was built and tested in
 isolation before any model touches it.
@@ -98,6 +98,34 @@ table cannot *support* a PII-free claim — nobody has looked. A naive checker r
 Supported there and certifies an unreviewed table as clean, which is a groundedness
 auditor manufacturing false assurance. It is Insufficient-Coverage.
 
+### Classification is a union of tags and terms
+
+DataHub carries two independent classification vocabularies — `globalTags` and
+`glossaryTerms` — and Attest treats **both as evidence, at table and column grain**. A
+PII signal in *either* is sufficient to contradict a "PII-free" claim.
+
+This is not a detail. Real catalogs mark PII with tags routinely: tags are cheap and get
+applied, glossaries are a governance project most orgs never finish. A checker that read
+terms and forgot tags would return a confident *Supported* on "this table is PII-free"
+while a PII tag sat on the entity untouched — the worst verdict this product can
+produce. `hr_headcount` exists purely to make that unshippable: it is tagged PII and
+carries **no glossary term at all**, so a term-only checker certifies it as clean. Three
+tests in [test_classification.py](tests/test_classification.py) pin it, and the
+[snapshot](src/attest/datahub/snapshot.py) union was mutation-tested — breaking it fails
+9 tests.
+
+## Known boundaries
+
+Real, deliberate, and *not* silently carried. Each is a place Attest declines to answer
+rather than guessing, because a wrong verdict has the same confident shape as a right one.
+
+| Boundary | Today | Why it's deferred |
+| --- | --- | --- |
+| **Semantic term matching** | Label URNs are compared by exact identity. `EmailAddress` does not imply `PII`. | Deciding that a term *entails* a classification is semantic entailment — Session 2's job, and it must be evidence-constrained, not a vibe. |
+| **Ownership type** | `ownershipType` (technical vs business vs data steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim than "Alice is an owner." Checking it needs a claim schema that carries the role, which is a schema change, not an `if`. |
+| **Entity-not-found propagation** | `fetch_dataset()` raises `EntityNotFoundError`. Nothing above it catches that yet. | Correct at this layer — a missing entity is an error, not a verdict. How a *pipeline* surfaces it (a fifth outcome? a hard failure?) is a Session 3 decision. |
+| **Cross-dialect types** | Both of DataHub's type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
+
 ## Commands
 
 Everything runs through [`just`](https://github.com/casey/just):
@@ -136,9 +164,27 @@ just probe    # proves READ / READ / WRITE / READ-BACK
 just test     # 54 tests against the live catalog
 ```
 
-Expect `failures: []` and 72 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
+Expect `failures: []` and 76 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
 the probe. The suite skips itself with a pointer to this section if DataHub isn't up —
 it will not silently pass against an empty catalog.
+
+### The suite is deterministic across machines and dates
+
+Seed timestamps are **relative to seed time** (`FRESH = seed - 6h`, `STALE = seed - 417d`),
+which would ordinarily make freshness tests rot: under a wall clock the fresh datasets age,
+and a suite that is green today goes red in a fortnight against completely correct code —
+reporting "the checker is broken" when the truth is "the catalog is old". That is exactly
+the confusion between data state and code state that Attest exists to prevent, and it has
+no business in Attest's own tests.
+
+So the clock is injected (`check_freshness(..., now=...)`), and the test `now` is
+**reconstructed from the live catalog**: one hour after the reference dataset's own
+`lastModified`. Not the wall clock, and deliberately not `ground_truth.json` either — that
+file is committed, so a fresh clone with a fresh `just seed` would have a catalog from
+today and a `generated_at` from whenever it was last committed, and the tests would
+silently start measuring the gap between them. Deriving `now` from the same server the
+data came from is true on any machine, on any date, reseeded or not.
+`test_verdicts_do_not_depend_on_the_wall_clock` asserts the property directly.
 
 ### Why we generate our own seed data
 
@@ -154,7 +200,7 @@ That's a feature, not a workaround. Attest verifies claims against *known* groun
 so its benchmark needs entities where we control exactly what is true.
 
 The metadata variation in the seed is therefore **not cosmetic — it's the benchmark's
-substrate**. `seed/generate_seed.py` emits 12 datasets across 2 platforms, each carrying an
+substrate**. `seed/generate_seed.py` emits 13 datasets across 2 platforms, each carrying an
 `exercises` field naming the headline verdict it's built for, plus a `note` explaining how.
 Both flow into `seed/ground_truth.json`, so the golden benchmark can be built from it and
 verdicts scored mechanically.
@@ -167,6 +213,8 @@ The datasets that earn their place:
   confidently call it PII on the strength of its name); `revenue_daily` is fully documented
   but last modified 417 days ago (an agent will call it "updated daily"); `support_tickets`
   has an owner that isn't the one a claim would guess.
+- **Classified by tag alone** — `hr_headcount` is tagged PII with *zero* glossary terms, so
+  a checker that reads only the glossary certifies it PII-free. See below.
 - **Genuinely silent** — where the honest verdict is "the catalog doesn't know," not "the
   agent is wrong". `raw_events` has no owner, tags, terms, or description.
   `legacy_accounts.email` is *untagged*, so "it's PII" is unverifiable, not false.
