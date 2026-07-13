@@ -569,6 +569,43 @@ CATALOG: list[Dataset] = [
             "PII_SIGNALS."
         ),
     ),
+    Dataset(
+        platform="postgres",
+        name="attest_db.public.audit_log",
+        description=(
+            "Append-only record of privileged actions. Nobody ever classified the table "
+            "itself; one column was tagged when it was added."
+        ),
+        owner="dana.wu",
+        # The INVERSE of email_campaign_stats, and the case that proves the precedence
+        # rule generalizes instead of being special-cased to NonPII. The table carries no
+        # PII signal of any kind — no tag, no term, no property — while `actor_email` is
+        # explicitly tagged PII at column grain.
+        #
+        # Two things must follow, and neither did before this dataset existed:
+        #   1. "actor_email is PII-free" is CONTRADICTED. The column's own tag decides,
+        #      exactly as the NonPII tag decides for recipient_email_hash.
+        #   2. "audit_log is PII-free" is CONTRADICTED too. A table-level PII claim is
+        #      existential, so a PII column settles it. A checker that only reads
+        #      table-level metadata answers "the catalog is silent" here — and if anyone
+        #      ever adds a Verified tag to this table, it would answer SUPPORTED, and
+        #      certify a table holding email addresses as clean.
+        tags=["Tier2"],
+        terms=[],
+        columns=[
+            Column("entry_id", "string", "uuid", "Primary key.", tags=["NonPII"]),
+            Column("actor_email", "string", "varchar(255)", "Who performed the action.",
+                   tags=["PII"]),
+            Column("action", "string", "varchar(64)", "What they did."),
+            Column("occurred_at", "time", "timestamptz", "When they did it."),
+        ],
+        exercises="Contradicted",
+        note=(
+            "Column-only PII signal: the table carries none. Proves precedence is about "
+            "GRAIN, not about NonPII — and pins that column signals propagate UP into a "
+            "table-scoped claim, while table signals never propagate DOWN into a column."
+        ),
+    ),
     # --- aspect-silent stubs -------------------------------------------------
     # Insufficient-Coverage is only reachable when the relevant aspect is ABSENT.
     # Ownership and classification already have silent datasets above (raw_events,

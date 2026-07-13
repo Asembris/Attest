@@ -41,7 +41,7 @@ it, a verdict regression becomes indistinguishable from a server change. A tagge
 is the only base where "the catalog says X" means the same thing next month.
 
 The seed catalog ingests against v1.5.0.6 with **0 failures and 0 warnings**
-(86 records), and `spikes/datahub_probe.py` proves the full read/write round-trip.
+(90 records), and `spikes/datahub_probe.py` proves the full read/write round-trip.
 
 ## The `dataQualityCheck` incompatibility
 
@@ -79,7 +79,7 @@ what's true. See the emitter's docstring for the verdict-bucket design.
 datahub docker nuke                  # destroys containers AND volumes — catalog is gone
 datahub docker quickstart            # see landmines before trusting this
 python seed\generate_seed.py
-datahub ingest -c ./seed/recipe.yml  # expect failures: [], 86 records
+datahub ingest -c ./seed/recipe.yml  # expect failures: [], 90 records
 python spikes\datahub_probe.py       # expect ALL FOUR OPERATIONS PASSED
 ```
 

@@ -184,17 +184,30 @@ def check_classification(
     )
 
     # PII is resolved by signal, not by exact URN match: three recognized signals, any
-    # one sufficient (policy.PII_SIGNALS). The grain passed in is what enforces
-    # precedence rule A — a column-scoped claim sees only the column's own labels, and
-    # never the table's properties, so a table-level signal cannot propagate down into
-    # a column that carries its own classification.
-    pii_finding = policy.resolve_pii(
-        labels=observed,
-        term_parents=snapshot.term_parents,
-        properties=(
-            {} if claim.field_path is not None else (snapshot.custom_properties or {})
-        ),
-    )
+    # one sufficient (policy.PII_SIGNALS). Which grains a claim can see is the whole of
+    # the precedence rule, and it is asymmetric on purpose.
+    #
+    #   A column-scoped claim sees ONLY that column. A table-level signal never
+    #   propagates down: "this table contains PII" means *somewhere in it*, not in every
+    #   column of it, so it says nothing about an untagged `signup_ts`.
+    #
+    #   A table-scoped claim sees the table AND its columns. A table-level PII claim is
+    #   existential, so a column tagged PII settles it — otherwise a table nobody tagged
+    #   at table level could be certified PII-free while its own `email` column carries
+    #   the tag. See policy.resolve_pii_at_table.
+    if claim.field_path is not None:
+        pii_finding = policy.resolve_pii(
+            labels=observed,
+            term_parents=snapshot.term_parents,
+            properties={},
+        )
+    else:
+        pii_finding = policy.resolve_pii_at_table(
+            table_labels=snapshot.labels,
+            term_parents=snapshot.term_parents,
+            properties=snapshot.custom_properties or {},
+            columns=tuple((f.path, f.labels) for f in snapshot.fields or ()),
+        )
 
     verdicts: list[Verdict] = []
     reasons: list[str] = []

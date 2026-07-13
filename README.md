@@ -24,7 +24,7 @@ in isolation before any model touched it.
 
 **Session 2: the semantic layer.** Claim decomposition and explanation generation, sitting
 on top of the core and never replacing it. The model gets to *phrase* a verdict; it does
-not get to reach one. 108 tests against the live seeded catalog.
+not get to reach one. 113 tests against the live seeded catalog.
 
 Not built yet: LangGraph orchestration and the FastAPI surface (Session 3).
 
@@ -128,6 +128,10 @@ clean), `marketing_leads` carries PII-node terms with **zero** PII tags (a tag-o
 calls it clean), and `device_telemetry` has only `hasPII=true` (both call it clean). None of
 the three can be dropped without a test going red.
 
+`CustomerIdentifier` earns its place the other way round: it is a real, attached,
+checkable term that is **not** a PII signal, and a test asserts both halves — a claim
+naming it is Supported by exact match, while the same table asked about PII is silent.
+
 Nothing here is inferred. `EmailAddress` is a PII signal because someone **filed it under
 the PII node** in the catalog's own hierarchy — not because the string reads as personal.
 `CustomerIdentifier` is deliberately *outside* that node: a surrogate key is not personal
@@ -141,13 +145,36 @@ requires a `Verified` completeness marker, which is a human's act.
 
 They *will* disagree, and the disagreement is usually meaningful rather than a mistake.
 
-**Rule A — column over table.** A table-level signal never propagates down into a column
-that carries its own classification.
+**Rule A — signals propagate up, never down.** The asymmetry is the whole rule, and it
+follows from what a table-level PII claim *means*: "this table contains PII" is
+**existential**. It is true if PII is anywhere in the table.
+
+- **Up.** A column tagged PII therefore settles a table-scoped claim, whatever the table's
+  own metadata says. Without this, a table nobody classified at table level would answer
+  "is this PII-free?" with *silence* while its `email` column sat tagged in the schema —
+  and if that table also carried a `Verified` marker, the completeness rule would license
+  a denial and answer **Supported**, certifying it clean. That was reachable, and
+  [a test](tests/test_pii_signals.py) now makes it unreachable.
+- **Down — deliberately not.** The same existential reading forbids the converse:
+  "contains PII" does *not* mean "every column is PII". A table's PII tag says nothing
+  about its untagged `signup_ts` column, and inheriting it downward would mark every
+  column of every PII table as personal data — crying wolf on the entire warehouse. A
+  column-scoped claim is answered by that column's own classification, or by silence.
+
+Precedence is about **grain, not about `NonPII`**. The rule is symmetric in direction:
+`audit_log` is `email_campaign_stats` inside out — a table with *no* PII signal whose
+`actor_email` column is explicitly tagged PII — and the column's tag decides there too,
+pointing the other way.
 
 **Rule B — within one grain, an explicit tag beats an implied signal.** A tag is a
 classification act performed on that entity; a term is a coarser statement of subject
 matter and a property is a machine's guess. When a human's review and a machine's
 classification disagree, the review wins.
+
+One ordering is worth stating outright: an explicit PII tag **on a column** outranks a
+`NonPII` tag on its table. The more specific classification act is the better evidence,
+and a positive finding of personal data should not be talked out of existence by a
+coarser label.
 
 The worked example is `email_campaign_stats`, and it is in the seed on purpose:
 
@@ -268,10 +295,10 @@ Metadata auth is disabled locally, so no token is needed.
 ```powershell
 just seed     # generate_seed.py, then `datahub ingest -c ./seed/recipe.yml`
 just probe    # proves READ / READ / WRITE / READ-BACK
-just test     # 108 tests: live catalog + the semantic layer, offline
+just test     # 113 tests: live catalog + the semantic layer, offline
 ```
 
-Expect `failures: []` and 86 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
+Expect `failures: []` and 90 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
 the probe. The suite skips itself with a pointer to this section if DataHub isn't up —
 it will not silently pass against an empty catalog.
 
@@ -307,7 +334,7 @@ That's a feature, not a workaround. Attest verifies claims against *known* groun
 so its benchmark needs entities where we control exactly what is true.
 
 The metadata variation in the seed is therefore **not cosmetic — it's the benchmark's
-substrate**. `seed/generate_seed.py` emits 15 datasets across 2 platforms, each carrying an
+substrate**. `seed/generate_seed.py` emits 16 datasets across 2 platforms, each carrying an
 `exercises` field naming the headline verdict it's built for, plus a `note` explaining how.
 Both flow into `seed/ground_truth.json`, so the golden benchmark can be built from it and
 verdicts scored mechanically.

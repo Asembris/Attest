@@ -67,6 +67,10 @@ PROPERTY_ONLY_PII = _sf("analytics.product.device_telemetry")
 # Tagged PII at table level but NOT Verified. Isolates "does table-level PII leak down
 # into an untagged column" from "does the completeness marker license a denial".
 PII_TABLE_UNVERIFIED = _sf("analytics.customers.customer_contact")
+# The inverse of NONPII_TRAP: the TABLE carries no PII signal at all, while its
+# `actor_email` column is explicitly tagged PII. Proves precedence is about grain, not
+# about NonPII, and that column signals propagate UP into a table-scoped claim.
+COLUMN_ONLY_PII = _pg("attest_db.public.audit_log")
 
 PII_NODE = "urn:li:glossaryNode:PII"
 
