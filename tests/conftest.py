@@ -57,6 +57,18 @@ DEPRECATED_UNOWNED = _pg("attest_db.public.legacy_accounts")
 # PII marked by globalTag ONLY — zero glossary terms, at table or column grain.
 # A checker that reads terms and forgets tags certifies this table as PII-free.
 TAG_ONLY_PII = _pg("attest_db.public.hr_headcount")
+# PII marked by glossary TERM only (under the PII node) — zero PII tags. The mirror
+# image: a checker that reads tags and forgets terms certifies this one as PII-free.
+TERM_ONLY_PII = _pg("attest_db.public.marketing_leads")
+# PII marked by the hasPII custom PROPERTY only — no tag, no term. A scanner's finding
+# that nobody has done the governance work behind.
+PROPERTY_ONLY_PII = _sf("analytics.product.device_telemetry")
+
+# Tagged PII at table level but NOT Verified. Isolates "does table-level PII leak down
+# into an untagged column" from "does the completeness marker license a denial".
+PII_TABLE_UNVERIFIED = _sf("analytics.customers.customer_contact")
+
+PII_NODE = "urn:li:glossaryNode:PII"
 
 ALICE = "urn:li:corpuser:alice.chen"
 DANA = "urn:li:corpuser:dana.wu"

@@ -111,7 +111,9 @@ class DataHubClient:
           }
         }
         tags { tags { tag { urn properties { name } } } }
-        glossaryTerms { terms { term { urn properties { name } } } }
+        glossaryTerms {
+          terms { term { urn properties { name } parentNodes { nodes { urn } } } }
+        }
         schemaMetadata {
           fields {
             fieldPath
@@ -119,7 +121,7 @@ class DataHubClient:
             nativeDataType
             description
             globalTags { tags { tag { urn } } }
-            glossaryTerms { terms { term { urn } } }
+            glossaryTerms { terms { term { urn parentNodes { nodes { urn } } } } }
           }
         }
         structuredProperties {

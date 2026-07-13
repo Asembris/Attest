@@ -29,9 +29,54 @@ without one, it is just silence.
 
 So the closed-world assumption is never made by Attest — it is granted by the
 catalog, per entity, via a tag someone deliberately applied. That is the whole trick.
+
+--------------------------------------------------------------------------------
+PII_SIGNALS, and the precedence rule
+--------------------------------------------------------------------------------
+
+**"How does Attest decide what is PII?"** By a named list, not a string match. Real
+catalogs mark PII in more than one place, and a checker that knows about one of them
+certifies the others clean — the single worst verdict this product can return. So the
+recognized signals are enumerated in PII_SIGNALS, and ANY ONE of them is sufficient:
+
+  1. the `PII` global tag                       — a governance decision
+  2. a glossary term under the `PII` node       — a governance decision, structurally
+  3. the `hasPII` custom property, truthy       — an upstream classifier's finding
+
+None of the three is inferred. A term is a PII signal because someone filed it under
+the PII node in the catalog's own hierarchy, not because "EmailAddress" reads as
+personal — the same discipline as EXCLUSIONS above. `hasPII=false` deliberately fires
+NOTHING: a scanner that looked and found nothing is not a review, and absence of
+evidence is not evidence of absence. A clean bill needs COMPLETENESS_MARKERS.
+
+**Precedence: the most specific, most authoritative signal wins.** Signals disagree in
+real catalogs, and the disagreement is usually meaningful rather than a mistake. Two
+rules, in order:
+
+  A. COLUMN over TABLE. A table-level signal never propagates down into a column that
+     carries its own classification. `email_campaign_stats` is filed under the
+     EmailAddress term — the table is *about* email — while its `recipient_email_hash`
+     column is explicitly tagged NonPII, because the one column that held an address
+     was de-identified. A claim about that column is answered by that column's tag.
+     (The converse also matters: a table tagged PII does not make its `signup_ts`
+     column PII. Table-level PII means "somewhere in here", not "everywhere in here".)
+
+  B. Within one grain, an explicit TAG beats an IMPLIED signal. A tag is a
+     classification act performed on this entity — NonPII's own definition in the seed
+     is "reviewed and confirmed to carry no personal information". A glossary term is a
+     coarser statement of subject matter, and a scanner property is an automated guess.
+     When a human's classification and a machine's contradict, the human wins; that is
+     what review is for.
+
+Both rules are precedence, not suppression: the losing signal is still returned as
+evidence, so an explanation can say *why* the conflict resolved the way it did.
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Literal
 
 TAG = "urn:li:tag:"
 
@@ -69,3 +114,133 @@ def contradicts(asserted: str, observed: tuple[str, ...]) -> str | None:
 def classification_is_complete(table_labels: tuple[str, ...]) -> bool:
     """Has the catalog declared this table's classification exhaustive?"""
     return any(label in COMPLETENESS_MARKERS for label in table_labels)
+
+
+# --- PII signals -------------------------------------------------------------
+#
+# The answer to "how does Attest decide what is PII". Three signals, named, any one
+# sufficient. See the module docstring for why each is a declaration rather than an
+# inference, and for the precedence rule that resolves them when they disagree.
+
+PII_TAG = f"{TAG}PII"
+PII_NODE = "urn:li:glossaryNode:PII"
+HAS_PII_PROPERTY = "hasPII"
+
+# What an upstream classifier writes to mean yes. Anything else — including "false" —
+# is not a PII signal. It is emphatically not a denial either: see the docstring.
+TRUTHY = frozenset({"true", "yes", "1"})
+
+
+@dataclass(frozen=True)
+class PiiSignal:
+    """One recognized way a catalog says "there is PII here"."""
+
+    name: str
+    # An explicit signal is a classification act (a tag). An implied one is inferred
+    # from structure or from a machine (a term's node, a scanner's property). Explicit
+    # outranks implied at the same grain — precedence rule B.
+    kind: Literal["explicit", "implied"]
+    # The DataHub field an explanation should cite. Evidence, not decoration.
+    field: str
+    description: str
+
+
+PII_SIGNALS: tuple[PiiSignal, ...] = (
+    PiiSignal(
+        name="tag",
+        kind="explicit",
+        field="tags.tags[].tag.urn",
+        description=f"The {PII_TAG} global tag.",
+    ),
+    PiiSignal(
+        name="term",
+        kind="implied",
+        field="glossaryTerms.terms[].term.urn",
+        description=f"A glossary term filed under {PII_NODE}.",
+    ),
+    PiiSignal(
+        name="property",
+        kind="implied",
+        field=f"properties.customProperties[{HAS_PII_PROPERTY}]",
+        description=f"The {HAS_PII_PROPERTY} custom property, set truthy.",
+    ),
+)
+
+SIGNALS_BY_NAME: dict[str, PiiSignal] = {s.name: s for s in PII_SIGNALS}
+
+
+@dataclass(frozen=True)
+class PiiFinding:
+    """A signal that fired (or an exclusion that did), and the value that fired it."""
+
+    signal: PiiSignal | None  # None for the NonPII exclusion, which fires no signal
+    present: bool  # True: PII is asserted here. False: PII is positively denied here.
+    value: str | list[str]
+    field: str
+    note: str
+
+
+def resolve_pii(
+    labels: tuple[str, ...],
+    term_parents: Mapping[str, tuple[str, ...]],
+    properties: Mapping[str, str],
+) -> PiiFinding | None:
+    """The most authoritative thing this ONE grain says about PII. None means silence.
+
+    Callers pass one grain at a time — a column's labels, or a table's — which is how
+    precedence rule A (column over table) is enforced: a column-scoped claim simply
+    never passes the table's labels in. Rule B (explicit over implied) is the ordering
+    below: the tag checks come first and return, so a term or a scanner property is
+    only consulted when no tag has spoken.
+    """
+    # --- explicit: the classification act ------------------------------------
+    if PII_TAG in labels:
+        return PiiFinding(
+            signal=SIGNALS_BY_NAME["tag"],
+            present=True,
+            value=PII_TAG,
+            field=SIGNALS_BY_NAME["tag"].field,
+            note="Tagged PII.",
+        )
+
+    denied_by = contradicts(PII_TAG, labels)
+    if denied_by:
+        return PiiFinding(
+            signal=None,
+            present=False,
+            value=denied_by,
+            field=SIGNALS_BY_NAME["tag"].field,
+            note=(
+                f"Tagged {denied_by.rsplit(':', 1)[-1]}, which positively denies PII. "
+                f"An explicit classification tag outranks any implied signal at the "
+                f"same grain."
+            ),
+        )
+
+    # --- implied: structure, then machine ------------------------------------
+    pii_terms = [label for label in labels if PII_NODE in term_parents.get(label, ())]
+    if pii_terms:
+        return PiiFinding(
+            signal=SIGNALS_BY_NAME["term"],
+            present=True,
+            value=sorted(pii_terms),
+            field=SIGNALS_BY_NAME["term"].field,
+            note=(
+                f"Carries {', '.join(t.rsplit(':', 1)[-1] for t in sorted(pii_terms))}, "
+                f"filed under the PII node."
+            ),
+        )
+
+    raw = properties.get(HAS_PII_PROPERTY)
+    if raw is not None and raw.strip().lower() in TRUTHY:
+        return PiiFinding(
+            signal=SIGNALS_BY_NAME["property"],
+            present=True,
+            value=raw,
+            field=SIGNALS_BY_NAME["property"].field,
+            note=f"{HAS_PII_PROPERTY}={raw}: a classifier found personal data here.",
+        )
+
+    # hasPII=false lands here, deliberately: a scanner's miss is not a review, so it
+    # is silence, not a clean bill. Only COMPLETENESS_MARKERS can license that.
+    return None

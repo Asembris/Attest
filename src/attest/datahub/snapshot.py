@@ -38,6 +38,25 @@ def _urns(container: Any, key: str, inner: str) -> tuple[str, ...] | None:
     return tuple((item.get(inner) or {}).get("urn", "") for item in items)
 
 
+def _term_parents(container: Any) -> dict[str, tuple[str, ...]]:
+    """term URN -> the glossary nodes it sits under.
+
+    The hierarchy is what makes a term a *classification signal* rather than a bare
+    label: EmailAddress is a PII signal because someone filed it under the PII node,
+    not because the string looks personal. Attest reads the structure and infers
+    nothing — see policy.PII_SIGNALS.
+    """
+    parents: dict[str, tuple[str, ...]] = {}
+    for assoc in (container or {}).get("terms") or []:
+        term = assoc.get("term") or {}
+        urn = term.get("urn")
+        if not urn:
+            continue
+        nodes = (term.get("parentNodes") or {}).get("nodes") or []
+        parents[urn] = tuple(n.get("urn", "") for n in nodes)
+    return parents
+
+
 class FieldSnapshot(BaseModel):
     """One column, with whatever the catalog says about it."""
 
@@ -80,6 +99,14 @@ class DatasetSnapshot(BaseModel):
     terms: tuple[str, ...] | None = None
     fields: tuple[FieldSnapshot, ...] | None = None
 
+    # Custom properties carry upstream classifiers' findings — `hasPII` is one of the
+    # three signals in policy.PII_SIGNALS. None means the properties aspect is absent.
+    custom_properties: dict[str, str] | None = None
+    # Every glossary term seen on this dataset, at either grain, mapped to the nodes it
+    # sits under. Kept at snapshot level because a column's terms and the table's terms
+    # resolve against the same glossary.
+    term_parents: dict[str, tuple[str, ...]] = {}
+
     @property
     def labels(self) -> tuple[str, ...]:
         """Table-level tags and terms together."""
@@ -106,6 +133,15 @@ class DatasetSnapshot(BaseModel):
                 return f
         return None
 
+    def terms_under(self, node_urn: str, labels: tuple[str, ...]) -> tuple[str, ...]:
+        """Which of `labels` are glossary terms filed under `node_urn`.
+
+        The answer comes from the catalog's own hierarchy, never from the term's name.
+        """
+        return tuple(
+            label for label in labels if node_urn in self.term_parents.get(label, ())
+        )
+
     @classmethod
     def from_graphql(cls, data: dict[str, Any]) -> DatasetSnapshot:
         props = data.get("properties") or {}
@@ -116,6 +152,10 @@ class DatasetSnapshot(BaseModel):
         last_modified = (
             datetime.fromtimestamp(raw_time / 1000, tz=UTC) if raw_time else None
         )
+
+        # The glossary hierarchy, gathered from every grain the terms appear at. A term
+        # on a column resolves against the same node as the same term on the table.
+        term_parents = _term_parents(data.get("glossaryTerms"))
 
         schema = data.get("schemaMetadata")
         fields: tuple[FieldSnapshot, ...] | None = None
@@ -131,6 +171,18 @@ class DatasetSnapshot(BaseModel):
                 )
                 for f in (schema.get("fields") or [])
             )
+            for f in schema.get("fields") or []:
+                term_parents.update(_term_parents(f.get("glossaryTerms")))
+
+        # DataHub returns customProperties as [{key, value}]. Absent aspect -> None,
+        # because "nobody has written properties here" and "the property says nothing"
+        # are different, and only this layer still knows which it saw.
+        raw_props = props.get("customProperties")
+        custom_properties = (
+            {p["key"]: p.get("value", "") for p in raw_props}
+            if raw_props is not None
+            else None
+        )
 
         return cls(
             urn=data["urn"],
@@ -142,4 +194,6 @@ class DatasetSnapshot(BaseModel):
             tags=_urns(data.get("tags"), "tags", "tag"),
             terms=_urns(data.get("glossaryTerms"), "terms", "term"),
             fields=fields,
+            custom_properties=custom_properties,
+            term_parents=term_parents,
         )
