@@ -1,0 +1,17 @@
+# Pinned to what actually resolved on Python 3.12 alongside acryl-datahub.
+# Regenerate with: pip freeze
+
+# --- Attest runtime ---
+fastapi==0.139.0
+uvicorn[standard]==0.51.0
+langgraph==1.2.9
+openai==2.45.0
+httpx==0.28.1
+pydantic==2.11.10
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+
+# --- Seed data + ingestion only (NOT used by Attest's runtime code) ---
+# The CLI owns ingestion; Attest itself talks to DataHub over GraphQL via httpx.
+acryl-datahub==1.6.0.13
+PyYAML==6.0.3
