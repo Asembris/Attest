@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Environments
+.venv/
+venv/
+.env
+
+# Logs
+*.log
+
+# DataHub CLI
+datapacks/
+
+# Generated seed output — rebuild with: python seed/generate_seed.py
+# The generator is the source of truth, not its output. Both files carry
+# generation timestamps, so committing them is pure churn.
+seed/*.json
