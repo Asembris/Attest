@@ -29,6 +29,19 @@ The three buckets:
   Insufficient-Coverage — the catalog is silent: no owner, no tags, no terms, no
                           description. Nothing to support *or* contradict.
 
+The unit of coverage is NOT the dataset, it is the (claim type x verdict) cell —
+four claim types by three verdicts, twelve cells. A single dataset lands in
+different cells for different claims: orders_fact is Supported for an ownership
+claim and Contradicted for a PII claim. `exercises` below names only the headline
+verdict a dataset was built for; it is a label, not a partition.
+
+All twelve cells must be reachable against the live catalog, and Insufficient-
+Coverage is reachable only where the relevant aspect is genuinely ABSENT. That is
+what `no_timestamp` and `no_schema` exist for: without them every dataset carried
+a lastModified and a schemaMetadata, so the freshness and schema checkers had no
+path to Insufficient-Coverage at all. tests/test_coverage.py asserts all twelve
+cells stay reachable, so this cannot silently regress.
+
 Outputs (all under ./seed):
   seed_metadata.json  — MCPs for `datahub ingest`
   recipe.yml          — file source -> datahub-rest sink
@@ -160,6 +173,11 @@ class Dataset:
     tags: list[str] = field(default_factory=list)
     terms: list[str] = field(default_factory=list)
     stale: bool = False
+    # Omit an aspect entirely, so the catalog is *silent* about it rather than
+    # disagreeing. Insufficient-Coverage is only reachable when the aspect is
+    # absent, so these flags are what make that verdict testable at all.
+    no_timestamp: bool = False
+    no_schema: bool = False
     # Which verdict this entity exists to exercise. Recorded in ground_truth.json.
     exercises: str = "Supported"
     note: str = ""
@@ -169,7 +187,9 @@ class Dataset:
         return make_dataset_urn(platform=self.platform, name=self.name, env=ENV)
 
     @property
-    def last_modified(self) -> datetime:
+    def last_modified(self) -> datetime | None:
+        if self.no_timestamp:
+            return None
         return STALE if self.stale else FRESH
 
 
@@ -394,6 +414,59 @@ CATALOG: list[Dataset] = [
             "NOT Contradicted. This is the distinction the auditor must not blur."
         ),
     ),
+    # --- aspect-silent stubs -------------------------------------------------
+    # Insufficient-Coverage is only reachable when the relevant aspect is ABSENT.
+    # Ownership and classification already have silent datasets above (raw_events,
+    # legacy_accounts). Freshness and schema did not — every other dataset carries
+    # a lastModified and a schemaMetadata — so those two claim types could only ever
+    # return Supported or Contradicted. These two stubs close that hole. Each omits
+    # exactly one aspect and is fully documented otherwise, so a test that lands here
+    # can only have landed here for one reason.
+    Dataset(
+        platform="snowflake",
+        name="analytics.staging.pipeline_scratch",
+        description=(
+            "Scratch output of an ad-hoc backfill. Registered in the catalog, but "
+            "nothing records when it last ran."
+        ),
+        owner="dana.wu",
+        tags=["Tier2"],
+        terms=[],
+        columns=[
+            Column("batch_id", "string", "VARCHAR(36)", "Backfill batch key.", tags=["NonPII"]),
+            Column("row_count", "number", "NUMBER(12,0)", "Rows written by the batch."),
+            Column("status", "string", "VARCHAR(16)", "Batch outcome."),
+        ],
+        no_timestamp=True,
+        exercises="Insufficient-Coverage",
+        note=(
+            "Has schema, owner, and a tag — but NO lastModified. A freshness claim "
+            "('refreshed daily', 'updated in the last 24h') must be "
+            "Insufficient-Coverage: the catalog does not know when this last ran, "
+            "which is not the same as knowing it is stale. This is the only dataset "
+            "that isolates the freshness-silent case."
+        ),
+    ),
+    Dataset(
+        platform="postgres",
+        name="attest_db.public.external_report",
+        description=(
+            "A vendor-delivered report registered for lineage. The columns live in "
+            "the vendor's system; no schema has ever been ingested."
+        ),
+        owner="bob.martinez",
+        tags=["Tier2"],
+        terms=["Revenue"],
+        columns=[],
+        no_schema=True,
+        exercises="Insufficient-Coverage",
+        note=(
+            "Has owner, timestamp, tag, and term — but NO schemaMetadata. A schema "
+            "claim ('has a revenue_amount column') must be Insufficient-Coverage, NOT "
+            "Contradicted: absence of a schema is not absence of a column. This is the "
+            "only dataset that isolates the schema-silent case."
+        ),
+    ),
 ]
 
 
@@ -458,7 +531,11 @@ def vocabulary_mcps() -> list[MetadataChangeProposalWrapper]:
 
 def dataset_mcps(ds: Dataset) -> list[MetadataChangeProposalWrapper]:
     mcps: list[MetadataChangeProposalWrapper] = []
-    stamp = audit(ds.last_modified)
+    # The audit stamp on an aspect records when *we wrote the metadata*, which is
+    # not the same thing as when the dataset itself last changed. Only the latter
+    # is a freshness claim's ground truth, and a no_timestamp dataset has none —
+    # so aspect stamps fall back to NOW and never leak in as a timestamp.
+    stamp = audit(ds.last_modified or NOW)
 
     mcps.append(
         MetadataChangeProposalWrapper(
@@ -467,7 +544,11 @@ def dataset_mcps(ds: Dataset) -> list[MetadataChangeProposalWrapper]:
                 name=ds.name.split(".")[-1],
                 qualifiedName=ds.name,
                 description=ds.description,
-                lastModified=TimeStampClass(time=millis(ds.last_modified), actor=ACTOR),
+                lastModified=(
+                    TimeStampClass(time=millis(ds.last_modified), actor=ACTOR)
+                    if ds.last_modified
+                    else None
+                ),
                 customProperties={
                     "seeded_by": "attest/seed/generate_seed.py",
                     "exercises_verdict": ds.exercises,
@@ -500,21 +581,24 @@ def dataset_mcps(ds: Dataset) -> list[MetadataChangeProposalWrapper]:
         for col in ds.columns
     ]
 
-    mcps.append(
-        MetadataChangeProposalWrapper(
-            entityUrn=ds.urn,
-            aspect=SchemaMetadataClass(
-                schemaName=ds.name,
-                platform=f"urn:li:dataPlatform:{ds.platform}",
-                version=0,
-                hash="",
-                platformSchema=OtherSchemaClass(rawSchema=""),
-                fields=fields,
-                created=stamp,
-                lastModified=stamp,
-            ),
+    # Deliberately omitted for the schema-silent dataset: a catalog entry can be
+    # registered without its schema ever being ingested.
+    if not ds.no_schema:
+        mcps.append(
+            MetadataChangeProposalWrapper(
+                entityUrn=ds.urn,
+                aspect=SchemaMetadataClass(
+                    schemaName=ds.name,
+                    platform=f"urn:li:dataPlatform:{ds.platform}",
+                    version=0,
+                    hash="",
+                    platformSchema=OtherSchemaClass(rawSchema=""),
+                    fields=fields,
+                    created=stamp,
+                    lastModified=stamp,
+                ),
+            )
         )
-    )
 
     # Deliberately omitted for the Insufficient-Coverage datasets.
     if ds.owner:
@@ -576,8 +660,9 @@ def ground_truth() -> dict:
                 "owner": ds.owner,
                 "tags": ds.tags,
                 "terms": ds.terms,
-                "last_modified": ds.last_modified.isoformat(),
+                "last_modified": ds.last_modified.isoformat() if ds.last_modified else None,
                 "is_stale": ds.stale,
+                "has_schema": not ds.no_schema,
                 "exercises": ds.exercises,
                 "note": ds.note,
                 "columns": [
