@@ -18,7 +18,7 @@ a shape that does not exist.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -114,7 +114,7 @@ class DatasetSnapshot(BaseModel):
         # not know when this last changed, which is not a claim that it is stale.
         raw_time = (props.get("lastModified") or {}).get("time")
         last_modified = (
-            datetime.fromtimestamp(raw_time / 1000, tz=timezone.utc) if raw_time else None
+            datetime.fromtimestamp(raw_time / 1000, tz=UTC) if raw_time else None
         )
 
         schema = data.get("schemaMetadata")
