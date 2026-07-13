@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import pytest
 from tests.conftest import (
+    COLUMN_ONLY_PII,
     DOCUMENTED,
     NONPII_TRAP,
     OWNED_BY_CAROL,
@@ -34,6 +35,7 @@ from attest.checkers import check_classification, policy
 from attest.claims import ClassificationClaim, Verdict
 
 PII = policy.PII_TAG
+CUSTOMER_ID_TERM = "urn:li:glossaryTerm:CustomerIdentifier"
 
 
 def pii_free(urn: str, field_path: str | None = None) -> ClassificationClaim:
@@ -120,7 +122,7 @@ def test_a_term_outside_the_pii_node_is_not_a_pii_signal(snapshot):
     """
     snap = snapshot(OWNED_BY_CAROL)  # terms: CustomerIdentifier only, no PII tag
 
-    assert "urn:li:glossaryTerm:CustomerIdentifier" in snap.labels
+    assert CUSTOMER_ID_TERM in snap.labels
     assert snap.terms_under(PII_NODE, snap.labels) == ()
 
     # Silence, not a clean bill: the table simply has no PII signal and no review.
@@ -128,6 +130,36 @@ def test_a_term_outside_the_pii_node_is_not_a_pii_signal(snapshot):
         check_classification(pii_free(OWNED_BY_CAROL), snap).verdict
         is Verdict.INSUFFICIENT_COVERAGE
     )
+
+
+def test_the_term_outside_the_node_still_works_as_an_ordinary_label(snapshot):
+    """It is not a PII signal, but it is not inert either — and both halves matter.
+
+    The point of CustomerIdentifier is that a term can be REAL, attached, and checkable
+    while carrying no PII meaning. A claim naming the term is answered by exact URN
+    match, as any non-PII label is; only a claim naming urn:li:tag:PII goes through
+    PII_SIGNALS. If this test were absent, CustomerIdentifier would be a seeded prop
+    rather than a case, and nothing would notice if it were quietly swept into the node.
+    """
+    snap = snapshot(OWNED_BY_CAROL)
+
+    attached = ClassificationClaim(
+        target_urn=OWNED_BY_CAROL,
+        raw_text="support_tickets is tagged with the CustomerIdentifier term.",
+        labels=(CUSTOMER_ID_TERM,),
+        present=True,
+    )
+    assert check_classification(attached, snap).verdict is Verdict.SUPPORTED
+
+    # And it does not drag PII along with it: the same table, asked about PII, is silent.
+    assert (
+        check_classification(contains_pii(OWNED_BY_CAROL), snap).verdict
+        is Verdict.INSUFFICIENT_COVERAGE
+    )
+
+    # It is attached and it resolves — it simply sits outside the PII node.
+    assert CUSTOMER_ID_TERM in snap.term_parents
+    assert PII_NODE not in snap.term_parents[CUSTOMER_ID_TERM]
 
 
 def test_has_pii_false_fires_nothing_and_denies_nothing(snapshot):
@@ -230,6 +262,85 @@ def test_explicit_tag_beats_implied_term_at_the_same_grain(snapshot):
 
     assert (
         check_classification(contains_pii(NONPII_TRAP), snap).verdict is Verdict.CONTRADICTED
+    )
+
+
+def test_precedence_generalizes_it_is_not_a_special_case_for_nonpii(snapshot):
+    """Rule A, inverted. The rule is COLUMN over TABLE — not "NonPII beats everything".
+
+    audit_log is email_campaign_stats turned inside out: the table carries no PII signal
+    of any kind, and `actor_email` is explicitly tagged PII. If the implementation were
+    really "a NonPII column suppresses table-level PII", this case would fall straight
+    through it. The column's own tag decides, in whichever direction it points.
+    """
+    snap = snapshot(COLUMN_ONLY_PII)
+
+    # The table itself is genuinely silent about PII — no tag, no term, no property.
+    assert policy.resolve_pii(snap.labels, snap.term_parents, snap.custom_properties or {}) is None
+    assert "urn:li:tag:PII" in snap.field("actor_email").labels
+
+    assert (
+        check_classification(pii_free(COLUMN_ONLY_PII, "actor_email"), snap).verdict
+        is Verdict.CONTRADICTED
+    )
+    assert (
+        check_classification(contains_pii(COLUMN_ONLY_PII, "actor_email"), snap).verdict
+        is Verdict.SUPPORTED
+    )
+
+
+def test_a_pii_column_contradicts_a_pii_free_claim_about_its_table(snapshot):
+    """Signals propagate UP, because a table-level PII claim is existential.
+
+    "This table contains PII" is true if PII is anywhere in it. So a column tagged PII
+    settles a table-scoped claim even when the table's own metadata says nothing — and a
+    checker that reads only table-level metadata answers "the catalog is silent" while an
+    email address sits tagged in the schema.
+    """
+    snap = snapshot(COLUMN_ONLY_PII)
+    result = check_classification(pii_free(COLUMN_ONLY_PII), snap)
+
+    assert result.verdict is Verdict.CONTRADICTED
+    assert "actor_email" in result.reason
+    assert any("actor_email" in e.field for e in result.evidence)
+
+
+def test_a_reviewed_table_cannot_be_certified_clean_over_a_tagged_pii_column(snapshot):
+    """The worst verdict this product can produce, made unreachable.
+
+    Upward propagation is not a nicety. Give audit_log a Verified tag and the completeness
+    marker licenses a closed-world denial: with no table-level PII signal, "this table is
+    PII-free" came back SUPPORTED — certifying a table whose own `actor_email` column is
+    tagged PII. The column signal is what stops it, so it is asserted directly here rather
+    than left implicit in the seed.
+    """
+    snap = snapshot(COLUMN_ONLY_PII)
+    reviewed = snap.model_copy(update={"tags": (*snap.tags, "urn:li:tag:Verified")})
+
+    assert policy.classification_is_complete(reviewed.labels), "the trap needs the marker"
+
+    result = check_classification(pii_free(COLUMN_ONLY_PII), reviewed)
+    assert result.verdict is Verdict.CONTRADICTED, (
+        "a Verified table with a PII-tagged column must never be certified PII-free"
+    )
+
+
+def test_a_pii_free_claim_about_an_unclassified_column_is_silence_not_denial(snapshot):
+    """Rule A downward, in the PII-free direction. The counterpart of the test above.
+
+    customer_contact is tagged PII at table level; `verified_at` is an unclassified
+    timestamp. The table's signal is existential — "there is PII somewhere in here" — so
+    it says nothing whatever about this column, and Attest declines to answer rather than
+    marking a timestamp as personal data. Inheriting the tag downward would flag every
+    column of every PII table in the warehouse.
+    """
+    snap = snapshot(PII_TABLE_UNVERIFIED)
+    assert policy.PII_TAG in snap.labels
+    assert snap.field("verified_at").labels == ()
+
+    assert (
+        check_classification(pii_free(PII_TABLE_UNVERIFIED, "verified_at"), snap).verdict
+        is Verdict.INSUFFICIENT_COVERAGE
     )
 
 

@@ -74,8 +74,8 @@ evidence, so an explanation can say *why* the conflict resolved the way it did.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from typing import Literal
 
 TAG = "urn:li:tag:"
@@ -178,6 +178,14 @@ class PiiFinding:
     value: str | list[str]
     field: str
     note: str
+    # Set when a table-scoped finding came from one of the table's COLUMNS — i.e. the
+    # existential case in resolve_pii_at_table. None means the table said it itself.
+    column: str | None = None
+
+    @property
+    def is_explicit(self) -> bool:
+        """Did a human's classification tag produce this? An exclusion always did."""
+        return self.signal is None or self.signal.kind == "explicit"
 
 
 def resolve_pii(
@@ -244,3 +252,78 @@ def resolve_pii(
     # hasPII=false lands here, deliberately: a scanner's miss is not a review, so it
     # is silence, not a clean bill. Only COMPLETENESS_MARKERS can license that.
     return None
+
+
+def resolve_pii_at_table(
+    table_labels: tuple[str, ...],
+    term_parents: Mapping[str, tuple[str, ...]],
+    properties: Mapping[str, str],
+    columns: Sequence[tuple[str, tuple[str, ...]]] = (),
+) -> PiiFinding | None:
+    """What the catalog says about PII in this TABLE, columns included.
+
+    Signals propagate UP and not DOWN, and the asymmetry is not an oversight — it is
+    what the signals actually mean.
+
+      UP (here): a table-level PII claim is EXISTENTIAL. "This table contains PII" is
+      true if PII is anywhere in it, so a column tagged PII settles it, whatever the
+      table-level metadata does or does not say. Without this, a table whose `email`
+      column is tagged PII but which nobody tagged at table level would answer "is this
+      table PII-free?" with silence — and on a table that also carries a `Verified`
+      marker, it would answer SUPPORTED. Certifying a table clean while one of its own
+      columns is tagged PII is the worst verdict this product can produce, and it was
+      reachable until this function existed.
+
+      DOWN (deliberately not): the same existential reading forbids the converse. "This
+      table contains PII" does NOT mean "every column is PII", so a table's PII tag says
+      nothing about its untagged `signup_ts` column. Inheriting it downward would mark
+      every column of every PII table as personal data — crying wolf on the entire
+      warehouse, which is the failure this project exists to prevent. A column-scoped
+      claim is therefore answered by that column's own classification, or by silence.
+      See check_classification, which passes one grain at a time.
+
+    Precedence within the table scope, most authoritative first:
+
+      1. the table's own explicit PII tag
+      2. an explicit PII tag on ANY column   (existential; positive evidence is positive)
+      3. the table's explicit NonPII tag     (rule B: explicit outranks implied)
+      4. the table's implied signals         (a term under the PII node, or hasPII)
+      5. an implied signal on ANY column
+      6. silence
+
+    Step 2 sits above step 3 on purpose: a column a human tagged PII outweighs a table
+    someone tagged NonPII, because the more specific classification act is the better
+    evidence — and because a positive finding of personal data should never be talked out
+    of existence by a coarser label.
+    """
+    table = resolve_pii(table_labels, term_parents, properties)
+
+    column_findings: list[tuple[str, PiiFinding]] = []
+    for path, labels in columns:
+        found = resolve_pii(labels, term_parents, {})
+        if found is not None:
+            column_findings.append((path, found))
+
+    def _from_column(explicit: bool) -> PiiFinding | None:
+        for path, found in column_findings:
+            if found.present and found.is_explicit is explicit:
+                return replace(
+                    found,
+                    column=path,
+                    field=f"schemaMetadata.fields[{path}].globalTags + .glossaryTerms",
+                    note=f"Column '{path}' carries PII. {found.note}",
+                )
+        return None
+
+    if table is not None and table.present and table.is_explicit:
+        return table
+
+    from_explicit_column = _from_column(explicit=True)
+    if from_explicit_column is not None:
+        return from_explicit_column
+
+    if table is not None:
+        # Either the NonPII exclusion (explicit, absent) or an implied positive signal.
+        return table
+
+    return _from_column(explicit=False)

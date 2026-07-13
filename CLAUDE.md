@@ -85,13 +85,25 @@ fires nothing in either direction: a scanner's miss is not a review.
 Nothing is inferred from a name. `EmailAddress` is a PII signal because it is filed under the
 PII node in the catalog's hierarchy; `CustomerIdentifier` is deliberately outside it.
 
-**When signals disagree, precedence resolves it.** (A) Column over table — a table-level signal
-never propagates into a column with its own classification, and a table tagged PII does not make
-its `signup_ts` column PII. (B) Within a grain, an explicit tag beats an implied signal — a
-human's classification act outranks a term's subject matter or a scanner's guess. The losing
-signal is still returned as evidence, so an explanation can say why the conflict resolved as it
-did. Worked example: `email_campaign_stats` is filed under `EmailAddress` while its
-`recipient_email_hash` column is tagged `NonPII`; the column's tag wins.
+**When signals disagree, precedence resolves it — and it is about GRAIN, not about `NonPII`.**
+
+(A) **Signals propagate up, never down**, because a table-level PII claim is *existential*
+("contains PII" = PII is somewhere in it). **Up:** a column tagged PII settles a table-scoped
+claim regardless of table metadata — without this, a `Verified` table with no table-level PII tag
+returned **Supported** for "this table is PII-free" while its own `actor_email` column was tagged
+PII, which is the worst verdict the product can produce. **Down:** a table's PII tag says nothing
+about its untagged `signup_ts` column; inheriting it downward would flag every column of every
+PII table. See `policy.resolve_pii_at_table`.
+
+(B) Within a grain, an explicit tag beats an implied signal — a human's classification act
+outranks a term's subject matter or a scanner's guess. An explicit PII tag *on a column* also
+outranks a `NonPII` tag on its table: the more specific act is the better evidence.
+
+The losing signal is still returned as evidence, so an explanation can say why the conflict
+resolved as it did. Two worked examples, and they are mirror images: `email_campaign_stats` is
+filed under `EmailAddress` while its `recipient_email_hash` column is tagged `NonPII` (column
+wins → not PII); `audit_log` carries no table-level PII signal at all while its `actor_email`
+column is tagged PII (column wins → PII, at both grains).
 
 Related, and easy to get wrong: **"PII-free" is not the mirror of "contains PII."** An untagged
 table cannot *support* a PII-free claim — nobody has looked. That is Insufficient-Coverage.
