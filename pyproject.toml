@@ -10,6 +10,9 @@ dependencies = [
     "openai>=2.0",
     "pydantic>=2.11",
     "pydantic-settings>=2.14",
+    # Use the OS certificate store: certifi alone fails behind a TLS-inspecting
+    # network, which is not an outage and not a bad key. See llm.py.
+    "truststore>=0.10",
 ]
 
 [project.optional-dependencies]
@@ -35,4 +38,7 @@ testpaths = ["tests"]
 # are a shared vocabulary, and naming them by the role they play beats repeating URN
 # literals in every assertion.
 pythonpath = ["tests"]
-addopts = "-q --strict-markers"
+# Live tests hit the real OpenAI API and cost money, so they are deselected by default.
+# `just live` runs them. Everything else is offline and free.
+addopts = "-q --strict-markers -m 'not live'"
+markers = ["live: calls the real OpenAI API. Costs money. Run with `just live`."]

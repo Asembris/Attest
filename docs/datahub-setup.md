@@ -130,5 +130,17 @@ the way it does.
   TLS-inspecting network — nothing to do with your data. The line that matters is
   `'failures': []` in the summary above them. (`datahub telemetry disable` silences it.)
 
+- **The same TLS-inspecting network breaks the OpenAI SDK, and it does not look like it.**
+  `certifi`'s CA bundle does not contain the proxy's root certificate, so every call dies
+  with `CERTIFICATE_VERIFY_FAILED` — which the SDK wraps as a generic
+  `APIConnectionError: Connection error`, reading like an outage or a bad key. It is
+  neither. `attest/llm.py` calls `truststore.inject_into_ssl()` to use the **OS**
+  certificate store, which has the CA.
+
+- **`pydantic-settings`' `env_file=".env"` is relative to the working directory**, not the
+  package. Running any script from outside the repo root silently loaded no key and failed
+  as "missing credentials", which reads like an unset key rather than a wrong CWD.
+  `config.py` anchors the path to the repo instead.
+
 - **DataHub rejects multi-`__type` introspection queries** as `BadFaithIntrospection`.
   Introspect one type per request.

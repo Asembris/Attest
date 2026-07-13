@@ -34,6 +34,11 @@ health:
 test *ARGS:
     python -m pytest {{ARGS}}
 
+# The semantic layer against a REAL model. Costs money; needs OPENAI_API_KEY.
+# The rest of the suite runs offline against a scripted fake and is free.
+live:
+    python -m pytest tests/test_live.py -m live -v
+
 # Just the coverage matrix: can every claim type still reach every verdict?
 matrix:
     python -m pytest tests/test_coverage.py -v

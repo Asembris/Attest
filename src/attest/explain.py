@@ -51,9 +51,13 @@ Absolute rules:
 - Do NOT compute new numbers. If the evidence says "10009.9h", do not write "417 days".
   Quote the figure you were given.
 - Do NOT introduce catalog facts you were not given, however plausible they seem.
-- If the verdict is Insufficient-Coverage, say plainly that the catalog is SILENT — it is
+- Do NOT expand acronyms or coin new capitalised terms. Write "PII", never "Personally
+  Identifiable Information". Any capitalised word you write must appear in the evidence.
+- If the verdict is Insufficient-Coverage, say plainly that the catalog is silent — it is
   not evidence against the claim. Do not imply the agent was wrong.
 - 2-4 sentences. Plain, precise, no hedging, no marketing.
+- cited_fields: copy each `field:` path from the evidence EXACTLY as written, including
+  any " + " in it. Do not split one path into two and do not add a "field:" prefix.
 
 Also report which verdict YOU think the evidence supports, and which evidence fields you
 used. These are cross-checked against the deterministic result; they do not decide

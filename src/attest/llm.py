@@ -84,6 +84,20 @@ class LLM:
                 "OPENAI_API_KEY is not set. The deterministic checkers do not need it; "
                 "the semantic layer does. Copy .env.example to .env and fill it in."
             )
+
+        # Trust the OS certificate store, not just certifi's bundle. Behind a
+        # TLS-inspecting corporate network the proxy presents a certificate signed by a
+        # root CA that certifi has never heard of, and every OpenAI call dies with
+        # CERTIFICATE_VERIFY_FAILED — which the SDK surfaces as a generic
+        # APIConnectionError and reads like an outage or a bad key. It is neither. The
+        # same landmine takes out `datahub docker quickstart`; see docs/datahub-setup.md.
+        try:
+            import truststore
+
+            truststore.inject_into_ssl()
+        except ImportError:  # pragma: no cover — truststore is a declared dependency
+            log.debug("truststore not installed; falling back to certifi's CA bundle")
+
         return OpenAI(api_key=settings.openai_api_key).chat.completions  # type: ignore[return-value]
 
     def json(
