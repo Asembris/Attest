@@ -7,6 +7,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
     "httpx>=0.28",
+    "openai>=2.0",
     "pydantic>=2.11",
     "pydantic-settings>=2.14",
 ]
