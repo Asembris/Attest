@@ -161,7 +161,7 @@ Metadata auth is disabled locally, so no token is needed.
 ```powershell
 just seed     # generate_seed.py, then `datahub ingest -c ./seed/recipe.yml`
 just probe    # proves READ / READ / WRITE / READ-BACK
-just test     # 54 tests against the live catalog
+just test     # 58 tests against the live catalog
 ```
 
 Expect `failures: []` and 76 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
