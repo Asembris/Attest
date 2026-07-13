@@ -38,8 +38,8 @@ with the same confident shape as a real one.
    and precision arguments are ignored. What is NOT done is genuine dialect mapping
    ('text' ~ 'VARCHAR', 'int8' ~ 'BIGINT'), which needs a model of each platform's
    type system. A claim in a vocabulary the catalog does not use is Contradicted
-   today. If that proves too harsh in practice it is a Session 2 escalation, not an
-   `if` to add here.
+   today. If that proves too harsh in practice it is an escalation to the semantic
+   layer, not an `if` to add here.
 
 If a fifth question shows up that needs a model, it goes on this list — it does not
 go into a checker.

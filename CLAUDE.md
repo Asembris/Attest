@@ -37,6 +37,26 @@ verdict. `checkers/` has one checker per claim type and imports no model client.
 explanation generation only, and it is constrained to the evidence the deterministic checker
 returned. It gets to *phrase* a verdict, not choose one.
 
+Built, and the invariants worth not rediscovering:
+- [llm.py](src/attest/llm.py) is the **only** module that calls a model. Strict `json_schema`,
+  `temperature=0`, retry-on-malformed (2 attempts, error handed back). The client is injectable,
+  so the whole semantic layer tests offline against a scripted fake — the suite spends no tokens.
+- [decompose.py](src/attest/decompose.py): a claim's `target_urn` **must appear verbatim in the
+  source text**. The model may quote a URN, never mint one. A hallucinated URN would otherwise
+  reach a checker and come back Insufficient-Coverage — an invented entity reported as an
+  under-documented one.
+- [faithfulness.py](src/attest/faithfulness.py): every factual token in an explanation must
+  appear in the evidence. Matching is by **contiguous word sequence** (so `PII` does not match
+  inside `NonPII`, and `customer_email` cannot be assembled from `customer_profile` + `email`).
+  Capitalized words are a factual class and the guard **fails closed**. Derived numbers are
+  rejected even when correct.
+- [explain.py](src/attest/explain.py): rejection falls back to a **deterministic template** built
+  from the checker's reason and evidence. A failed explanation degrades to something *true*,
+  never to something plausible. The template must itself pass the guard — keep its scaffolding
+  lowercase, or it trips the capitalized-word rule.
+- [crosscheck.py](src/attest/crosscheck.py): the model reports the verdict it reads and the
+  fields it cited. Disagreement never changes the verdict; it is surfaced as a `Conflict`.
+
 **3. Three verdicts, and the third is load-bearing.** Insufficient-Coverage ≠ Contradicted.
 An agent is not wrong because the catalog is incomplete, and most real catalog entities are
 incomplete. Collapsing the two would make Attest cry wolf on every under-documented entity —
