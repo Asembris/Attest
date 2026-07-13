@@ -417,6 +417,37 @@ CATALOG: list[Dataset] = [
             "NOT Contradicted. This is the distinction the auditor must not blur."
         ),
     ),
+    Dataset(
+        platform="postgres",
+        name="attest_db.public.hr_headcount",
+        description=(
+            "Headcount and compensation by employee. Classified with tags only — the "
+            "HR domain never adopted the glossary."
+        ),
+        owner="dana.wu",
+        # PII is asserted ONLY as a globalTag. No glossary term anywhere on this
+        # dataset, at table or column grain. Real catalogs look like this constantly:
+        # tags are cheap and get applied, glossaries are a governance project that
+        # half of an org never finishes. A classification checker that reads terms and
+        # forgets tags would return a confident "PII-free: Supported" on this table
+        # while a PII tag sits on it untouched — the worst verdict Attest can produce.
+        # This dataset exists to make that failure impossible to ship unnoticed.
+        tags=["PII", "Sensitive", "Tier1", "Verified"],
+        terms=[],
+        columns=[
+            Column("employee_id", "string", "uuid", "Primary key.", tags=["NonPII"]),
+            Column("home_address", "string", "text", "Residential address.", tags=["PII"]),
+            Column("salary_usd", "number", "numeric(12,2)", "Annual salary.", tags=["PII"]),
+            Column("department", "string", "varchar(64)", "Cost centre.", tags=["NonPII"]),
+        ],
+        exercises="Contradicted",
+        note=(
+            "PII signalled by globalTag alone — zero glossary terms. A 'PII-free' claim "
+            "here must be Contradicted on the strength of the tag. Guards the union "
+            "semantics of the classification checker: tags and terms are BOTH evidence, "
+            "and a checker that reads only one would pass every other test in the suite."
+        ),
+    ),
     # --- aspect-silent stubs -------------------------------------------------
     # Insufficient-Coverage is only reachable when the relevant aspect is ABSENT.
     # Ownership and classification already have silent datasets above (raw_events,

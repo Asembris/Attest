@@ -72,12 +72,42 @@ def test_the_window_is_the_only_thing_that_moves_the_verdict(snapshot, now: date
     )
     assert check_freshness(generous, snapshot(STALE), now=now).verdict is Verdict.SUPPORTED
 
+    # `now` is one hour past this dataset's timestamp, so a half-hour window excludes it.
     tight = FreshnessClaim(
         target_urn=DOCUMENTED,
-        max_age_hours=1,
-        raw_text="The customer profile was updated in the last hour.",
+        max_age_hours=0.5,
+        raw_text="The customer profile was updated in the last 30 minutes.",
     )
     assert check_freshness(tight, snapshot(DOCUMENTED), now=now).verdict is Verdict.CONTRADICTED
+
+
+def test_verdicts_do_not_depend_on_the_wall_clock(snapshot) -> None:
+    """Reproducibility, asserted rather than hoped for.
+
+    Every freshness verdict must be a function of (claim window, catalog timestamp,
+    injected now) and nothing else. Someone cloning this repo in three weeks runs the
+    same seed and gets the same verdicts, because `now` is derived from the catalog —
+    not from the machine's clock, and not from a committed file that drifts out of sync
+    with a freshly-seeded catalog.
+
+    This test fails the moment check_freshness reaches for datetime.now() internally.
+    """
+    snap = snapshot(DOCUMENTED)
+    assert snap.last_modified is not None
+    claim = FreshnessClaim(target_urn=DOCUMENTED, max_age_hours=24, raw_text="Fresh daily.")
+
+    # Shift the whole world forward a decade — data and clock together. The dataset is
+    # still 1h old at that instant, so the verdict must not move. Only the INTERVAL is
+    # allowed to matter; the absolute date must not enter into it.
+    for offset in (timedelta(0), timedelta(days=3650)):
+        shifted = snap.model_copy(update={"last_modified": snap.last_modified + offset})
+        anchored = shifted.last_modified + timedelta(hours=1)
+        assert check_freshness(claim, shifted, now=anchored).verdict is Verdict.SUPPORTED
+
+    # And the same instant judged against a dataset a decade older flips it, proving the
+    # arithmetic is live rather than the answer being pinned to the dataset.
+    ancient = snap.model_copy(update={"last_modified": snap.last_modified - timedelta(days=3650)})
+    assert check_freshness(claim, ancient, now=snap.last_modified).verdict is Verdict.CONTRADICTED
 
 
 def test_boundary_is_inclusive(snapshot) -> None:

@@ -23,6 +23,7 @@ from conftest import (
     NONPII_TRAP,
     PII,
     REVIEWED_CLEAN,
+    TAG_ONLY_PII,
     TIER1,
     UNREVIEWED,
 )
@@ -166,18 +167,86 @@ def test_the_completeness_marker_is_what_makes_the_difference(snapshot) -> None:
     )
 
 
-# --- mechanics ----------------------------------------------------------------
+# --- union semantics: tags and terms are BOTH evidence ------------------------
 
 
-def test_glossary_terms_count_as_classification(snapshot) -> None:
-    """Claims range over tags AND glossary terms; a checker reading only tags misses half."""
+def test_a_pii_TAG_alone_contradicts_a_pii_free_claim(snapshot) -> None:
+    """The worst verdict Attest could possibly produce, and the one a DataHub-literate
+    reviewer will reach for first.
+
+    hr_headcount is tagged PII and carries no glossary term at all — not on the table,
+    not on any column. Real catalogs look like this constantly: tags are cheap and get
+    applied, glossaries are a governance project most orgs never finish.
+
+    A checker that reads glossaryTerms and forgets globalTags finds no PII signal here,
+    concludes the claim holds, and returns a confident Supported on "this table is
+    PII-free" while a PII tag sits on the entity untouched. It would pass every other
+    test in this file. This is the one that stops it.
+    """
+    snap = snapshot(TAG_ONLY_PII)
+    # None, not () — the glossaryTerms aspect is absent entirely, which is the whole
+    # point: there is no term vocabulary here for a term-only checker to fall back on.
+    assert not snap.terms, "this dataset must have NO glossary terms, or it proves nothing"
+    assert PII in snap.tags
+
+    claim = ClassificationClaim(
+        target_urn=TAG_ONLY_PII,
+        labels=(PII,),
+        present=False,
+        raw_text="The HR headcount table is PII-free.",
+    )
+    r = check_classification(claim, snap)
+
+    assert r.verdict is Verdict.CONTRADICTED
+    assert r.verdict is not Verdict.SUPPORTED
+    assert PII in r.evidence[0].value
+
+
+def test_a_pii_TAG_alone_supports_a_contains_pii_claim(snapshot) -> None:
+    """The same union, in the affirmative direction."""
+    claim = ClassificationClaim(
+        target_urn=TAG_ONLY_PII, labels=(PII,), raw_text="HR headcount contains PII."
+    )
+    assert check_classification(claim, snapshot(TAG_ONLY_PII)).verdict is Verdict.SUPPORTED
+
+
+def test_a_pii_TAG_alone_contradicts_at_column_grain(snapshot) -> None:
+    """Union semantics must hold per-column too, not just on the table."""
+    claim = ClassificationClaim(
+        target_urn=TAG_ONLY_PII,
+        labels=(PII,),
+        present=False,
+        field_path="salary_usd",
+        raw_text="The salary column contains no PII.",
+    )
+    r = check_classification(claim, snapshot(TAG_ONLY_PII))
+
+    assert r.verdict is Verdict.CONTRADICTED
+    assert not snapshot(TAG_ONLY_PII).field("salary_usd").terms
+
+
+def test_a_glossary_TERM_alone_is_also_sufficient(snapshot) -> None:
+    """The mirror of the above: a term with no corresponding tag still classifies.
+
+    Together with the three tests above, this pins the semantics as a genuine UNION.
+    Neither vocabulary is privileged, and neither alone is load-bearing for the suite —
+    so a checker cannot pass by reading only one of them.
+    """
     claim = ClassificationClaim(
         target_urn=DOCUMENTED,
         labels=(EMAIL_TERM,),
         field_path="email",
         raw_text="The email column carries the Email Address term.",
     )
-    assert check_classification(claim, snapshot(DOCUMENTED)).verdict is Verdict.SUPPORTED
+    r = check_classification(claim, snapshot(DOCUMENTED))
+
+    assert r.verdict is Verdict.SUPPORTED
+    # EMAIL_TERM is a glossaryTerm; it appears in no globalTag anywhere.
+    assert EMAIL_TERM not in snapshot(DOCUMENTED).field("email").tags
+    assert EMAIL_TERM in snapshot(DOCUMENTED).field("email").terms
+
+
+# --- mechanics ----------------------------------------------------------------
 
 
 def test_a_multi_label_claim_is_a_conjunction(snapshot) -> None:
