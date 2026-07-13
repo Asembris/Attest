@@ -44,7 +44,12 @@ class FieldSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     path: str
+    # DataHub carries two type notions and a claim may reasonably use either:
+    # `native_type` is the platform's own spelling ("VARCHAR(36)"), `data_type` is
+    # DataHub's abstract enum ("STRING"). Keeping both lets "customer_id is a string"
+    # be checked deterministically instead of needing a dialect-mapping model.
     native_type: str | None = None
+    data_type: str | None = None
     description: str | None = None
     tags: tuple[str, ...] = ()
     terms: tuple[str, ...] = ()
@@ -119,6 +124,7 @@ class DatasetSnapshot(BaseModel):
                 FieldSnapshot(
                     path=f["fieldPath"],
                     native_type=f.get("nativeDataType"),
+                    data_type=f.get("type"),
                     description=f.get("description"),
                     tags=_urns(f.get("globalTags"), "tags", "tag") or (),
                     terms=_urns(f.get("glossaryTerms"), "terms", "term") or (),
