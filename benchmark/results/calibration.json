@@ -2,24 +2,16 @@
   "labeler": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
   "family": "llama (NVIDIA Nemotron) \u2014 deliberately NOT the pipeline's family",
   "n_cases": 40,
-  "agreement": 0.95,
-  "agreed": 38,
+  "agreement": 0.975,
+  "agreed": 39,
   "disputed": [
     {
       "case": "class-03",
       "mine": "Supported",
       "my_rationale": "The table is explicitly tagged NonPII, which affirmatively rules PII out.",
       "theirs": "Contradicted",
-      "their_reason": "The table contains a glossary term 'EmailAddress' under the PII node, which is a PII signal. Since the table is tagged 'Verified', the absence of a PII tag is a reviewed finding, but the presence of a PII signal (glossary term under PII node) contradicts the claim that the table contains no PII.",
-      "their_decisive_field": "table glossary terms"
-    },
-    {
-      "case": "class-15",
-      "mine": "Contradicted",
-      "my_rationale": "The column is untagged on a Verified table, so the omission is a reviewed finding rather than an oversight.",
-      "theirs": "Insufficient-Coverage",
-      "their_reason": "The claim is about the 'signup_ts' column containing PII, but this column has no labels (tags or glossary terms) indicating PII presence or absence. Although the table is tagged as 'Verified' and 'PII', and other columns are marked as PII, the column-specific claim requires column-level labeling for a definitive verdict. Since 'signup_ts' lacks any PII-related labels, the catalog does not provide enough information to support or contradict the claim.",
-      "their_decisive_field": "column tags (absent for 'signup_ts')"
+      "their_reason": "The table contains a glossary term 'EmailAddress' under the PII node, which is a PII signal. Since the table is tagged 'Verified', this signal is a reviewed finding, contradicting the claim that the table contains no PII.",
+      "their_decisive_field": "table glossary terms (under PII node)"
     }
   ],
   "labels": [
@@ -166,7 +158,7 @@
     {
       "case": "class-15",
       "mine": "Contradicted",
-      "theirs": "Insufficient-Coverage"
+      "theirs": "Contradicted"
     },
     {
       "case": "class-16",
@@ -224,6 +216,6 @@
       "theirs": "Insufficient-Coverage"
     }
   ],
-  "tokens": 88286,
+  "tokens": 99234,
   "cost_usd": null
 }
