@@ -24,9 +24,22 @@ in isolation before any model touched it.
 
 **Session 2: the semantic layer.** Claim decomposition and explanation generation, sitting
 on top of the core and never replacing it. The model gets to *phrase* a verdict; it does
-not get to reach one. 113 tests against the live seeded catalog.
+not get to reach one.
 
-Not built yet: LangGraph orchestration and the FastAPI surface (Session 3).
+**Session 3: the pipeline.** A LangGraph state machine wiring the two together, plus the
+**self-correction loop** — a contradicted claim is handed back to the source agent with the
+catalog's facts, and the revision is re-verified by the same deterministic checker. Plus
+**trajectory verification**, which holds each run to its own architecture, and full
+observability. 157 offline tests, 3 live.
+
+Not built yet: the FastAPI surface, the web UI, continuous monitoring.
+
+```
+audited 3 claims in 14.3s (4392 tokens, $0.001006)
+```
+
+Measured, not estimated — from the clock and the API's own token counts. `just live`
+prints it.
 
 ## The coverage matrix
 
@@ -69,6 +82,13 @@ src/attest/            Attest's own code. Talks to DataHub over raw GraphQL (htt
   faithfulness.py      The guard. Every factual token must appear in the evidence.
   crosscheck.py        Model disagrees with the checker -> surfaced, never obeyed.
   sanitize.py          Untrusted agent text in, instructions stripped out.
+  --- the pipeline: wires the above into a graph, and audits itself doing it ---
+  graph.py             The LangGraph state machine. Routing, the loop, the checkpoint.
+  revise.py            Self-correction. A revision may not change the subject.
+  trajectory.py        Seven invariants, asserted against the run's own trace.
+  observe.py           Every step: kind, latency, tokens. The trace trajectory.py reads.
+  cost.py              Prices a run. An unpriced model costs None, never 0.
+  report.py            Verdicts, proposed corrections, receipts.
 seed/                  Seed catalog generator + ingestion recipe.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
 tests/                 Live-catalog pytest suite. The semantic layer runs offline.
@@ -197,6 +217,114 @@ came back PII-free. The converse of Rule A matters just as much: a table tagged 
 
 [tests/test_pii_signals.py](tests/test_pii_signals.py) pins all of it.
 
+## The pipeline
+
+```
+sanitize → decompose → ┌ per claim ────────────────────────────────────────┐
+                       │ resolve → route → check → explain → guard          │
+                       │                    ↑ deterministic   ↓ Contradicted │
+                       │                    └── recheck ← revise ────────────┤ ×2 max
+                       └───────────────────────────────────────────────────┘
+                                                     ↓
+                                       human checkpoint → report
+```
+
+### Why a graph and not a for-loop
+
+A fair question, and it deserves a real answer rather than a buzzword — a `for` loop would
+run these steps in this order. Four things the graph buys, each a property a loop would
+have to be *trusted* to maintain:
+
+1. **The retry cap is an edge, not a counter.** Self-correction is a genuine cycle
+   (`revise → recheck → revise`), and the only way out is a conditional edge that reads the
+   retry count. A `while` with a `break` is one careless edit from unbounded, and an
+   unbounded correction loop against a paid API is a cost bug that ships silently.
+2. **The human checkpoint is a real pause.** `interrupt_before` parks the run mid-graph
+   with its state intact. It does not *return a flag saying someone should look at this* —
+   it **stops**, and cannot proceed until a person resumes it.
+3. **Routing by claim type is topological, not an `if`.** Each claim type has its own
+   checker node. Because the trace records which node ran, a misrouted claim is a
+   *catchable fact*. In a for-loop the dispatch agrees with itself by construction and
+   cannot be audited from outside.
+4. **The trajectory is a record, not a story.** Every node records its kind
+   (`deterministic` / `llm` / `io`), latency, and token spend — which is what lets Attest
+   *prove* its central claim instead of asserting it.
+
+### Self-correction, and why it cannot be gamed
+
+When a claim is Contradicted, Attest hands it back to the source agent along with what the
+catalog actually says, and lets it restate itself. The revision is then **re-verified by the
+same deterministic checker against the same snapshot** — so the outcome of a correction is
+decided by code, exactly as the original verdict was.
+
+Two constraints make this an audit rather than a negotiation, and both are enforced by
+comparison after the fact, not by asking the model nicely:
+
+- **A revision may not change the target URN.** An agent told "dana.wu does not own
+  `support_tickets`" could otherwise "correct" itself by talking about a different table.
+- **A revision may not change the claim type.** Otherwise a falsified *ownership* claim
+  could be quietly downgraded into a vacuous *freshness* one.
+
+Both would re-verify green. Both are the agent wriggling out from under the finding.
+Neither is a correction. The same snapshot is reused deliberately: the agent is held to the
+facts it was *shown*, so the catalog cannot move underneath the loop.
+
+The outcome is **named, not a boolean** — collapsing these would hide the interesting ones:
+
+| Outcome | Meaning |
+| --- | --- |
+| `corrected` | Revised, re-verified Supported. Becomes a **proposal**. |
+| `not-corrected` / `exhausted` | Revised, re-verified, still wrong. The cap (2) stopped it. |
+| `stood-firm` | The agent declined: the evidence does not say what the truth is. An honest non-answer. |
+| `refused` | The revision changed the subject, or failed the claim schema. Rejected before verification. |
+| `not-attempted` | The verdict was not Contradicted. Insufficient-Coverage is **never** dragged into the loop — the catalog being silent is not the agent being wrong. |
+
+### The human checkpoint is an accountability choice, not a limitation
+
+A revision that re-verifies clean is **still not applied**. It becomes a *proposal*, the
+graph parks, and it stays `PENDING` until a person accepts it.
+
+This is not because the loop is unreliable. It is because **an auditor that silently
+rewrites the thing it audits has stopped being an auditor.** Attest's whole value is that a
+human can point at any verdict and see the catalog field it came from; a correction Attest
+applied to itself, on the strength of a model's revision, would be the one fact in the
+system with no independent source. So the resting state of an unattended correction is
+*unreviewed* — never accepted, never quietly written back. A run nobody looks at proposes
+changes to nobody, and [a test](tests/test_graph.py) pins exactly that.
+
+### Trajectory verification: the answer to "that's one prompt in a costume"
+
+The sharpest cheap-shot at any agentic system is that the graph is decoration around a
+single model call doing all the work. The answer has to be an **assertion**, not a log line.
+
+So every step carries a *kind*, and [`trajectory.py`](src/attest/trajectory.py) holds each
+run to seven named invariants. Checking that the nodes you called got called is trivially
+true and proves nothing — a graph that ran every node in the right order and let a model
+pick the verdict would sail through it. These are the properties that break if the
+deterministic core is hollowed out:
+
+| Rule | What it catches |
+| --- | --- |
+| **`no-llm-in-the-verdict-path`** | The big one. A verdict step that spent **any tokens**, or a model call smuggled in between resolving an entity and deciding on it. |
+| `no-verdict-without-a-deterministic-check` | A verdict that no checker produced. |
+| `no-explanation-without-the-guard` | Unverified prose reaching a reader. |
+| `no-correction-without-re-verification` | A loop that *believed* the model's revision. |
+| `no-claim-without-decomposition` | A claim minted mid-pipeline, never URN-checked. |
+| `routing-matched-the-claim` | A freshness claim answered by the ownership checker. |
+| `retry-cap-held` | The loop ran away. |
+
+The first is the one that matters. A step's `kind` is the **claim it makes about itself**;
+its token count is the **evidence that checks it** — so a checker that quietly started
+calling a model fails this even if it returns the right answers, and even if every other
+test stays green. That is Attest's own philosophy turned on Attest.
+
+And the rules are proven to *fire*: [`tests/test_trajectory.py`](tests/test_trajectory.py)
+**sabotages the real pipeline** four ways — the guard torn out, a checker that spends
+tokens, a correction proposed without re-verification, a miswired router — and asserts each
+run reports itself broken. Every other test in the suite stays green through all four,
+which is the entire point. A trajectory check that only ever passes is a green light wired
+to nothing.
+
 ## Who audits the auditor
 
 Attest exists to catch AI systems asserting things they cannot back up. If Attest's own
@@ -288,8 +416,14 @@ rather than guessing, because a wrong verdict has the same confident shape as a 
 | --- | --- | --- |
 | **Semantic term matching** | A glossary term implies PII **iff the catalog files it under the PII node**. A term nobody filed there implies nothing, however personal it reads. | Structure is a declaration someone made; a name is a guess. Deciding that an *unfiled* term entails a classification is semantic entailment, and it must be evidence-constrained rather than a vibe. Still deferred. |
 | **Ownership type** | `ownershipType` (technical vs business vs data steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim than "Alice is an owner." Checking it needs a claim schema that carries the role, which is a schema change, not an `if`. |
-| **Entity-not-found propagation** | `fetch_dataset()` raises `EntityNotFoundError`. Nothing above it catches that yet. | Correct at this layer — a missing entity is an error, not a verdict. How a *pipeline* surfaces it (a fifth outcome? a hard failure?) is a Session 3 decision. |
 | **Cross-dialect types** | Both of DataHub's type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
+
+**Entity-not-found is now decided** (it was Session 3's call to make). A claim about a
+dataset that does not exist is **not a verdict**. The catalog neither disagrees with it nor
+is silent about it — the *question was malformed*, most likely a bad URN from upstream
+entity resolution. Scoring it Insufficient-Coverage would launder a hallucinated URN into a
+legitimate-looking audit result and the bad URN would never be seen. So it surfaces as a
+`ClaimError`, kept out of `audits` entirely and counted in no verdict tally.
 
 ## Commands
 
@@ -300,10 +434,12 @@ just setup     # install the package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path (Session 0 spike)
 just test      # the suite: live catalog, semantic layer offline. Free.
-just live      # the semantic layer against a REAL model. Costs money.
+just live      # the semantic layer + one full pipeline run against a REAL model.
+               # Costs money — about $0.001. Prints the receipts quoted above.
 just matrix    # just the 12-cell coverage assertion
 just lint
-just check     # lint + test
+just check     # lint + test — what CI runs
+just preflight # lint + test + live. Required before pushing a prompt change.
 ```
 
 The acryl-datahub SDK is used **only** for generating and ingesting seed data. Attest's
