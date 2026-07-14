@@ -104,6 +104,11 @@ class Workload:
     # Revision attempts spent per contradicted claim. Bounded by the retry cap (2), so the
     # worst case is bounded too, which is the entire point of making the cap a graph edge.
     attempts_per_contradiction: float = 1.0
+    # How many DISTINCT datasets those claims are about. The tokens scale with claims; the
+    # CATALOG load scales with entities, and the gap between the two is the whole argument
+    # for the run-scoped snapshot cache (datahub/cache.py). An agent's claims cluster hard:
+    # a thousand claims about a warehouse are a thousand claims about a few dozen tables.
+    datasets: int = 50
     model: str = "gpt-4o-mini"
 
 
@@ -172,6 +177,53 @@ def monitoring_projection() -> str:
         f"1000 claims/day, one org: ${nominal.daily_usd:.2f}/day "
         f"(${nominal.monthly_usd:.0f}/mo). Worst case — every claim contradicted, both "
         f"retries spent — ${worst.daily_usd:.2f}/day (${worst.monthly_usd:.0f}/mo)."
+    )
+
+
+# --- the OTHER cost: catalog reads -------------------------------------------
+#
+# The dollars are one axis and they turned out to be the cheap one. The load Attest puts on
+# DataHub scales with CLAIMS if each one is resolved on its own, and with ENTITIES if a run
+# reads each dataset once. Those are different numbers by more than an order of magnitude on
+# any realistic workload, and the second one is the one a data platform team has to live
+# with. Stated here, next to the dollars, because "what does this cost to operate" is not a
+# question about the API bill alone.
+
+
+@dataclass(frozen=True)
+class FetchProjection:
+    """Catalog round trips per day, with the run-scoped cache and without it."""
+
+    workload: Workload
+    without_cache: int
+    with_cache: int
+
+    @property
+    def factor(self) -> float:
+        return self.without_cache / self.with_cache if self.with_cache else 1.0
+
+    def __str__(self) -> str:
+        w = self.workload
+        return (
+            f"{w.claims_per_day} claims/day over {w.datasets} datasets: "
+            f"{self.without_cache} catalog fetches without the run cache, "
+            f"{self.with_cache} with it ({self.factor:.0f}x fewer)"
+        )
+
+
+def project_fetches(workload: Workload | None = None) -> FetchProjection:
+    """What a workload costs the CATALOG, in round trips.
+
+    Without the cache, one fetch per claim. With it, one per distinct dataset per run — and
+    a claim beyond the first about a dataset already read is free. A run cannot fetch fewer
+    entities than it has claims when every claim is about a different table, which is why
+    the floor is a min() rather than a bare dataset count.
+    """
+    w = workload or Workload()
+    return FetchProjection(
+        workload=w,
+        without_cache=w.claims_per_day,
+        with_cache=min(w.datasets, w.claims_per_day),
     )
 
 
