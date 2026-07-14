@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from attest.claims import ClaimType, Verdict
+from attest.datahub import FieldSnapshot
 from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
@@ -46,6 +47,10 @@ NOW = datetime(2026, 7, 14, 12, 0, tzinfo=UTC)
 CATALOG = {
     # Owned by carol, tagged PII, fresh, with a schema. A claim naming alice is
     # Contradicted and the correction loop has a fact to correct itself WITH.
+    #
+    # The schema is exhaustive and lists `email` but NOT `ssn`, which is what makes the
+    # subject-invariance tests possible: a claim about `ssn` is unrevisable, and a claim
+    # about `email`'s TYPE is revisable. The difference is the whole rule.
     SF: dataset(
         SF,
         last_modified=NOW - timedelta(hours=6),
@@ -53,6 +58,10 @@ CATALOG = {
         tags=(PII,),
         terms=(),
         custom_properties={},
+        fields=(
+            FieldSnapshot(path="email", native_type="VARCHAR(255)", data_type="STRING"),
+            FieldSnapshot(path="signup_ts", native_type="TIMESTAMP_NTZ", data_type="TIME"),
+        ),
     ),
     # The catalog is silent about everything. Insufficient-Coverage, never Contradicted.
     EMPTY: dataset(EMPTY),
@@ -255,6 +264,83 @@ def test_a_revision_may_not_change_the_claim_type():
 
     assert report.audits[0].correction.outcome is CorrectionOutcome.REFUSED
     assert report.trace.named(RECHECK) == []
+
+
+def test_a_schema_revision_may_not_swap_the_column_for_one_that_exists():
+    """The subject-invariance rule, and the reason it has to exist.
+
+    "customer_profile has an ssn column" is Contradicted and CANNOT be corrected — there is
+    no `present=False` on a SchemaClaim, so "it does NOT have an ssn column" is not
+    expressible. The tempting "correction" is to name a column that DOES exist. Same URN,
+    same claim type: it passes both of the other guards and re-verifies Supported.
+
+    But the false claim was never corrected. It was replaced by an unrelated true one, and
+    the audit went green. That is the retarget attack one grain down.
+    """
+    p, _ = pipeline(
+        claim_reply(
+            [{"claim_type": "schema", "target_urn": SF, "raw_text": f"{SF} has an ssn column.",
+              "columns": [{"name": "ssn", "native_type": None}]}]
+        ),
+        explanation_reply("the schema does not list that column.", "Contradicted", []),
+        # The swap: `email` exists, `ssn` does not.
+        revision_reply(
+            {"claim_type": "schema", "target_urn": SF, "raw_text": f"{SF} has an email column.",
+             "columns": [{"name": "email", "native_type": None}]}
+        ),
+    )
+    report = p.run(f"{SF} has an ssn column.")
+
+    audit = report.audits[0]
+    assert audit.correction.outcome is CorrectionOutcome.REFUSED
+    assert audit.correction.proposal is None
+    assert report.trace.named(RECHECK) == [], "the swapped claim never reached a checker"
+    assert audit.verdict is Verdict.CONTRADICTED, "and the agent is still wrong"
+
+
+def test_a_classification_revision_may_not_swap_the_label():
+    """The same hole, in the other claim type that has a subject: flip `present`, not the label."""
+    p, _ = pipeline(
+        claim_reply(
+            [{"claim_type": "classification", "target_urn": SF,
+              "raw_text": f"{SF} contains no PII.", "labels": [PII], "present": False}]
+        ),
+        explanation_reply("the table is tagged PII.", "Contradicted", []),
+        # Swapping PII for a tag the table does not carry, rather than flipping `present`.
+        revision_reply(
+            {"claim_type": "classification", "target_urn": SF,
+             "raw_text": f"{SF} carries no Tier1 tag.", "labels": ["urn:li:tag:Tier1"],
+             "present": False}
+        ),
+    )
+    report = p.run(f"{SF} contains no PII.")
+
+    assert report.audits[0].correction.outcome is CorrectionOutcome.REFUSED
+    assert report.trace.named(RECHECK) == []
+
+
+def test_a_schema_revision_may_still_correct_a_columns_type():
+    """The subject is frozen, not the claim. A type correction is exactly what SHOULD work."""
+    p, _ = pipeline(
+        claim_reply(
+            [{"claim_type": "schema", "target_urn": SF,
+              "raw_text": f"{SF} has an email column of type INTEGER.",
+              "columns": [{"name": "email", "native_type": "INTEGER"}]}]
+        ),
+        explanation_reply("the column is a different type.", "Contradicted", []),
+        revision_reply(
+            {"claim_type": "schema", "target_urn": SF,
+             "raw_text": f"{SF} has an email column of type VARCHAR(255).",
+             "columns": [{"name": "email", "native_type": "VARCHAR(255)"}]}
+        ),
+    )
+    report = p.run(f"{SF} has an email column of type INTEGER.")
+
+    audit = report.audits[0]
+    assert audit.correction.outcome is CorrectionOutcome.CORRECTED, (
+        "same column, corrected type — the subject did not move"
+    )
+    assert audit.correction.proposal.columns[0].native_type == "VARCHAR(255)"
 
 
 def test_an_agent_may_stand_by_a_claim_the_evidence_cannot_settle():
