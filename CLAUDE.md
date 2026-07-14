@@ -250,10 +250,19 @@ shared thing, not by guarding it.**
   cannot be parsed back, so a resumed run could not re-render them.
 - **The store schema therefore CHANGED, and a pre-Session-5 database is REFUSED at open.**
   `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table, so an old DB would open
-  cleanly and die on the first INSERT — inside a running service. Its rows cannot be
-  migrated: three columns changed from a rendered string to the structure that produced it,
-  and inferring the structure back means Attest fabricating its own audit trail. So
-  `AuditStore` raises `StoreError` by name, with what to do about it.
+  cleanly and die on the first INSERT — inside a running service.
+
+  **If you cloned this repo before Session 5 and it now fails at startup, the answer is one
+  line: `rm attest.db attest-checkpoints.db` and re-run.** Both are gitignored dev state,
+  nothing in DataHub is touched, and the next run rebuilds the schema. The `StoreError` says
+  exactly this, by name, at open.
+
+  **There is deliberately NO migration.** Three columns changed from a rendered string to
+  the structure that produced it, and a string cannot be parsed back into the pair it came
+  from — reconstructing them means Attest inventing the contents of its own audit trail,
+  which is the one thing it exists not to do. A production deployment would need a real
+  migration; this is a hackathon build, and it says so rather than shipping a migration that
+  fabricates. Do not "fix" this by writing a lenient parser.
 - **The lock is GONE, and what replaced it is not a smaller lock.** The LLM handle now lives
   on the `_Ledger` — one per run, forked via `LLM.for_run()`, sharing the HTTP transport and
   nothing else. Cross-billing is *unreachable* rather than *prevented*, exactly as cross-run
@@ -358,18 +367,42 @@ buried in a checker.
   computed from `definition.qualifiedName`, in `client.get_structured_property`, which is the
   only supported way in. Pinned by `tests/test_client.py` — including a test that asserts
   DataHub still fabricates, so nobody deletes the check as a redundant null-guard.
-- **The TLS repair in `llm.py` must REBUILD the client, and memoizing the client is what
-  breaks it.** `truststore.inject_into_ssl()` changes how *new* SSL contexts are created; it
-  cannot reach inside the one an existing client's transport already holds. Session 5
-  memoized the lazily-built OpenAI client (a fork per run must not open a connection pool
-  per run) and thereby made the retry reuse the *pre-injection* client — so it repeated the
-  same handshake against the same untrusting context and failed identically, while the log
-  line cheerfully announced a repair that did nothing. `_use_os_truststore` therefore drops
-  `_built`, and `_built` is kept separate from `client` precisely so it can be dropped:
-  `client` is the caller's (the scripted fake) and must never be thrown away.
-  **`just check` was green throughout** — the fake needs no TLS — and only `just live` caught
-  it. That is the cadence rule in this file, working, on a change that did not look like a
-  semantic-layer change at all.
+- **SOME FAILURES ARE STRUCTURALLY INVISIBLE TO A FAKE, and the TLS repair is the worked
+  example. This is the generalizable lesson of Session 5 — read it even if you never touch
+  TLS.**
+
+  *What broke.* `truststore.inject_into_ssl()` changes how *new* SSL contexts are created;
+  it cannot reach inside the one an existing client's transport already holds. Session 5
+  memoized the lazily-built OpenAI client (a handle forked per run must not open a
+  connection pool per run), so the TLS retry reused the **pre-injection** client, repeated
+  the same handshake against the same untrusting context, and failed identically — while the
+  log line cheerfully announced a repair that had done nothing. Fixed by having
+  `_use_os_truststore` drop `_built`; `_built` is kept separate from `client` *precisely so
+  it can be dropped*, because `client` is the caller's injected fake and must never be
+  thrown away.
+
+  *Why `just check` could not have caught it, ever.* The offline suite was **green
+  throughout** — not by bad luck, and not because a test was missing. The fake chat client
+  is a Python object: it opens **no socket, negotiates no TLS, and has no SSL context**. The
+  entire code path that broke **does not execute** when the client is faked. No test written
+  against the fake, however thorough, can exercise it. The green tick was not a weak signal,
+  it was a signal about a different program.
+
+  *The rule this generalizes to.* **A fake cannot fail in a way the real thing fails
+  through machinery the fake does not have.** Transport, TLS, connection reuse, auth
+  refresh, rate limits, timeouts, partial reads — all of it is stubbed out by construction,
+  so all of it is invisible to `just check` by construction. That is not a gap to be closed
+  by writing more offline tests; it is the *price* of a fake, and the price is worth paying
+  (see the cadence rule below) — but it must be paid knowingly. **When a change touches how
+  the client is BUILT, CACHED, or REUSED, the offline suite is not evidence. Only `just
+  live` is.** And note what made this one nasty: it did not look like a semantic-layer
+  change at all — it was a memoization, made for a concurrency reason. The cadence rule
+  caught a class of bug it was not even written for, which is the best thing that can be
+  said about a rule.
+
+  *And it fails LOUD-then-silent.* A repair that logs success and does nothing is worse than
+  one that crashes: the operator reads the log, believes the network was fixed, and hunts
+  for the bug somewhere else entirely.
 - **Never write YAML with PowerShell's `Out-File`.** It emits a UTF-8 BOM that breaks the YAML
   parser. Use `[IO.File]::WriteAllText` or Python.
 - **Ingestion recipes must use relative `./` paths.** Absolute Windows paths hit a
@@ -502,8 +535,8 @@ carries its description for this reason; do not "tidy" them away.
 | **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. |
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
-| **A step's `inputs` / `outputs` across a restart** | The trace's per-step summaries (`cached: true`, `claims: 3`) are not persisted, so a *replayed* step carries them empty. | They are a debugging convenience, not part of the record: nothing in the report, the receipts or trajectory.py reads them. Everything a resumed run REPORTS is rebuilt exactly, and `test_resume.py` compares the two records whole. Said out loud rather than left to be discovered. |
-| **Store migrations** | The schema changed in Session 5 and a pre-Session-5 database is refused at open, by name. | There is no data in the wild, and the alternative — inferring the lost structure back out of its rendering — is Attest fabricating its own audit trail. A real deployment needs a real migration; this is not one, and it does not pretend to be. |
+| **A step's `inputs` / `outputs` across a restart** | Not persisted, so a *replayed* step carries them empty. **The boundary is ASSERTED, not just documented:** `test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs` strips the summaries out of a real run's trace and demands the record, the receipts, the summary and the trajectory verdict are all unmoved. | They are a log convenience, and nothing a reader sees may read them. If something ever does, a resumed run starts reporting something an unrestarted one does not — silently, only after a restart, with every other test green, because every other test runs in one process and never replays. That is the TLS bug's shape exactly, which is why this one is nailed down rather than trusted. Two sabotages prove the assertion bites (a receipt reading `outputs['cached']`; a trajectory rule reading `outputs['resolved']`), and the fixture uses two claims over one dataset **so the summaries are truthy** — a one-claim run leaves them falsy and would pass a sabotage it was written to catch. |
+| **Store migrations** | None. A pre-Session-5 database is refused at open, by name. **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
 
 **Durable resume is now BUILT** (Session 5). A run parked at the human checkpoint survives
 the death of its process: the paused graph comes back from `SqliteSaver`, the typed ledger

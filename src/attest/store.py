@@ -286,10 +286,18 @@ class AuditStore:
         raise StoreError(
             f"{self.path} was written by a pre-Session-5 Attest and cannot hold what a run "
             f"now records: the guard's rejected drafts, its faithfulness violations, the "
-            f"models a step called, and structured conflicts. Its rows cannot be migrated — "
-            f"the structure was never stored, only its rendering, and inferring it back "
-            f"would mean fabricating audit history. Move it aside, or point "
-            f"ATTEST_STORE_PATH at a new file."
+            f"models a step called, and structured conflicts.\n"
+            f"\n"
+            f"  WHAT TO DO:  delete {self.path} (and attest-checkpoints.db) and re-run.\n"
+            f"\n"
+            f"THERE IS NO MIGRATION, and that is deliberate rather than unfinished. Three "
+            f"columns changed from a rendered string to the structure that produced it, and "
+            f"a string cannot be parsed back into the pair it came from. Reconstructing them "
+            f"would mean Attest inventing the contents of its own audit trail — the one "
+            f"thing it exists not to do. Deleting the file costs you the audit HISTORY of a "
+            f"development database; nothing in DataHub is touched, and the next run rebuilds "
+            f"the schema. A production deployment would need a real migration; this is a "
+            f"hackathon build and it says so rather than pretending otherwise."
         )
 
     def close(self) -> None:

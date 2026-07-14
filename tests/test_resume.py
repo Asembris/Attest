@@ -28,19 +28,22 @@ test below.
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from langgraph.checkpoint.sqlite import SqliteSaver
 
+from attest import trajectory
 from attest.api.service import AuditService, NotResumable
 from attest.graph import Pipeline
 from attest.llm import LLM
-from attest.record import AuditRecord
+from attest.observe import Trace
+from attest.record import AuditRecord, from_report
 from attest.report import Decision, ReviewStatus, RunStatus
 from attest.store import AuditStore
-from attest.trajectory import CHECKPOINT
+from attest.trajectory import CHECKPOINT, AuditedClaim
 from fakes import FakeChat, FakeDataHub, claim_reply, dataset, explanation_reply, revision_reply
 
 SF = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.profile,PROD)"
@@ -312,6 +315,93 @@ def restart_with(tmp_path, name: str, replies, fake) -> AuditService:
         ),
         store=AuditStore(tmp_path / f"{name}.db"),
         client=fake,
+    )
+
+
+# --- the boundary of the replay, asserted rather than promised ---------------
+
+
+def test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs(tmp_path):
+    """THE INVARIANT BEHIND THE ONE THING REPLAY DOES NOT REBUILD.
+
+    A step's `inputs`/`outputs` are summaries for a human reading the log (`cached: true`,
+    `claims: 3`). They are not persisted, so a REPLAYED step carries them empty — which is
+    only safe for as long as nothing a reader sees is computed from them. Today nothing is.
+    "Today nothing is" is a fact about the code, and a fact about the code that nobody
+    asserts is a fact about the code until the afternoon somebody changes it.
+
+    And the failure would be silent in exactly the way the TLS bug was silent: the moment a
+    receipt, a summary or a trajectory rule starts reading `step.outputs`, a RESUMED run
+    begins reporting something different from an unrestarted one — on the path a human uses
+    to approve a change to the catalog — and every other test stays green, because every
+    other test runs in one process and never replays anything.
+
+    So the invariant is asserted the way NO_LLM_IN_THE_VERDICT_PATH is: strip the summaries
+    out of a real run's trace and demand that every consumer-facing surface is unmoved. If
+    someone makes the report depend on them, this goes red and names why.
+    """
+    # TWO claims about ONE dataset, deliberately: the second `resolve` records
+    # `cached: True`, so the trace carries a step summary that is TRUTHY. A one-claim run
+    # would leave every interesting summary falsy, and a consumer that started reading them
+    # would produce the same report either way — the test would pass a sabotage it was
+    # written to catch. Choose the fixture that can actually go red.
+    chat = FakeChat(
+        replies=[
+            claim_reply([ownership(ALICE), ownership(ALICE)]),
+            explanation_reply("the catalog lists a different owner.", "Contradicted", []),
+            revision_reply(ownership(CAROL)),
+        ],
+        tokens=(400, 90),
+    )
+    fake = catalog()
+    report = Pipeline(llm=LLM(client=chat), client=fake, now=NOW).run(SAYS, thread_id="r")
+
+    # Non-vacuity first. If the trace carried no summaries — or only falsy ones — stripping
+    # them would prove nothing and this test would be a green light wired to nothing.
+    assert any(s.inputs for s in report.trace), "no step recorded any inputs to strip"
+    assert any(
+        v for s in report.trace for v in s.outputs.values()
+    ), "no step recorded a truthy output, so removing them could not change any answer"
+    assert any(s.outputs.get("cached") for s in report.trace), "the cache summary is falsy"
+
+    stripped = replace(
+        report,
+        trace=Trace(
+            steps=[replace(s, inputs={}, outputs={}) for s in report.trace]
+        ),
+    )
+
+    # Every consumer-facing surface there is: the persisted/served projection, the
+    # trajectory verdict, the receipts line, and the printable summary.
+    # created_at pinned: from_report stamps the wall clock, and two calls are two instants.
+    projected = from_report(stripped, run_id="r", created_at=NOW)
+    assert projected == from_report(report, run_id="r", created_at=NOW), (
+        "the stored/served record changed when a step's log summaries were removed. A "
+        "resumed run rebuilds those steps WITHOUT them, so it now reports something an "
+        "unrestarted run does not — silently, and only after a restart."
+    )
+    assert stripped.summary() == report.summary()
+    assert stripped.receipts() == report.receipts()
+    assert stripped.cost == report.cost
+    assert trajectory.verify(
+        stripped.trace, _audited(stripped)
+    ) == trajectory.verify(report.trace, _audited(report)), (
+        "a trajectory rule started reading a step's log summaries. It will pass in the "
+        "process that ran the audit and fail in the one that resumes it."
+    )
+
+
+def _audited(report) -> tuple[AuditedClaim, ...]:
+    return tuple(
+        AuditedClaim(
+            index=a.index,
+            claim_type=a.claim.claim_type,
+            has_verdict=True,
+            has_explanation=bool(a.explanation.text),
+            correction_attempts=len(a.correction.attempts),
+            has_proposal=a.correction.proposal is not None,
+        )
+        for a in report.audits
     )
 
 
