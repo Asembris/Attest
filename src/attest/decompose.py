@@ -111,7 +111,20 @@ SCHEMA: dict[str, Any] = {
                     },
                     "max_age_hours": {
                         "type": ["number", "null"],
-                        "description": "freshness only. 'daily' is 24, 'this week' is 168.",
+                        # Every example here used to be a whole number >= 24, and the model
+                        # read that as the shape of the field: asked for "every 30 minutes"
+                        # it returned max_age_hours=0 — floored, not rounded — which
+                        # FreshnessClaim rejects (gt=0) and the claim was dropped entirely.
+                        # A sub-hour freshness claim silently became NO claim at all.
+                        # The fix is to say fractions are allowed, NOT to relax gt=0: a
+                        # window of zero hours is not a claim anyone can make. Widen the
+                        # evidence, never the guard.
+                        "description": (
+                            "freshness only. The maximum age, IN HOURS, that the claim "
+                            "allows. Fractions are allowed and often needed: 'every 30 "
+                            "minutes' is 0.5, 'hourly' is 1, 'daily' is 24, 'this week' "
+                            "is 168, 'this year' is 8760. Must be greater than 0."
+                        ),
                     },
                     "owner_urn": {
                         "type": ["string", "null"],
