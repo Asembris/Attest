@@ -1,0 +1,159 @@
+{
+  "mode": "core",
+  "k": 1,
+  "sabotaged": "classification",
+  "n_cases": 40,
+  "coverage": {
+    "freshness/Supported": 2,
+    "freshness/Contradicted": 4,
+    "freshness/Insufficient-Coverage": 1,
+    "ownership/Supported": 3,
+    "ownership/Contradicted": 2,
+    "ownership/Insufficient-Coverage": 2,
+    "classification/Supported": 6,
+    "classification/Contradicted": 9,
+    "classification/Insufficient-Coverage": 4,
+    "schema/Supported": 4,
+    "schema/Contradicted": 2,
+    "schema/Insufficient-Coverage": 1
+  },
+  "metrics": {
+    "accuracy": 0.675,
+    "macro_f1": 0.6681136950904393,
+    "per_verdict": {
+      "Supported": {
+        "precision": 0.5357142857142857,
+        "recall": 1.0,
+        "f1": 0.6976744186046512,
+        "support": 15
+      },
+      "Contradicted": {
+        "precision": 1.0,
+        "recall": 0.47058823529411764,
+        "f1": 0.64,
+        "support": 17
+      },
+      "Insufficient-Coverage": {
+        "precision": 1.0,
+        "recall": 0.5,
+        "f1": 0.6666666666666666,
+        "support": 8
+      }
+    },
+    "confusion_matrix": [
+      [
+        15,
+        0,
+        0,
+        0
+      ],
+      [
+        9,
+        8,
+        0,
+        0
+      ],
+      [
+        4,
+        0,
+        4,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "labels": [
+      "Supported",
+      "Contradicted",
+      "Insufficient-Coverage",
+      "No-Claim"
+    ],
+    "correctness_failures": 9,
+    "coverage_failures": 4,
+    "extraction_failures": 0,
+    "errors": [
+      {
+        "case": "class-07",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-08",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-09",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-10",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-11",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-12",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-13",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-14",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-15",
+        "expected": "Contradicted",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-16",
+        "expected": "Insufficient-Coverage",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-17",
+        "expected": "Insufficient-Coverage",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-18",
+        "expected": "Insufficient-Coverage",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      },
+      {
+        "case": "class-19",
+        "expected": "Insufficient-Coverage",
+        "predicted": "Supported",
+        "extraction_ok": "True"
+      }
+    ]
+  }
+}

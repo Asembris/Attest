@@ -27,6 +27,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.9"]
+# The benchmark's metrics. sklearn, not a hand-rolled count: the arithmetic of a metric is
+# exactly where a quiet off-by-one produces a plausible number that is wrong, and a
+# benchmark's own arithmetic is the last thing that should be bespoke. NOT a runtime
+# dependency -- nothing in src/attest imports it, and the service does not ship it.
+bench = ["scikit-learn>=1.5"]
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -37,7 +42,7 @@ where = ["src"]
 
 [tool.ruff]
 line-length = 100
-src = ["src", "seed", "spikes", "tests"]
+src = ["src", "seed", "spikes", "tests", "benchmark"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

@@ -1,0 +1,229 @@
+{
+  "labeler": "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+  "family": "llama (NVIDIA Nemotron) \u2014 deliberately NOT the pipeline's family",
+  "n_cases": 40,
+  "agreement": 0.95,
+  "agreed": 38,
+  "disputed": [
+    {
+      "case": "class-03",
+      "mine": "Supported",
+      "my_rationale": "The table is explicitly tagged NonPII, which affirmatively rules PII out.",
+      "theirs": "Contradicted",
+      "their_reason": "The table contains a glossary term 'EmailAddress' under the PII node, which is a PII signal. Since the table is tagged 'Verified', the absence of a PII tag is a reviewed finding, but the presence of a PII signal (glossary term under PII node) contradicts the claim that the table contains no PII.",
+      "their_decisive_field": "table glossary terms"
+    },
+    {
+      "case": "class-15",
+      "mine": "Contradicted",
+      "my_rationale": "The column is untagged on a Verified table, so the omission is a reviewed finding rather than an oversight.",
+      "theirs": "Insufficient-Coverage",
+      "their_reason": "The claim is about the 'signup_ts' column containing PII, but this column has no labels (tags or glossary terms) indicating PII presence or absence. Although the table is tagged as 'Verified' and 'PII', and other columns are marked as PII, the column-specific claim requires column-level labeling for a definitive verdict. Since 'signup_ts' lacks any PII-related labels, the catalog does not provide enough information to support or contradict the claim.",
+      "their_decisive_field": "column tags (absent for 'signup_ts')"
+    }
+  ],
+  "labels": [
+    {
+      "case": "fresh-01",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "fresh-02",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "fresh-03",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "fresh-04",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "fresh-05",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "fresh-06",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "fresh-07",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "own-01",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "own-02",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "own-03",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "own-04",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "own-05",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "own-06",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "own-07",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "class-01",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "class-02",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "class-03",
+      "mine": "Supported",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-04",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "class-05",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "class-06",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "class-07",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-08",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-09",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-10",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-11",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-12",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-13",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-14",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "class-15",
+      "mine": "Contradicted",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "class-16",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "class-17",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "class-18",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "class-19",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    },
+    {
+      "case": "schema-01",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "schema-02",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "schema-03",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "schema-04",
+      "mine": "Supported",
+      "theirs": "Supported"
+    },
+    {
+      "case": "schema-05",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "schema-06",
+      "mine": "Contradicted",
+      "theirs": "Contradicted"
+    },
+    {
+      "case": "schema-07",
+      "mine": "Insufficient-Coverage",
+      "theirs": "Insufficient-Coverage"
+    }
+  ],
+  "tokens": 88286,
+  "cost_usd": null
+}

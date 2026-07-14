@@ -1,0 +1,846 @@
+{
+  "name": "attest-golden-benchmark",
+  "version": 1,
+  "description": "Hand-labeled groundedness claims about a seeded DataHub catalog. Each case carries an agent's sentence, the claim it means, the verdict the catalog supports, and a one-line rationale.",
+  "verdicts": {
+    "Supported": "The catalog affirms the claim.",
+    "Contradicted": "The catalog positively disagrees.",
+    "Insufficient-Coverage": "The catalog is silent. Absence, not disagreement."
+  },
+  "catalog": "seed/generate_seed.py, ingested into DataHub Core v1.5.0.6",
+  "n_cases": 40,
+  "n_hard": 26,
+  "coverage": {
+    "freshness/Supported": 2,
+    "freshness/Contradicted": 4,
+    "freshness/Insufficient-Coverage": 1,
+    "ownership/Supported": 3,
+    "ownership/Contradicted": 2,
+    "ownership/Insufficient-Coverage": 2,
+    "classification/Supported": 6,
+    "classification/Contradicted": 9,
+    "classification/Insufficient-Coverage": 4,
+    "schema/Supported": 4,
+    "schema/Contradicted": 2,
+    "schema/Insufficient-Coverage": 1
+  },
+  "cases": [
+    {
+      "id": "fresh-01",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) is updated at least once every 24 hours.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "freshness",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "updated at least once every 24 hours",
+        "max_age_hours": 24
+      },
+      "expected_verdict": "Supported",
+      "rationale": "lastModified is 1.0h before the reference now, inside the 24h window.",
+      "hard": false,
+      "tags": [],
+      "cell": "freshness/Supported"
+    },
+    {
+      "id": "fresh-02",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD) has been refreshed at least once in the past two years.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+      "claim": {
+        "claim_type": "freshness",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+        "raw_text": "refreshed at least once in the past two years",
+        "max_age_hours": 17520
+      },
+      "expected_verdict": "Supported",
+      "rationale": "Age is ~10003h, inside the asserted 17520h window — stale is not a label, it is a comparison.",
+      "hard": true,
+      "tags": [
+        "boundary",
+        "same-dataset-opposite-verdicts"
+      ],
+      "cell": "freshness/Supported"
+    },
+    {
+      "id": "fresh-03",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD) is rebuilt nightly.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+      "claim": {
+        "claim_type": "freshness",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+        "raw_text": "rebuilt nightly",
+        "max_age_hours": 24
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "Age is ~10003h, far outside the asserted 24h window.",
+      "hard": false,
+      "tags": [],
+      "cell": "freshness/Contradicted"
+    },
+    {
+      "id": "fresh-04",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD) has been refreshed within the past year.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+      "claim": {
+        "claim_type": "freshness",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+        "raw_text": "refreshed within the past year",
+        "max_age_hours": 8760
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "Age is ~10003h, outside the asserted 8760h window — the same dataset is Supported at two years.",
+      "hard": true,
+      "tags": [
+        "boundary",
+        "same-dataset-opposite-verdicts"
+      ],
+      "cell": "freshness/Contradicted"
+    },
+    {
+      "id": "fresh-05",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) is updated every 30 minutes.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "freshness",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "updated every 30 minutes",
+        "max_age_hours": 0.5
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "Age is 1.0h, outside the asserted 0.5h window — a fresh table is not fresh for every claim.",
+      "hard": true,
+      "tags": [
+        "boundary"
+      ],
+      "cell": "freshness/Contradicted"
+    },
+    {
+      "id": "fresh-06",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.pipeline_scratch,PROD) is refreshed daily.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.pipeline_scratch,PROD)",
+      "claim": {
+        "claim_type": "freshness",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.pipeline_scratch,PROD)",
+        "raw_text": "refreshed daily",
+        "max_age_hours": 24
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "The catalog holds no lastModified for it: not knowing when it ran is not knowing it is old.",
+      "hard": true,
+      "tags": [
+        "absence-vs-denial"
+      ],
+      "cell": "freshness/Insufficient-Coverage"
+    },
+    {
+      "id": "fresh-07",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD) is updated daily.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+      "claim": {
+        "claim_type": "freshness",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+        "raw_text": "updated daily",
+        "max_age_hours": 24
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "Age is ~10003h; the table having no owner does not make its timestamp unreadable.",
+      "hard": false,
+      "tags": [
+        "aspect-independence"
+      ],
+      "cell": "freshness/Contradicted"
+    },
+    {
+      "id": "own-01",
+      "agent_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) is owned by urn:li:corpuser:alice.chen.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "ownership",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "owned by alice.chen",
+        "owner_urn": "urn:li:corpuser:alice.chen"
+      },
+      "expected_verdict": "Supported",
+      "rationale": "alice.chen is in the catalog's owners list.",
+      "hard": false,
+      "tags": [],
+      "cell": "ownership/Supported"
+    },
+    {
+      "id": "own-02",
+      "agent_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD) is owned by urn:li:corpuser:carol.davis.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD)",
+      "claim": {
+        "claim_type": "ownership",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD)",
+        "raw_text": "owned by carol.davis",
+        "owner_urn": "urn:li:corpuser:carol.davis"
+      },
+      "expected_verdict": "Supported",
+      "rationale": "carol.davis is in the catalog's owners list.",
+      "hard": false,
+      "tags": [],
+      "cell": "ownership/Supported"
+    },
+    {
+      "id": "own-03",
+      "agent_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD) is owned by urn:li:corpuser:dana.wu.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD)",
+      "claim": {
+        "claim_type": "ownership",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD)",
+        "raw_text": "owned by dana.wu",
+        "owner_urn": "urn:li:corpuser:dana.wu"
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The owners list is exhaustive and names carol.davis, not dana.wu.",
+      "hard": false,
+      "tags": [],
+      "cell": "ownership/Contradicted"
+    },
+    {
+      "id": "own-04",
+      "agent_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD) is owned by urn:li:corpuser:alice.chen.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+      "claim": {
+        "claim_type": "ownership",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+        "raw_text": "owned by alice.chen",
+        "owner_urn": "urn:li:corpuser:alice.chen"
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The owners list is exhaustive and names bob.martinez, not alice.chen.",
+      "hard": false,
+      "tags": [],
+      "cell": "ownership/Contradicted"
+    },
+    {
+      "id": "own-05",
+      "agent_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD) is owned by urn:li:corpuser:alice.chen.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+      "claim": {
+        "claim_type": "ownership",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+        "raw_text": "owned by alice.chen",
+        "owner_urn": "urn:li:corpuser:alice.chen"
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "No ownership aspect exists, so nobody is confirmed and nobody is ruled out.",
+      "hard": true,
+      "tags": [
+        "absence-vs-denial"
+      ],
+      "cell": "ownership/Insufficient-Coverage"
+    },
+    {
+      "id": "own-06",
+      "agent_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD) is owned by urn:li:corpuser:dana.wu.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+      "claim": {
+        "claim_type": "ownership",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+        "raw_text": "owned by dana.wu",
+        "owner_urn": "urn:li:corpuser:dana.wu"
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "The table carries a Deprecated tag but no owner — a tag is not an ownership record.",
+      "hard": true,
+      "tags": [
+        "absence-vs-denial"
+      ],
+      "cell": "ownership/Insufficient-Coverage"
+    },
+    {
+      "id": "own-07",
+      "agent_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD) is owned by urn:li:corpuser:bob.martinez.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD)",
+      "claim": {
+        "claim_type": "ownership",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD)",
+        "raw_text": "owned by bob.martinez",
+        "owner_urn": "urn:li:corpuser:bob.martinez"
+      },
+      "expected_verdict": "Supported",
+      "rationale": "bob.martinez is listed; the dataset having no schema says nothing about its ownership.",
+      "hard": false,
+      "tags": [
+        "aspect-independence"
+      ],
+      "cell": "ownership/Supported"
+    },
+    {
+      "id": "class-01",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "contains PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": null
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The table carries the PII tag — an explicit classification act.",
+      "hard": false,
+      "tags": [],
+      "cell": "classification/Supported"
+    },
+    {
+      "id": "class-02",
+      "agent_text": "The email column of urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) holds PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "the email column holds PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "email"
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The email column carries its own PII tag.",
+      "hard": false,
+      "tags": [],
+      "cell": "classification/Supported"
+    },
+    {
+      "id": "class-03",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD) contains no PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+        "raw_text": "contains no PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The table is explicitly tagged NonPII, which affirmatively rules PII out.",
+      "hard": true,
+      "tags": [
+        "precedence-explicit-over-implied"
+      ],
+      "cell": "classification/Supported"
+    },
+    {
+      "id": "class-04",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD) is free of PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+        "raw_text": "is free of PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "expected_verdict": "Supported",
+      "rationale": "No PII signal fires and the table is tagged Verified, so the absence is a reviewed finding rather than silence.",
+      "hard": true,
+      "tags": [
+        "completeness-marker"
+      ],
+      "cell": "classification/Supported"
+    },
+    {
+      "id": "class-05",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) is annotated with the urn:li:glossaryTerm:CustomerIdentifier glossary term.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "annotated with the CustomerIdentifier term",
+        "labels": [
+          "urn:li:glossaryTerm:CustomerIdentifier"
+        ],
+        "present": true,
+        "field_path": null
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The term is attached to the table; it is a real annotation, and deliberately not a PII one.",
+      "hard": true,
+      "tags": [
+        "customer-identifier-is-not-pii"
+      ],
+      "cell": "classification/Supported"
+    },
+    {
+      "id": "class-06",
+      "agent_text": "The work_email column of urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD) contains personal data.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+        "raw_text": "the work_email column contains personal data",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "work_email"
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The column carries the EmailAddress term, which is filed under the PII glossary node.",
+      "hard": true,
+      "tags": [
+        "term-signal"
+      ],
+      "cell": "classification/Supported"
+    },
+    {
+      "id": "class-07",
+      "agent_text": "The recipient_email_hash column of urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+        "raw_text": "the recipient_email_hash column contains PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "recipient_email_hash"
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The column is explicitly tagged NonPII — it is a salted hash, and the catalog says so.",
+      "hard": true,
+      "tags": [
+        "the-trap",
+        "column-over-table"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-08",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+        "raw_text": "contains PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": null
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The table's explicit NonPII tag outranks the EmailAddress term it also carries — a tag is a classification act, a term is subject matter.",
+      "hard": true,
+      "tags": [
+        "precedence-explicit-over-implied"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-09",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD) is PII-free.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD)",
+        "raw_text": "is PII-free",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "Its actor_email column is tagged PII, and a table-level PII claim is existential — one PII column settles it.",
+      "hard": true,
+      "tags": [
+        "column-propagates-up"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-10",
+      "agent_text": "The actor_email column of urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD) holds no personal data.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD)",
+        "raw_text": "the actor_email column holds no personal data",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": "actor_email"
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The column is tagged PII, whatever the untagged table says.",
+      "hard": true,
+      "tags": [
+        "column-over-table"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-11",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD) contains no PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD)",
+        "raw_text": "contains no PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "PII is asserted here by the global tag alone — no glossary term anywhere on the dataset.",
+      "hard": true,
+      "tags": [
+        "tag-signal"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-12",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD) contains no PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+        "raw_text": "contains no PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "PII is asserted here by glossary terms under the PII node alone — no PII tag anywhere.",
+      "hard": true,
+      "tags": [
+        "term-signal"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-13",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.product.device_telemetry,PROD) contains no PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.product.device_telemetry,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.product.device_telemetry,PROD)",
+        "raw_text": "contains no PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "A classifier recorded hasPII=true on it — no tag, no term, and the finding still counts.",
+      "hard": true,
+      "tags": [
+        "property-signal"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-14",
+      "agent_text": "The card_last4 column of urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.payment_methods,PROD) is PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.payment_methods,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.payment_methods,PROD)",
+        "raw_text": "the card_last4 column is PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "card_last4"
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The column is tagged NonPII even though its table is tagged PII — table PII means 'somewhere in here', not 'everywhere'.",
+      "hard": true,
+      "tags": [
+        "column-over-table",
+        "no-downward-propagation"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-15",
+      "agent_text": "The signup_ts column of urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "the signup_ts column contains PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "signup_ts"
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The column is untagged on a Verified table, so the omission is a reviewed finding rather than an oversight.",
+      "hard": true,
+      "tags": [
+        "completeness-marker",
+        "pairs-with-class-17"
+      ],
+      "cell": "classification/Contradicted"
+    },
+    {
+      "id": "class-16",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD) contains no PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+        "raw_text": "contains no PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "Nothing is tagged and nothing declares the review complete: absence of a PII tag is not evidence of absence of PII.",
+      "hard": true,
+      "tags": [
+        "the-central-case",
+        "absence-vs-denial"
+      ],
+      "cell": "classification/Insufficient-Coverage"
+    },
+    {
+      "id": "class-17",
+      "agent_text": "The verified_at column of urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_contact,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_contact,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_contact,PROD)",
+        "raw_text": "the verified_at column contains PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "verified_at"
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "The column is untagged and its table carries no completeness marker, so a PII tag on the table settles nothing about it.",
+      "hard": true,
+      "tags": [
+        "no-downward-propagation",
+        "pairs-with-class-15"
+      ],
+      "cell": "classification/Insufficient-Coverage"
+    },
+    {
+      "id": "class-18",
+      "agent_text": "The email column of urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+        "raw_text": "the email column contains PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "email"
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "A column literally named email, untagged, on a table nobody reviewed: unclassified is not clean and not dirty.",
+      "hard": true,
+      "tags": [
+        "the-distinction-that-must-not-blur"
+      ],
+      "cell": "classification/Insufficient-Coverage"
+    },
+    {
+      "id": "class-19",
+      "agent_text": "The table urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+      "claim": {
+        "claim_type": "classification",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+        "raw_text": "contains PII",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": null
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "The table is unclassified, so the catalog can neither confirm nor deny it — the mirror of class-16.",
+      "hard": true,
+      "tags": [
+        "absence-vs-denial"
+      ],
+      "cell": "classification/Insufficient-Coverage"
+    },
+    {
+      "id": "schema-01",
+      "agent_text": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) has an email column of type VARCHAR(255).",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "schema",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "has an email column of type VARCHAR(255)",
+        "columns": [
+          {
+            "name": "email",
+            "native_type": "VARCHAR(255)"
+          }
+        ]
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The schema lists email as VARCHAR(255).",
+      "hard": false,
+      "tags": [],
+      "cell": "schema/Supported"
+    },
+    {
+      "id": "schema-02",
+      "agent_text": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD) has an order_total column of type NUMBER(12,2).",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+      "claim": {
+        "claim_type": "schema",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+        "raw_text": "has an order_total column of type NUMBER(12,2)",
+        "columns": [
+          {
+            "name": "order_total",
+            "native_type": "NUMBER(12,2)"
+          }
+        ]
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The schema lists order_total as NUMBER(12,2).",
+      "hard": false,
+      "tags": [],
+      "cell": "schema/Supported"
+    },
+    {
+      "id": "schema-03",
+      "agent_text": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD) has a payload column.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+      "claim": {
+        "claim_type": "schema",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+        "raw_text": "has a payload column",
+        "columns": [
+          {
+            "name": "payload",
+            "native_type": null
+          }
+        ]
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The schema lists payload; a dataset with no owner and no tags still has a schema.",
+      "hard": false,
+      "tags": [
+        "aspect-independence"
+      ],
+      "cell": "schema/Supported"
+    },
+    {
+      "id": "schema-04",
+      "agent_text": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD) has an email column of type varchar(255).",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD)",
+      "claim": {
+        "claim_type": "schema",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD)",
+        "raw_text": "has an email column of type varchar(255)",
+        "columns": [
+          {
+            "name": "email",
+            "native_type": "varchar(255)"
+          }
+        ]
+      },
+      "expected_verdict": "Supported",
+      "rationale": "The schema lists email as varchar(255).",
+      "hard": false,
+      "tags": [],
+      "cell": "schema/Supported"
+    },
+    {
+      "id": "schema-05",
+      "agent_text": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) has an ssn column.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "claim": {
+        "claim_type": "schema",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+        "raw_text": "has an ssn column",
+        "columns": [
+          {
+            "name": "ssn",
+            "native_type": null
+          }
+        ]
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The schema is exhaustive and lists no ssn column — and the claim is unrevisable, because 'it has no ssn column' is not a schema claim anyone can make.",
+      "hard": true,
+      "tags": [
+        "unrevisable",
+        "stood-firm"
+      ],
+      "cell": "schema/Contradicted"
+    },
+    {
+      "id": "schema-06",
+      "agent_text": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD) has an order_total column of type VARCHAR(32).",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+      "claim": {
+        "claim_type": "schema",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+        "raw_text": "has an order_total column of type VARCHAR(32)",
+        "columns": [
+          {
+            "name": "order_total",
+            "native_type": "VARCHAR(32)"
+          }
+        ]
+      },
+      "expected_verdict": "Contradicted",
+      "rationale": "The column exists but is NUMBER(12,2) — the right column, the wrong type, which is a revisable error.",
+      "hard": true,
+      "tags": [
+        "revisable-type"
+      ],
+      "cell": "schema/Contradicted"
+    },
+    {
+      "id": "schema-07",
+      "agent_text": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD) has a revenue_amount column.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD)",
+      "claim": {
+        "claim_type": "schema",
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD)",
+        "raw_text": "has a revenue_amount column",
+        "columns": [
+          {
+            "name": "revenue_amount",
+            "native_type": null
+          }
+        ]
+      },
+      "expected_verdict": "Insufficient-Coverage",
+      "rationale": "No schema has ever been ingested for it: absence of a schema is not absence of a column.",
+      "hard": true,
+      "tags": [
+        "absence-vs-denial"
+      ],
+      "cell": "schema/Insufficient-Coverage"
+    }
+  ]
+}

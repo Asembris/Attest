@@ -27,3 +27,7 @@ datapacks/
 # The generator is the source of truth, not its output. Both files carry
 # generation timestamps, so committing them is pure churn.
 seed/*.json
+
+# Benchmark scratch. The RESULTS are committed — they are the receipts the README quotes,
+# and a benchmark whose numbers nobody can see is not evidence.
+benchmark/results/_*.log
