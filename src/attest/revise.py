@@ -42,7 +42,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
-from attest.claims import CheckResult, Claim
+from attest.claims import CheckResult, Claim, ClassificationClaim, SchemaClaim
 from attest.config import Step
 from attest.llm import LLM, LLMError
 
@@ -66,12 +66,23 @@ Rules, all of them enforced by code after you reply:
   leaves it null is not a revision — it will be thrown away. An ownership claim must set
   owner_urn; a freshness claim must set max_age_hours; a classification claim must set
   labels (and `present`); a schema claim must set columns.
+- DO NOT CHANGE WHAT THE CLAIM IS ABOUT. You may change what your claim ASSERTS; you may
+  not change its SUBJECT.
+    * schema: keep the SAME column names. Correct a column's TYPE. Do NOT swap in a
+      different column that happens to exist.
+    * classification: keep the SAME labels and the same column. Correct `present` — flip
+      it from true to false, or from false to true. Do NOT swap in a different label.
+  Naming a different column, or a different label, does not correct your false claim. It
+  abandons it and states an unrelated true one, and it will be rejected.
 - raw_text is your corrected sentence, written the way you would have written it had you
   known. It must mention the target_urn.
 - Leave every field that does not apply to this claim's type null.
 
-If the evidence does not tell you what the correct value is, say so by repeating your
-original claim unchanged. A revision that guesses is worse than no revision: it will be
+SOMETIMES THERE IS NO CORRECT VALUE, and then the honest answer is to set unchanged=true.
+If you claimed a column exists and the catalog's exhaustive column list does not contain
+it, there is nothing to correct: you cannot un-say it by naming a different column, and
+"this column does not exist" is not a claim you can make here. Stand by your claim, set
+unchanged=true, and be marked wrong. That is a better outcome than a guess: a guess will be
 re-verified against the same catalog and it will fail again.\
 """
 
@@ -182,6 +193,51 @@ _FIELDS_BY_TYPE: dict[str, frozenset[str]] = {
 _COMMON = frozenset({"claim_type", "target_urn", "raw_text"})
 
 
+def subject(claim: Claim) -> tuple[Any, ...]:
+    """WHAT the claim is about, as opposed to what it ASSERTS about it.
+
+    The generalization of the same-URN rule, one grain down — and it exists because the
+    URN rule alone is not enough. `customer_profile has an ssn column` is Contradicted and
+    CANNOT be corrected: SchemaClaim has no `present=False`, so "this table does not have
+    an ssn column" is not expressible, and withdrawing a claim is not revising it. What a
+    model will happily do instead is "correct" it to `customer_profile has an email
+    column` — same URN, same claim type, sails through both of the other guards,
+    re-verifies Supported. The false claim is not corrected; it is quietly replaced by an
+    unrelated true one, and the audit goes green.
+
+    That is the retarget attack again, one grain down, and it is closed the same way:
+
+        A revision may change what a claim ASSERTS. It may never change what the claim is
+        ABOUT.
+
+    So the subject is frozen and the value is free:
+
+      freshness       subject: nothing        value: max_age_hours   (widen the window)
+      ownership       subject: nothing        value: owner_urn       (name the real owner)
+      classification  subject: labels, grain  value: present         (flip the polarity)
+      schema          subject: column NAMES   value: column types    (fix the type)
+
+    Correct a column's type, never swap the column. Flip `present`, never swap the label.
+    A claim whose falsehood lives in its SUBJECT is therefore unrevisable by construction —
+    which is not a gap, it is the honest answer: the agent asserted something that does not
+    exist, and the only truthful response is to stand by it and be marked wrong, or to say
+    the evidence cannot settle it. That is what CorrectionOutcome.STOOD_FIRM is for, and it
+    is what makes that outcome live-reachable rather than theoretical.
+    """
+    match claim:
+        case ClassificationClaim():
+            # The labels and the grain ARE the question ("does this column carry PII?").
+            # `present` is the answer, and it is the only thing a revision may move.
+            return (tuple(sorted(claim.labels)), claim.field_path)
+        case SchemaClaim():
+            # The column names are the question; their types are the answer.
+            return (tuple(sorted(c.name for c in claim.columns)),)
+        case _:
+            # Freshness and ownership assert a bare value about the dataset itself. The
+            # target URN — already pinned — is their whole subject.
+            return ()
+
+
 @dataclass(frozen=True)
 class Revision:
     """What the agent said when shown the catalog. Not yet believed, not yet verified.
@@ -276,6 +332,20 @@ def _validate(raw: dict[str, Any], original: Claim) -> Revision:
             claim=None,
             stood_firm=True,
             rejected="the revision is identical to the contradicted claim",
+        )
+
+    # THE SUBJECT IS FROZEN. See subject() — this is the same-URN rule one grain down, and
+    # it is what stops a false claim being "corrected" into an unrelated true one.
+    was, now = subject(original), subject(revised)
+    if was != now:
+        return Revision(
+            claim=None,
+            rejected=(
+                f"changed the subject of the claim: it was about {was}, the revision is "
+                f"about {now}. A revision may change what a claim ASSERTS; it may never "
+                f"change what the claim is ABOUT. Swapping the column (or the label) does "
+                f"not correct the false claim — it replaces it with a different, true one."
+            ),
         )
 
     return Revision(claim=revised)
