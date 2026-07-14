@@ -385,10 +385,35 @@ invariants worth not rediscovering:
 - **MEASURED: 100% / macro-F1 1.000 on both core and full pipeline; $0.0138 per 40 claims;
   40/40 model-authored explanations, 0 guard rejections; 0 correctness and 0 coverage
   failures.**
-- **The vacuity check is `just bench-sabotage`, and it EXITS NON-ZERO if the numbers do not
-  move.** Replace the classification checker with one that affirms everything: 100% → 67.5%,
-  Supported precision → 0.536, 13 cases named. A benchmark that cannot fail is a green light
-  wired to nothing.
+- **The vacuity check RUNS IN THE SUITE, not only in a command someone has to remember.**
+  `just bench-sabotage` exists and exits non-zero if the numbers do not move — but a
+  guarantee that only fires when someone types it will rot, exactly like the `just live`
+  cadence would without a written rule. So
+  `test_benchmark.py::test_breaking_a_checker_collapses_the_benchmark` runs the sabotage on
+  every `just check` and in CI: 100% → 67.5%, Supported precision → 0.536, correctness AND
+  coverage failures both non-zero. It restores the dispatch tables via monkeypatch — record
+  the healthy ones BEFORE sabotaging, or every test after it runs against a checker that
+  affirms everything, which is a very funny way to make a suite pass.
+- **100% IS THE EXPECTED RESULT, AND THAT HAS TO BE SAID BEFORE A JUDGE DECIDES OTHERWISE.**
+  The checkers are deterministic code implementing exactly the rules the labels encode, so
+  anything below 100% is a BUG, not a difficulty signal. The benchmark is a REGRESSION NET
+  and a COVERAGE PROOF, not a capability score. Do not "make it harder" to get a more
+  impressive number — make it FAIL on demand (above), and name the boundary (below).
+- **What the benchmark does NOT prove, and the README says so plainly:** it is a SEEDED
+  catalog, not a messy real one (no half-finished glossaries, no tags meaning three things to
+  three teams, no genuinely contested classifications); the labels APPLY the policy and do not
+  VALIDATE it (a wrong rule scores 100% while being wrong); and the catalog is both the oracle
+  and the input, so it cannot tell you whether the catalog is right about the DATA. Naming the
+  boundary is what makes the 100% credible instead of hollow.
+- **ZERO of the 40 cases bypass the model in `--full` mode**, and the flattering read must be
+  refused: the score is the model transcribing 40 sentences correctly AND the checkers
+  deciding 40 claims correctly. **27/40 put a non-trivial demand on the decomposer** (8
+  column-scoping, 8 negation, 7 numeric-window, 4 type-assertion, 1 fractional-window, 1
+  term-urn); 13 need only the type and the URN. **And the core does NOT rescue a
+  mis-transcription** — handed the wrong claim it faithfully decides the wrong claim. What it
+  guarantees is that the VERDICT is never invented, and a mangled claim becomes a visible GAP
+  (`No-Claim`) rather than a confident wrong answer. That is a different guarantee from the
+  one people assume, and it is the honest one.
 - **The benchmark found a real bug on its first run, and the fix was the CLAUDE.md rule.**
   "Updated every 30 minutes" came back from extraction as `max_age_hours: 0` (the model
   floored 0.5), which `FreshnessClaim` rightly rejects (`gt=0`) — so the claim was silently

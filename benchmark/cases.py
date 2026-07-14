@@ -688,6 +688,66 @@ def coverage() -> dict[str, int]:
     return counts
 
 
+def extraction_demands(case: Case) -> tuple[str, ...]:
+    """What the DECOMPOSER has to get right on this case, beyond the claim type and URN.
+
+    This is the honest answer to "where does the LLM risk actually live". In `--full` mode
+    every case passes through decomposition — **none of the 40 bypasses the model** — so
+    100% end-to-end accuracy is not a statement that the model was uninvolved. It is a
+    statement that the model transcribed all 40 sentences correctly AND the checkers then
+    decided all 40 correctly. Two things, and the harness measures them separately.
+
+    The demands below are the ones a model plausibly gets wrong, and each has a shape:
+
+      negation         "contains NO PII" -> present=False. Drop the negation and the claim
+                       inverts, and the verdict inverts with it. Nothing downstream can
+                       recover a lost "no".
+      column-scoping   "the email column of X" -> field_path='email'. Attach it to the
+                       table instead and a claim about one column silently becomes a claim
+                       about sixteen — and the precedence rules mean the verdict can differ.
+      numeric-window   "refreshed daily" -> 24. Prose to arithmetic.
+      fractional-window a sub-hour window. MEASURED FAILURE: the model floored 0.5 to 0 and
+                       the claim was dropped. This is the one that actually broke.
+      type-assertion   "of type NUMBER(12,2)" -> carried onto the column.
+      term-urn         a glossary term URN rather than a tag URN.
+    """
+    claim = case.claim
+    demands: list[str] = []
+
+    if claim["claim_type"] == "freshness":
+        demands.append("numeric-window")
+        hours = claim["max_age_hours"]
+        if hours != int(hours):
+            demands.append("fractional-window")
+    if claim["claim_type"] == "classification":
+        if claim.get("field_path"):
+            demands.append("column-scoping")
+        if claim["present"] is False:
+            demands.append("negation")
+        if any("glossaryTerm" in label for label in claim["labels"]):
+            demands.append("term-urn")
+    if claim["claim_type"] == "schema":
+        if any(c["native_type"] for c in claim["columns"]):
+            demands.append("type-assertion")
+
+    return tuple(demands)
+
+
+def extraction_risk() -> dict[str, list[str]]:
+    """Which cases put a non-trivial demand on the decomposer, and which do not.
+
+    `type+urn only` cases still go through the model — they simply give it nothing subtle to
+    get wrong. They are not "deterministic-only" cases, and calling them that would be the
+    flattering read.
+    """
+    risk: dict[str, list[str]] = {}
+    for case in CASES:
+        demands = extraction_demands(case) or ("type+urn only",)
+        for demand in demands:
+            risk.setdefault(demand, []).append(case.id)
+    return risk
+
+
 def validate() -> None:
     """Hold the dataset to its own rules. Run at import of the JSON, and in the suite."""
     ids = [c.id for c in CASES]

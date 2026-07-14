@@ -60,13 +60,39 @@ audited 3 claims in 14.3s (4392 tokens, $0.001006)
 
 | Receipt | Measured | Where |
 | --- | --- | --- |
+| **Attest's verdict on the same claim, asked 5 times** | **5 / 5 identical** (pass@5 = 100%) | [benchmark](benchmark/README.md) |
+| **An LLM judge's verdict on the same claim, asked 6 times** | **unstable — a different answer set every run** | [benchmark](benchmark/README.md#cross-family-calibration-not-letting-gpt-grade-gpts-homework) |
+| Groundedness accuracy, 40 hand-labeled claims | **100%**, macro-F1 **1.000** | [`just bench`](benchmark/run_eval.py) |
 | Cost per audited claim | **$0.000264** | [cost.py](src/attest/cost.py) |
-| Explanations model-authored, not template fallback | **13 / 13** | [`just live`](tests/test_live.py) |
+| Explanations model-authored, not template fallback | **40 / 40** | [`just bench-full`](benchmark/run_eval.py) |
 | **Self-correction guard fires against a real model** | **2 / 6 runs** | [below](#self-correction-and-why-it-cannot-be-gamed) |
 | Catalog fetches, 4 claims over 2 datasets | **2** (not 4) | [cache.py](src/attest/datahub/cache.py) |
-| Verdicts decided by a model | **0** — structurally, and asserted per run | [trajectory.py](src/attest/trajectory.py) |
+| Verdicts decided by a model | **0** — structurally, asserted per run, and now *measured* | [trajectory.py](src/attest/trajectory.py) |
 
-That third row is the one worth pausing on. Handed a **false claim it could not honestly
+### The first two rows are the whole argument
+
+`NO_LLM_IN_THE_VERDICT_PATH` has always been an *architectural* claim, asserted by
+[trajectory.py](src/attest/trajectory.py) on every run. Session 6 turned it into a **measured
+one**, and by accident.
+
+Attest's own benchmark harness employs a second model (Nemotron, a Llama-family model) as an
+independent labeler, to keep GPT from grading GPT's homework. It was run **six times** —
+identical code, identical prompt, `temperature=0` — and it disagreed with a **different set of
+cases every single time**: `{class-15}`, then `{class-03, class-15}`, then `{class-03,
+class-13}`, then `{class-03}`, then none, then none. Every case it ever disputed, it also
+*agreed* with on another run. It twice returned unparseable JSON on a narrow,
+schema-constrained question and needed a retry to recover.
+
+Asked the same question, the same LLM gives different answers. **Attest's core, asked the same
+question five times, gives the same answer five times.**
+
+That is not a slogan and it is not a citation — it is two tables produced by the same harness,
+in this repository, on the same catalog, on the same day. It is the difference between a
+verdict you can *audit* and a verdict you can only *hope about*, and it is the entire reason
+the deterministic core exists. A judge that cannot reproduce itself cannot be ground truth. It
+can only calibrate ground truth — which is exactly, and only, what it is used for here.
+
+And the row below it is worth pausing on too. Handed a **false claim it could not honestly
 correct**, `gpt-4o-mini` tried to escape the finding — by swapping the fabricated column for
 real ones — in **2 of 6 runs**. The subject rule caught it every time. It is not a guard
 against a hypothetical adversary: it is a guard against **the model we actually ship**,

@@ -86,7 +86,15 @@ from attest import checkers, graph
 from attest.claims import Claim, ClaimType, Evidence, Verdict
 from attest.datahub import DataHubClient, DatasetSnapshot, SnapshotCache
 from attest.graph import Pipeline
-from benchmark.cases import CASES, DOCUMENTED, VERDICTS, Case, coverage
+from benchmark.cases import (
+    CASES,
+    DOCUMENTED,
+    VERDICTS,
+    Case,
+    coverage,
+    extraction_demands,
+    extraction_risk,
+)
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
@@ -491,6 +499,51 @@ def print_metrics(title: str, m: Metrics) -> None:
             print(f"    {case_id}")
 
 
+def print_extraction_risk(predictions: list[Prediction]) -> dict[str, Any]:
+    """Where the LLM risk actually lives, and where it does not.
+
+    The honest framing, because 100% end-to-end invites the flattering read. **Not one of
+    the 40 cases bypasses the model in this mode.** All 40 go through decomposition, so the
+    score is a statement about the model transcribing 40 sentences AND the checkers deciding
+    40 claims — two things, measured separately.
+
+    And the deterministic core does NOT rescue a mis-transcription. It cannot: handed the
+    wrong claim it will faithfully decide the wrong claim. What it guarantees is that the
+    VERDICT is not invented — and what happens to a bad claim is that it becomes a visible
+    gap rather than a confident wrong answer. That is not a theory: when the decomposer
+    floored "every 30 minutes" to `max_age_hours=0`, the claim schema rejected it and the
+    case scored No-Claim. A gap in the audit, surfaced. Not a verdict.
+    """
+    risk = extraction_risk()
+    subtle = {c.id for c in CASES if extraction_demands(c)}
+
+    print()
+    print("=" * 78)
+    print("WHERE THE MODEL RISK LIVES (all 40 cases pass through it; none bypass it)")
+    print("=" * 78)
+    print(f"  cases with a non-trivial demand on the decomposer   {len(subtle)}/{len(CASES)}")
+    plain = len(CASES) - len(subtle)
+    print(f"  cases needing only the claim type and the URN       {plain}/{len(CASES)}")
+    print("\n  what the decomposer has to get right, by kind:")
+    for demand, ids in sorted(risk.items(), key=lambda kv: -len(kv[1])):
+        hit = [p for p in predictions if p.case_id in set(ids) and not p.extraction_ok]
+        note = "" if not hit else f"   <-- MIS-EXTRACTED: {', '.join(p.case_id for p in hit)}"
+        print(f"    {demand:20s} {len(ids):2d} cases{note}")
+
+    print(
+        "\n  The checkers do NOT rescue a mis-transcription -- handed the wrong claim they"
+        "\n  faithfully decide the wrong claim. What they guarantee is that the VERDICT is"
+        "\n  never invented. A claim the decomposer mangles becomes a visible GAP (No-Claim,"
+        "\n  or a named extraction failure), not a confident wrong answer."
+    )
+    return {
+        "cases_with_subtle_extraction_demand": len(subtle),
+        "cases_type_and_urn_only": len(CASES) - len(subtle),
+        "by_demand": {k: len(v) for k, v in risk.items()},
+        "cases_bypassing_the_model": 0,
+    }
+
+
 def semantic_report(predictions: list[Prediction]) -> dict[str, Any]:
     """The semantic layer's own numbers, across the whole benchmark rather than 13 cases."""
     explained = [p for p in predictions if p.explanation_from_model is not None]
@@ -559,6 +612,7 @@ def main() -> int:
     }
 
     if mode == "full":
+        payload["extraction_risk"] = print_extraction_risk(runs[0])
         semantics = semantic_report(runs[0])
         payload["semantic_layer"] = semantics
         print(f"\n{'=' * 78}")

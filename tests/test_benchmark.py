@@ -77,6 +77,49 @@ def test_every_label_is_what_the_live_catalog_actually_says(case, snapshot, now)
     )
 
 
+def test_breaking_a_checker_collapses_the_benchmark(snapshot, now, monkeypatch):
+    """THE VACUITY CHECK, END TO END, AND WIRED INTO `just check`.
+
+    `just bench-sabotage` exists and exits non-zero if the numbers do not move — but a
+    guarantee that only fires when someone remembers to run it is the same shape of problem
+    as the `just live` cadence rule, and it will rot. So the sabotage runs in the SUITE,
+    against the live catalog, on every `just check` and in CI.
+
+    Replace the classification checker with one that affirms everything — the exact failure
+    this product exists to prevent, confident affirmation of an unverified claim — and the
+    benchmark must NOTICE. If this ever passes with the numbers unmoved, every 100% in
+    benchmark/README.md is a green light wired to nothing.
+    """
+    from benchmark import run_eval
+
+    from attest import checkers, graph
+    from attest.claims import ClaimType
+
+    baseline = score(run_eval.run_core(run_eval.Catalog()))
+    assert baseline.accuracy == 1.0, "the benchmark must be green BEFORE it is broken"
+
+    # Record the healthy dispatch BEFORE breaking it, so monkeypatch restores it at
+    # teardown. sabotage() rebinds module-level tables on purpose — that is what lets it
+    # reach both the core and the graph — and leaving them broken would mean every test
+    # after this one ran against a checker that affirms everything. Which is a very funny
+    # way to make a suite pass.
+    node = graph.CHECKER[ClaimType.CLASSIFICATION]
+    monkeypatch.setattr(checkers, "check", checkers.check)
+    monkeypatch.setitem(graph._CHECK, node, graph._CHECK[node])
+
+    run_eval.sabotage("classification")
+    broken = score(run_eval.run_core(run_eval.Catalog()))
+
+    assert broken.accuracy < 0.75, (
+        f"a checker that affirms EVERYTHING scored {broken.accuracy:.1%}. The benchmark "
+        f"cannot fail, so none of its numbers mean anything."
+    )
+    assert broken.per_verdict["Supported"]["precision"] < 0.6
+    assert broken.per_verdict["Contradicted"]["recall"] < 0.6
+    assert broken.correctness_failures > 0, "affirming a contradicted claim is a CORRECTNESS bug"
+    assert broken.coverage_failures > 0, "affirming a silent catalog is a COVERAGE bug"
+
+
 def test_the_benchmark_now_is_the_catalogs_now_and_not_the_wall_clock(snapshot):
     """The freshness labels are relative to the seed, so a wall-clock `now` would rot them.
 
