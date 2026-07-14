@@ -70,6 +70,36 @@ rules, in order:
 
 Both rules are precedence, not suppression: the losing signal is still returned as
 evidence, so an explanation can say *why* the conflict resolved the way it did.
+
+--------------------------------------------------------------------------------
+Does the COMPLETENESS MARKER reach down into a column? (Session 6: it does, and it
+had to be SAID)
+--------------------------------------------------------------------------------
+
+Rule A says a table's signals do not propagate down into a column. Rule 2 (above) says a
+`Verified` marker licenses closed-world reasoning. Put a claim about an UNTAGGED column of
+a VERIFIED table in front of both and they collide: is the column's silence a reviewed
+finding (Contradicted), or is it just silence (Insufficient-Coverage)?
+
+`COMPLETENESS_REACHES_COLUMNS` below answers it, and the answer is **yes**: `Verified`
+means "the governance team reviewed this dataset and tagged what they found", so a column
+they did not tag is a column they reviewed and found clean. If the marker stopped at the
+table boundary it would license a denial about the table while saying nothing about any of
+the columns the table is made of, which is not a coherent reading of what a review is.
+
+**This rule existed in the code before it existed here, and that was the bug.** It lived as
+a comment inside `check_classification` — a governance semantic buried in an `if`, which is
+the exact thing this module exists to prevent. It was found by the benchmark's cross-family
+labeler (benchmark/labeler.py): an independent model, given the declared policy, applied
+rule A and returned Insufficient-Coverage where Attest returns Contradicted. It was not
+wrong. It had been told rule A and rule 2 and never told how they interact, because nobody
+had ever written that down.
+
+Note the asymmetry, which is the whole reason both rules can be true at once: a PII SIGNAL
+does not propagate down (a PII table does not make `signup_ts` personal), because
+"contains PII" is existential. A COMPLETENESS MARKER does propagate down, because it is not
+a signal at all — it is a statement about the thoroughness of the review that produced the
+signals. One is a fact about the data; the other is a fact about the reviewing.
 """
 
 from __future__ import annotations
@@ -100,6 +130,17 @@ EXCLUSIONS = {k: frozenset(v) for k, v in EXCLUSIONS.items()}
 # denial rather than as silence. Without this marker, Attest never assumes the
 # absence of a tag means anything at all.
 COMPLETENESS_MARKERS: frozenset[str] = frozenset({f"{TAG}Verified"})
+
+
+# Does a table's completeness marker license closed-world reasoning about ONE OF ITS
+# COLUMNS? Yes — see the module docstring. Declared here as reviewable data rather than
+# living as an `if` inside a checker, which is where it was until an independent labeler
+# read the policy, could not find this rule in it, and disagreed with the code.
+#
+# Flip this to False and an untagged column of a Verified table becomes Insufficient-
+# Coverage instead of Contradicted. That is a defensible position and it is not this one;
+# what is NOT defensible is leaving the question unanswered in the place the answers live.
+COMPLETENESS_REACHES_COLUMNS = True
 
 
 def contradicts(asserted: str, observed: tuple[str, ...]) -> str | None:
