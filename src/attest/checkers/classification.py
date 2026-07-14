@@ -169,9 +169,17 @@ def check_classification(
         where = "this table"
 
     # The completeness marker is always read from the TABLE, even for a column-scoped
-    # claim: it is a statement about the review that was performed on the dataset, and
-    # a reviewed table's untagged column was reviewed too.
-    complete = policy.classification_is_complete(snapshot.labels)
+    # claim: it is a statement about the review that was performed on the dataset, and a
+    # reviewed table's untagged column was reviewed too.
+    #
+    # That last clause used to be this comment and nothing else — a governance rule living
+    # in an `if` inside a checker, which is what policy.py exists to prevent. It is now
+    # DECLARED (policy.COMPLETENESS_REACHES_COLUMNS), because the benchmark's independent
+    # cross-family labeler read the whole declared policy, could not find this rule in it,
+    # and correctly concluded something different. See policy.py.
+    complete = policy.classification_is_complete(snapshot.labels) and (
+        claim.field_path is None or policy.COMPLETENESS_REACHES_COLUMNS
+    )
     completeness_evidence = Evidence(
         field=TABLE_FIELD,
         value=sorted(policy.COMPLETENESS_MARKERS & set(snapshot.labels)) or None,

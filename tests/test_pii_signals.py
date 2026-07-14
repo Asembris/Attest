@@ -344,6 +344,58 @@ def test_a_pii_free_claim_about_an_unclassified_column_is_silence_not_denial(sna
     )
 
 
+def test_the_completeness_marker_reaches_down_into_a_column_though_pii_signals_do_not(
+    snapshot,
+):
+    """The rule an independent labeler found MISSING from the declared policy.
+
+    Two rules collide on an untagged column of a Verified table, and until Session 6 the
+    policy declared both and never said which wins:
+
+      - a table's PII signals do NOT propagate down into its columns (the test above), and
+      - a `Verified` marker licenses closed-world reasoning about an absent label.
+
+    So is `signup_ts` on a Verified table a *reviewed finding* or *silence*? Attest says
+    reviewed finding, and `policy.COMPLETENESS_REACHES_COLUMNS` now says so out loud — a
+    signal is a fact about the DATA and does not distribute over columns, while `Verified`
+    is a fact about the REVIEW and does.
+
+    The pair below is the whole rule. The SAME shape of claim — "this untagged column
+    contains PII" — is Contradicted on the Verified table and Insufficient-Coverage on the
+    unverified one, and the only difference between them is whether anyone reviewed it.
+
+    This was found by benchmark/labeler.py: a Llama-family model, handed the declared
+    policy, applied the propagation rule and answered Insufficient-Coverage where the code
+    answers Contradicted. It was not wrong — it had been told both rules and never told how
+    they interact, because the interaction lived in a comment inside a checker rather than
+    in policy.py. That is what a cross-family labeler is FOR.
+    """
+    assert policy.COMPLETENESS_REACHES_COLUMNS
+
+    # DOCUMENTED is Verified; `signup_ts` carries no labels of its own.
+    reviewed = snapshot(DOCUMENTED)
+    assert policy.classification_is_complete(reviewed.labels)
+    assert reviewed.field("signup_ts").labels == ()
+
+    assert (
+        check_classification(contains_pii(DOCUMENTED, "signup_ts"), reviewed).verdict
+        is Verdict.CONTRADICTED
+    ), "a reviewed table's untagged column was reviewed too"
+
+    # PII_TABLE_UNVERIFIED is NOT Verified; `verified_at` carries no labels either. Same
+    # claim, same shape, and the answer must be silence — nobody has looked.
+    unreviewed = snapshot(PII_TABLE_UNVERIFIED)
+    assert not policy.classification_is_complete(unreviewed.labels)
+    assert unreviewed.field("verified_at").labels == ()
+
+    assert (
+        check_classification(
+            contains_pii(PII_TABLE_UNVERIFIED, "verified_at"), unreviewed
+        ).verdict
+        is Verdict.INSUFFICIENT_COVERAGE
+    ), "without a completeness marker, an untagged column is silence, not a denial"
+
+
 def test_the_losing_signal_is_still_returned_as_evidence(snapshot):
     """Precedence resolves the conflict; it must not hide it.
 
