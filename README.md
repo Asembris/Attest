@@ -41,6 +41,44 @@ audited 3 claims in 14.3s (4392 tokens, $0.001006)
 Measured, not estimated — from the clock and the API's own token counts. `just live`
 prints it.
 
+### What it costs to operate
+
+A receipt for three claims answers *does this work*. It does not answer *what does this cost
+to run continuously* — and that question is worth answering **before** monitoring is built,
+not discovered afterwards. So the per-step token counts are measured and projected forward
+([`cost.py`](src/attest/cost.py), pinned by [tests](tests/test_cost.py)):
+
+| Per unit | Measured | |
+| --- | --- | --- |
+| One claim | 895 in / 216 out | **$0.000264** |
+| One correction attempt | 1140 in / 125 out | **$0.000246** |
+
+At **1000 claims/day, 50 datasets, one org** — `gpt-4o-mini`:
+
+| Contradiction rate | Attempts each | $/day | $/month | $/year |
+| --- | --- | --- | --- | --- |
+| 5% | 1 | $0.28 | $8 | $101 |
+| **10%** (nominal) | 1 | **$0.29** | **$9** | **$105** |
+| 25% | 1.5 | $0.36 | $11 | $130 |
+| 100% (every claim wrong, cap spent) | 2 | $0.76 | $23 | $276 |
+
+**It is not alarming, and that is itself the finding.** Token cost is not the constraint on
+continuous monitoring at one-org scale, so it is *not* the argument for sampling — and it
+would have been easy to assume it was. Three things the numbers actually say:
+
+1. **Corrections, not claims, are what move a bill.** A revision hands the evidence back to
+   the model, making it the priciest call in the pipeline, and it fires *only* on
+   Contradicted claims — exactly the ones anyone cares about. Worst case is **2.86× the
+   quiet case**, and that ceiling exists *only because the retry cap is a graph edge*. Raise
+   the cap and the ceiling rises with it. The cap is the budget control.
+2. **The real scaling pressure is catalog reads, not tokens.** `resolve_entity` fetches once
+   *per claim*. 1000 claims across 50 datasets is **1000 GraphQL fetches for 50 distinct
+   datasets** — 20× redundant. Snapshot caching within an audit window is the obvious win,
+   and it is a Session 4 item.
+3. **Per-tenant budget caps are a multi-tenancy concern, not a single-org one.** Cost is
+   linear in claims/day: ~$9/mo per org means ~$900/mo at 100 orgs and ~$9k/mo at 1000. The
+   cap matters *there*, and it should be enforced per tenant rather than globally.
+
 ## The coverage matrix
 
 Four claim types × three verdicts = **twelve cells**, and every one of them is
@@ -257,17 +295,57 @@ catalog actually says, and lets it restate itself. The revision is then **re-ver
 same deterministic checker against the same snapshot** — so the outcome of a correction is
 decided by code, exactly as the original verdict was.
 
-Two constraints make this an audit rather than a negotiation, and both are enforced by
-comparison after the fact, not by asking the model nicely:
+One rule makes this an audit rather than a negotiation, and it is enforced by comparison
+after the fact, never by asking the model nicely:
 
-- **A revision may not change the target URN.** An agent told "dana.wu does not own
-  `support_tickets`" could otherwise "correct" itself by talking about a different table.
-- **A revision may not change the claim type.** Otherwise a falsified *ownership* claim
-  could be quietly downgraded into a vacuous *freshness* one.
+> **A revision may change what a claim ASSERTS. It may never change what the claim is ABOUT.**
 
-Both would re-verify green. Both are the agent wriggling out from under the finding.
-Neither is a correction. The same snapshot is reused deliberately: the agent is held to the
-facts it was *shown*, so the catalog cannot move underneath the loop.
+The subject is frozen; the value is free:
+
+| Claim type | Subject — frozen | Value — revisable |
+| --- | --- | --- |
+| freshness | *(the dataset)* | `max_age_hours` — widen the window |
+| ownership | *(the dataset)* | `owner_urn` — name the real owner |
+| classification | the `labels`, the column | `present` — flip the polarity |
+| schema | the column **names** | the column **types** |
+
+Correct a column's type; never swap the column. Flip `present`; never swap the label. Every
+one of those swaps would re-verify **green** while leaving the false claim uncorrected —
+replaced by an unrelated true one. That is the agent wriggling out from under the finding,
+and it is closed at three grains: the target URN, the claim type, and the subject *within*
+the claim. (The same snapshot is reused deliberately too: the agent is held to the facts it
+was *shown*, so the catalog cannot move underneath the loop.)
+
+**The rule is what makes some claims honestly unrevisable — and that is a feature.**
+`customer_profile has an ssn column` is Contradicted and cannot be corrected: a `SchemaClaim`
+has no `present=False`, so "it does *not* have an ssn column" is inexpressible, and naming a
+column that *does* exist is forbidden by the rule above. The only honest move left is to
+stand by the claim and be marked wrong.
+
+**And this is not a hypothetical guard against a hypothetical model.** Six live runs of that
+exact claim, `gpt-4o-mini` at temperature=0:
+
+| Outcome | Runs | What the model did |
+| --- | --- | --- |
+| `stood-firm` | **4/6** | Set `unchanged=true`. The honest answer. |
+| `refused` | **2/6** | Tried to swap `ssn` for the table's *entire real column list* — `customer_id, email, full_name, is_active, signup_ts`. |
+
+Without `subject()`, those two runs each re-verify **Supported**, become a `CORRECTED`
+proposal, and put a human in front of a green correction for a claim that was simply false.
+A false claim laundered into an unrelated true one, **a third of the time**. The rule fires
+in production.
+
+Both outcomes are honest and neither proposes anything, so [the live
+test](tests/test_live.py) asserts the property that held in all six runs — *Attest invents
+no correction for an unrevisable claim* — rather than the specific outcome, which is the
+model's to choose. Asserting `stood-firm` alone made it flake 1-in-3, and a flaky assertion
+on a load-bearing invariant is worse than none: it trains people to re-run it. `stood-firm`
+itself is pinned **offline and deterministically** in
+[tests/test_graph.py](tests/test_graph.py).
+
+(This is the 12-cell coverage argument applied to the correction loop: a state no data can
+reach exists in the type and never in the world, and every test still passes. `stood-firm`
+was theoretical until the subject rule made it reachable.)
 
 The outcome is **named, not a boolean** — collapsing these would hide the interesting ones:
 
@@ -275,22 +353,32 @@ The outcome is **named, not a boolean** — collapsing these would hide the inte
 | --- | --- |
 | `corrected` | Revised, re-verified Supported. Becomes a **proposal**. |
 | `not-corrected` / `exhausted` | Revised, re-verified, still wrong. The cap (2) stopped it. |
-| `stood-firm` | The agent declined: the evidence does not say what the truth is. An honest non-answer. |
-| `refused` | The revision changed the subject, or failed the claim schema. Rejected before verification. |
+| `stood-firm` | The agent declined: the evidence does not determine the truth. An honest non-answer — and **live-reachable**, see above. |
+| `refused` | The revision changed the subject, or failed the claim schema. Rejected *before* verification. |
 | `not-attempted` | The verdict was not Contradicted. Insufficient-Coverage is **never** dragged into the loop — the catalog being silent is not the agent being wrong. |
 
 ### The human checkpoint is an accountability choice, not a limitation
 
-A revision that re-verifies clean is **still not applied**. It becomes a *proposal*, the
-graph parks, and it stays `PENDING` until a person accepts it.
+**This is a deliberate design decision, and it is not up for negotiation with the demo.**
 
-This is not because the loop is unreliable. It is because **an auditor that silently
-rewrites the thing it audits has stopped being an auditor.** Attest's whole value is that a
-human can point at any verdict and see the catalog field it came from; a correction Attest
-applied to itself, on the strength of a model's revision, would be the one fact in the
-system with no independent source. So the resting state of an unattended correction is
-*unreviewed* — never accepted, never quietly written back. A run nobody looks at proposes
-changes to nobody, and [a test](tests/test_graph.py) pins exactly that.
+A revision that re-verifies clean is **still not applied**. It becomes a *proposal*, the
+graph parks, and it stays `PENDING` until a person accepts it. There is no "approve all"
+default, and its absence is the design.
+
+> **An auditor that silently rewrites what it audits has stopped being an auditor.**
+
+That is the whole reason, and it has nothing to do with the loop being unreliable — the loop
+is re-verified by deterministic code and works. It is that Attest's entire value is that a
+human can point at any verdict and see the catalog field it came from. A correction Attest
+applied to itself, on the strength of a model's revision, would be **the one fact in the
+system with no independent source** — the single unauditable thing inside the auditor.
+
+So the resting state of an unattended correction is *unreviewed*: never accepted, never
+quietly written back. A run nobody looks at proposes changes to nobody. A tighter demo loop
+is not worth the accountability story, and
+[`test_an_unattended_proposal_stays_pending_rather_than_being_accepted`](tests/test_graph.py)
+exists specifically to stop a hurried refactor from flipping the default to auto-accept —
+which would look identical in every other test.
 
 ### Trajectory verification: the answer to "that's one prompt in a costume"
 

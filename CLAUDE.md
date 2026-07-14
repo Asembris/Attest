@@ -78,12 +78,35 @@ report. The invariants worth not rediscovering:
   (guard torn out, checker spending tokens, correction proposed unverified, router
   miswired). Every other test stays green through all four — that is the point. A
   trajectory check that only ever passes is a green light wired to nothing.
-- [revise.py](src/attest/revise.py): a revision **may not change the `target_urn` or the
-  `claim_type`**. Enforced by comparison after the fact, never by prompting. Without it an
-  agent escapes a finding by changing the subject — retarget the claim, re-verify green,
-  launder the falsehood. The revision is re-checked by the same checker against the **same
-  snapshot** (not a re-fetch: the agent is held to the facts it was *shown*, and a re-fetch
-  would let the catalog move underneath the loop).
+- [revise.py](src/attest/revise.py) — **a revision may change what a claim ASSERTS; it may
+  never change what the claim is ABOUT.** Enforced by comparison after the fact, never by
+  prompting, at three grains: the `target_urn`, the `claim_type`, and `revise.subject()`
+  (labels + column grain for classification; column NAMES for schema). Correct a column's
+  type, never swap the column; flip `present`, never swap the label. Every such swap
+  re-verifies **green** while leaving the false claim uncorrected and replaced by an
+  unrelated true one — the retarget attack, one grain down. The URN rule alone does NOT
+  close it, which is why `subject()` exists. The revision is re-checked by the same checker
+  against the **same snapshot** (not a re-fetch: the agent is held to the facts it was
+  *shown*, and a re-fetch would let the catalog move underneath the loop).
+- **`STOOD_FIRM` is live-reachable, and the subject rule is what makes it so.** A schema
+  claim naming a column that does not exist is Contradicted and genuinely *unrevisable* —
+  `SchemaClaim` has no `present=False`, so "it does not have an ssn column" cannot be said,
+  and naming a column that does exist is forbidden. The only honest move is to stand by the
+  claim and be marked wrong. This is the 12-cell coverage argument applied to the correction
+  loop: a state no data can produce exists in the enum and never in the world, and every
+  test still passes. If the subject rule is loosened, that outcome goes theoretical again.
+- **MEASURED, and the reason the subject rule exists.** Six live runs of that claim against
+  gpt-4o-mini at temperature=0: **4 stood firm, 2 tried to swap `ssn` for the table's entire
+  real column list.** Without `subject()` those two re-verify Supported, become a CORRECTED
+  proposal, and hand a human a green correction for a claim that was simply false — a third
+  of the time. The guard is not hypothetical and neither is the model's attempt to route
+  around it.
+- **Do NOT assert a specific correction outcome in a live test.** The model chooses between
+  `stood-firm` and `refused` here and both are honest; asserting `stood-firm` alone flaked
+  1-in-3. The live test asserts the property that holds every time — *an unrevisable claim
+  produces no proposal* — and the specific outcome is pinned offline against the fake. A
+  flaky assertion on a load-bearing invariant is worse than none: it teaches people to
+  re-run the suite until it goes green, which is how a real regression gets waved through.
 - **The retry cap (2) is a graph EDGE, not a counter.** An unbounded correction loop
   against a paid API is a cost bug that ships silently.
 - **A correction is PROPOSED, never applied.** `ReviewStatus.PENDING` is the resting state;
@@ -171,15 +194,23 @@ buried in a checker.
   (`Did not find a registered class for d`).
 - **Attest's own code talks to DataHub via direct GraphQL over `httpx`, not the
   `acryl-datahub` SDK.** The CLI/SDK is for *ingestion only*.
-- **Never put a typed object in LangGraph's checkpointed state.** The checkpointer
-  serializes through msgpack and *currently* round-trips unregistered classes with a
-  warning — `Deserializing unregistered type ... will be blocked in a future version`.
-  Pydantic claims and frozen dataclasses survive today, so this looks fine and is a trap:
-  when it breaks, typed objects come back as bare dicts **after a resume**, which surfaces
-  as an `AttributeError` in a demo and nowhere else. So `AuditState` holds **primitives
-  only** (cursor, retry count, decisions) — all the control flow needs — and the typed
-  audit record lives in a `_Ledger` keyed by thread id, beside the graph. The checkpoint is
-  no less real for it: the `interrupt_before` pause is genuine.
+- **NEVER put a typed object in LangGraph's checkpointed state. Do not "clean this up".**
+  `AuditState` holds **primitives only** (cursor, retry count, decisions) and the typed
+  audit record lives in a `_Ledger` keyed by thread id, *beside* the graph. This looks like
+  an odd split and it is deliberate. The checkpointer serializes through msgpack, and it
+  *currently* round-trips unregistered classes **with a deprecation warning**:
+
+      Deserializing unregistered type attest.claims.FreshnessClaim from checkpoint.
+      This will be blocked in a future version.
+
+  Pydantic claims and frozen dataclasses therefore **survive today**, which is exactly what
+  makes this a trap: put them in state, run the tests, and everything is green. When it
+  breaks, typed objects come back as **bare dicts after a resume** — so it fails only on the
+  human-checkpoint path, only after an interrupt, as an `AttributeError` deep in report
+  assembly. That is close to the hardest possible thing to diagnose, and it will happen in a
+  demo. The pause is no less real for the split: `interrupt_before` is a genuine interrupt.
+  If a future session finds this ugly and moves the ledger into the graph state, it will
+  work perfectly until the day it doesn't.
 
 More landmines (quickstart's lying exit code, the eventually-consistent search index,
 structured-property value shapes) are in [docs/datahub-setup.md](docs/datahub-setup.md).
