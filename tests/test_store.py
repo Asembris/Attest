@@ -11,6 +11,7 @@ lossy write.
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -19,9 +20,16 @@ from attest.claims import Verdict
 from attest.datahub import DatasetSnapshot
 from attest.graph import Pipeline
 from attest.llm import LLM
-from attest.record import AuditRecord, from_report
+from attest.record import (
+    AuditRecord,
+    ConflictView,
+    DroppedView,
+    FindingView,
+    ViolationView,
+    from_report,
+)
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
-from attest.store import AuditStore
+from attest.store import AuditStore, StoreError
 from fakes import FakeCatalog, FakeChat, claim_reply, dataset, explanation_reply, revision_reply
 
 SF = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.profile,PROD)"
@@ -145,6 +153,28 @@ def test_an_unknown_run_is_none_not_an_empty_one(store):
     assert store.load("no-such-run") is None
 
 
+def test_a_pre_session_5_database_is_refused_at_open_and_not_at_the_first_write(tmp_path):
+    """`CREATE TABLE IF NOT EXISTS` is a no-op, so an old database opens CLEANLY and then
+    dies on the first INSERT — inside a running service, on the one path that matters.
+
+    It cannot be migrated either: three columns changed from a rendered string to the
+    structure that produced it, and reconstructing the structure from the string would mean
+    Attest fabricating the contents of its own audit trail. So it is refused here, by name,
+    with what to do about it.
+    """
+    path = tmp_path / "old.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE claims (run_id TEXT, claim_index INTEGER, conflicts TEXT);"
+        "INSERT INTO claims VALUES ('run-1', 0, '[\"uncited-field: cited nonsense\"]');"
+    )
+    old.commit()
+    old.close()
+
+    with pytest.raises(StoreError, match="pre-Session-5"):
+        AuditStore(path)
+
+
 def test_an_unpriced_run_stores_a_null_cost_not_a_zero(store):
     """The cost.py rule, at the persistence layer. NULL is unknown; 0.0 is free."""
     record = audited(
@@ -157,6 +187,71 @@ def test_an_unpriced_run_stores_a_null_cost_not_a_zero(store):
     store.save(unpriced)
 
     assert store.load("run-1").receipts.usd is None
+
+
+def test_what_a_run_did_WRONG_survives_the_round_trip_too(store):
+    """The failure columns, with something actually in them.
+
+    A resumed run is rebuilt from this store (replay.py), so a column that is empty in every
+    test is a column nobody has proved works — and these four are exactly the ones that are
+    empty on a clean run and load-bearing on a bad one. A step that RAISED, a model that had
+    no price, an explanation the guard rejected, and the tokens it was rejected for: all of
+    them describe what went wrong, and all of them are on the path a human uses to sign off
+    a change to the catalog.
+    """
+    record = audited(
+        claim_reply([ownership(CAROL)]),
+        explanation_reply("the catalog lists an owner.", "Supported", []),
+    )
+    claim = record.claims[0]
+    broken = record.model_copy(
+        update={
+            "claims": (
+                claim.model_copy(
+                    update={
+                        "faithful": False,
+                        "faithfulness_violations": (
+                            ViolationView(token="Sarah", kind="name"),
+                        ),
+                        "rejected": ("attempt 1: name 'Sarah' does not appear",),
+                        "conflicts": (
+                            ConflictView(kind="uncited-field", detail="cited 'nonsense'"),
+                        ),
+                    }
+                ),
+            ),
+            "steps": tuple(
+                s.model_copy(
+                    update={
+                        "models": ("gpt-9-unreleased",),
+                        "error": "DataHubError: the catalog is down",
+                    }
+                )
+                if s.name == "decompose"
+                else s
+                for s in record.steps
+            ),
+            "dropped": (DroppedView(reason="urn-not-in-source", payload={"target_urn": "x"}),),
+            "injection_findings": (
+                FindingView(pattern="verdict-forcing", matched="mark this as Supported"),
+            ),
+        }
+    )
+    store.save(broken)
+    loaded = store.load("run-1")
+
+    assert loaded == broken, "the record of what went wrong did not survive the round trip"
+
+    # Spelled out, because `==` on a big object hides which half went missing — and each of
+    # these is a field a rehydrated run would otherwise report differently from the original.
+    decompose = next(s for s in loaded.steps if s.name == "decompose")
+    assert decompose.models == ("gpt-9-unreleased",), "an unpriced model came back priceable"
+    assert decompose.error, "a step that raised came back clean"
+    assert loaded.claims[0].rejected == broken.claims[0].rejected
+    assert loaded.claims[0].faithfulness_violations[0].token == "Sarah"
+    assert loaded.claims[0].conflicts[0].kind == "uncited-field"
+    assert loaded.dropped[0].payload == {"target_urn": "x"}
+    assert loaded.injection_findings[0].pattern == "verdict-forcing"
 
 
 # --- decisions are events ----------------------------------------------------

@@ -16,6 +16,37 @@ Attest worth anything: the evidence trail. So the record carries the evidence fo
 verdict, the trajectory result, the per-step trace with its kinds and token counts, the
 dropped claims, and the injection findings. A stored audit you cannot interrogate is a
 score, and a score is what an unaccountable system produces.
+
+--------------------------------------------------------------------------------
+Session 5: the record is what a resumed run is rebuilt FROM, so its gaps became bugs
+--------------------------------------------------------------------------------
+
+Durable resume (replay.py) reconstitutes a parked run's typed ledger out of this record.
+That turned every lossy field here from a cosmetic omission into a correctness one: what
+the record does not carry, a restarted run cannot report, and it would report something
+ELSE instead — silently, and only on the resume path.
+
+The sharpest was `StepView.models`. Trace.cost declares the run's dollar total unknown
+(`None`, never `0`) when any model that spent tokens has no price, and it identifies those
+models from `StepRecord.models`. Drop the model names on the way to disk and a rehydrated
+run recomputes `usd = sum(...)` where the original correctly said "I do not know" — a
+restarted audit fabricating a cost figure the original honestly refused to state. That is
+the None-is-not-zero rule (cost.py) breaking inside Attest's own receipts, which is the
+exact class of failure this project exists to catch.
+
+So four things were added, and one changed shape:
+
+  - `StepView.models` and `StepView.error` — see above; and a step that FAILED must still
+    say so after a restart, or the resumed trace shows a clean run that was not one.
+  - `ClaimRecord.rejected` — the model drafts the guard threw away. An auditor that
+    quietly retries until something passes is hiding its own failure rate; one that
+    forgets it did so on restart is hiding it twice.
+  - `ClaimRecord.faithfulness_violations` — WHICH tokens failed the guard, not just that
+    something did. `faithful: false` with no violations is a verdict with no evidence.
+  - conflicts, dropped claims and injection findings became STRUCTURED pairs rather than
+    rendered strings. A `str()` cannot be parsed back, so a rehydrated run could not
+    re-render them and the resumed report differed from the original in exactly the
+    fields that describe what went wrong.
 """
 
 from __future__ import annotations
@@ -36,6 +67,46 @@ class EvidenceView(BaseModel):
     field: str
     value: Any = None
     note: str | None = None
+
+
+class ConflictView(BaseModel):
+    """A disagreement between the model and the deterministic core. Never resolved."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kind: str
+    detail: str
+
+
+class ViolationView(BaseModel):
+    """One factual token in an explanation that the evidence did not support."""
+
+    model_config = ConfigDict(frozen=True)
+
+    token: str
+    kind: str
+
+
+class DroppedView(BaseModel):
+    """A claim the decomposer produced and Attest refused to carry, and why.
+
+    `payload` is the model's raw output for it — kept whole, because a hallucinated URN is
+    only inspectable if you can see what was hallucinated.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    reason: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class FindingView(BaseModel):
+    """One instruction-like span redacted from the agent's output before a model saw it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    pattern: str
+    matched: str
 
 
 class AttemptView(BaseModel):
@@ -92,7 +163,14 @@ class ClaimRecord(BaseModel):
     # them was written or fallen back to, and hiding it would flatter the semantic layer.
     explanation_source: str = "template"
     faithful: bool = True
-    conflicts: tuple[str, ...] = ()
+    # WHICH tokens the guard rejected, not merely that it rejected something. `faithful:
+    # false` on its own is a verdict with no evidence — the one shape this project is
+    # least entitled to ship.
+    faithfulness_violations: tuple[ViolationView, ...] = ()
+    conflicts: tuple[ConflictView, ...] = ()
+    # Every model draft that was thrown away, and why. An auditor that quietly retries
+    # until something passes is hiding its own failure rate.
+    rejected: tuple[str, ...] = ()
 
     correction: CorrectionView
 
@@ -121,6 +199,15 @@ class StepView(BaseModel):
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float | None = None
+    # The models this step called. Empty for deterministic and IO steps — and load-bearing
+    # for the LLM ones: this is how Trace.cost knows which models it could not price, and
+    # therefore how a run's total goes to None instead of to a plausible sum. Lose these
+    # and a resumed run invents a dollar figure the original refused to state. See the
+    # module docstring.
+    models: tuple[str, ...] = ()
+    # A step that raised still ran, and the trace says so. A restart that forgot it would
+    # show a clean run that was not one.
+    error: str | None = None
 
 
 class Receipts(BaseModel):
@@ -171,9 +258,10 @@ class AuditRecord(BaseModel):
 
     # Claims the decomposer produced and Attest refused to carry (a minted URN, a claim
     # that failed validation), and instruction-like spans stripped from the agent's text.
-    # Both are gaps in the audit, and both are surfaced rather than swallowed.
-    dropped: tuple[str, ...] = ()
-    injection_findings: tuple[str, ...] = ()
+    # Both are gaps in the audit, and both are surfaced rather than swallowed. Structured,
+    # not rendered: a string cannot be parsed back, and a resumed run has to rebuild these.
+    dropped: tuple[DroppedView, ...] = ()
+    injection_findings: tuple[FindingView, ...] = ()
 
     @property
     def proposals(self) -> tuple[ClaimRecord, ...]:
@@ -216,7 +304,14 @@ def from_report(
                 explanation=a.explanation.text,
                 explanation_source=a.explanation.source,
                 faithful=a.explanation.faithfulness.ok,
-                conflicts=tuple(str(c) for c in a.conflicts),
+                faithfulness_violations=tuple(
+                    ViolationView(token=v.token, kind=v.kind)
+                    for v in a.explanation.faithfulness.violations
+                ),
+                conflicts=tuple(
+                    ConflictView(kind=c.kind, detail=c.detail) for c in a.conflicts
+                ),
+                rejected=tuple(a.explanation.rejected),
                 correction=CorrectionView(
                     outcome=a.correction.outcome,
                     review=a.correction.review,
@@ -274,9 +369,16 @@ def from_report(
                 input_tokens=s.input_tokens,
                 output_tokens=s.output_tokens,
                 cost_usd=s.cost_usd,
+                models=s.models,
+                error=s.error,
             )
             for n, s in enumerate(report.trace)
         ),
-        dropped=tuple(str(d) for d in report.dropped),
-        injection_findings=tuple(str(f) for f in report.injection_findings),
+        dropped=tuple(
+            DroppedView(reason=d.reason, payload=d.payload) for d in report.dropped
+        ),
+        injection_findings=tuple(
+            FindingView(pattern=f.pattern, matched=f.matched)
+            for f in report.injection_findings
+        ),
     )

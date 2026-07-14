@@ -374,23 +374,26 @@ def test_approving_an_unknown_run_is_a_404(client):
     assert response.status_code == 404
 
 
-def test_a_run_parked_by_a_dead_process_is_a_409_not_a_shortcut(client):
-    """The pause lives in memory; the AUDIT does not. Say so rather than inventing a path.
+def test_a_run_whose_pause_is_gone_is_a_409_not_a_shortcut(client):
+    """A parked run now survives a restart (tests/test_resume.py). A DELETED pause does not.
 
-    Applying the decision straight to the stored record would be easy, and would quietly
-    bypass the human_checkpoint node — a second, unaudited route to the one thing in this
-    system that must not have one. The stored verdicts and evidence are still readable.
+    `forget` drops the run's checkpoints, which is what the service does to every completed
+    run and what an operator does by wiping ATTEST_CHECKPOINT_PATH. Everything needed to
+    fake a resume is still in the store — the verdicts, the proposal, the evidence — and
+    applying the decision to the stored record would be four lines. It stays a 409: a
+    correction settled without the human_checkpoint node running is not settled, and a
+    second, unaudited path to it is the one thing this system must not have.
     """
     service = app.dependency_overrides[get_service]()
     run_id = client.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
 
-    service.pipeline.forget(run_id)  # what a restart looks like from here
+    service.pipeline.forget(run_id)  # the paused graph is deleted, the audit is not
 
     response = client.post(
         f"/audit/{run_id}/approve",
         json={"decisions": [{"claim_index": 0, "accept": True}]},
     )
     assert response.status_code == 409
-    assert "cannot be resumed" in response.text
+    assert "no paused graph" in response.text
     # The audit itself is intact and still readable.
     assert client.get(f"/audit/{run_id}").json()["claims"][0]["evidence"]

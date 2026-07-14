@@ -8,36 +8,28 @@ the catalog.
 Why audits are serialized, and why that is not a performance failure
 --------------------------------------------------------------------------------
 
-One `Pipeline` is built and reused, which means one `LLM` handle, which means ONE shared
-`llm.usage` list. observe.Trace bills a step by slicing that list from a mark (observe.py),
-so two audits running concurrently through the same handle would bill each other's tokens:
-run A's decompose step would be charged with whatever run B spent while A was in flight.
-
-The receipts ARE the product. A cost-per-claim figure that silently mixes two runs together
-is precisely the kind of unfounded number Attest exists to catch, and it would be printed
-by Attest itself. So `audit()` takes a lock and runs one at a time.
-
-This costs nothing that matters. An audit is seconds, the projected workload is a thousand
-claims a day (cost.py), and a queue in front of a service that is idle 99% of the time is
-not a bottleneck. Real concurrency means a Pipeline (and an LLM handle) per run, which is a
-change to how the graph is constructed, not a lock to remove — a later session, done
-deliberately, with the token accounting proven rather than assumed.
+One `Pipeline` is built and reused. Each run now forks its own LLM handle (`LLM.for_run`),
+so the token accounting is already per-run — but the lock stays for now, and comes off in
+its own commit with the test that proves the receipts survive it.
 
 --------------------------------------------------------------------------------
-A parked run is resumable for the life of the process. Say so, do not hide it.
+A parked run survives a restart, and it is resumed through the checkpoint NODE
 --------------------------------------------------------------------------------
 
-The graph's human checkpoint is a real interrupt (`interrupt_before`), and the typed audit
-ledger that a resume needs lives in memory beside the graph — for the reasons in
-graph.py, which have not changed. So a run parked at the checkpoint can be approved for as
-long as this process lives, and not after a restart.
+Two durable things, from two places. The paused GRAPH is durable because the checkpointer
+is (`SqliteSaver`, wired in app.py). The typed audit ledger it needs is durable because
+this store is: verdicts, evidence, explanations and receipts are written the moment the run
+returns, parked or not. `approve()` puts them back together — `pipeline.rehydrate` rebuilds
+the ledger from the stored record (replay.py) and `pipeline.resume` runs the graph on from
+where it stopped.
 
-The AUDIT is durable regardless: it is in the store, with its verdicts, evidence, and
-receipts, the moment the run returns. What does not survive a restart is the ability to
-*resume the paused graph*, and `approve()` says so with a 409 rather than inventing a
-shortcut. Applying a decision straight to the stored record would be easy and would quietly
-bypass the checkpoint node — a second, unaudited path to the one thing in this system that
-must never have one. Durable resume is a real feature; it is not this.
+**It resumes the graph rather than editing the stored record, and that distinction is the
+whole feature.** Applying the decision straight to the record would be half the code and
+would produce a second path to the one thing in this system that must not have one — a path
+on which `human_checkpoint` never runs, invisible from the outside, taken only after a
+restart. What remains a 409 is the honest case: a run whose CHECKPOINT the checkpointer has
+no record of was never parked, or was already settled, and no amount of stored evidence can
+manufacture a pause that did not survive.
 """
 
 from __future__ import annotations
@@ -99,7 +91,7 @@ class AuditService:
         run_id = str(uuid.uuid4())
         started = datetime.now(tz=UTC)
 
-        with self._lock:  # see the module docstring: shared token accounting
+        with self._lock:  # the Session 4 lock: shared token accounting
             report = self.pipeline.run(agent_output, thread_id=run_id)
 
         record = record_module.from_report(
@@ -137,6 +129,10 @@ class AuditService:
         A proposal nobody named stays PENDING. Nothing here has an "approve all", and a run
         that reaches the end of this method with every proposal unreviewed has done exactly
         what it should.
+
+        A run parked by a process that has since died is resumed, not shortcut: its ledger
+        is rebuilt from the store and the graph runs on from the checkpoint it stopped at,
+        through the checkpoint NODE. See the module docstring for why that is not a detail.
         """
         stored = self.store.load(run_id)
         if stored is None:
@@ -147,11 +143,17 @@ class AuditService:
                 f"decision. A correction can only be settled once, and only while the run "
                 f"is parked at the checkpoint."
             )
-        if not self.pipeline.is_resumable(run_id):
+        if not self.pipeline.rehydrate(run_id, stored):
+            # The store says this run parked; the checkpointer has no paused graph for it.
+            # The two disagree, and the honest answer is to say so — a decision applied
+            # without the checkpoint node running is the one thing this system must not do,
+            # and the stored evidence is exactly what would make faking it feel reasonable.
             raise NotResumable(
-                f"run {run_id} was parked by a previous process and cannot be resumed. Its "
-                f"verdicts and evidence are stored and readable; only the paused graph is "
-                f"gone. Durable resume is not built — see api/service.py."
+                f"run {run_id} is recorded as awaiting review, but the checkpointer has no "
+                f"paused graph for it: its checkpoints were deleted, or it was parked by a "
+                f"process using an in-memory saver. Its verdicts and evidence are stored "
+                f"and readable; the pause is not recoverable, and a correction is never "
+                f"settled outside the checkpoint node."
             )
 
         with self._lock:

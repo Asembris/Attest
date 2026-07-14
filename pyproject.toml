@@ -9,6 +9,13 @@ dependencies = [
     "fastapi>=0.115",
     "httpx>=0.28",
     "langgraph>=1.0",
+    # PINNED, not floored. This is a separate distribution on its own release cadence
+    # against langgraph>=1.0 — it has already been through three major versions of its own
+    # — and it owns the tables a PARKED RUN is resumed from. A minor bump that reshapes
+    # them turns "approve this correction" into a 409 for every run parked before the
+    # upgrade, and the audit would look fine right up until someone tried to sign it off.
+    # Bump it deliberately, with tests/test_resume.py green, or not at all.
+    "langgraph-checkpoint-sqlite==3.1.0",
     "openai>=2.0",
     "pydantic>=2.11",
     "pydantic-settings>=2.14",
