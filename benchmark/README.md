@@ -135,6 +135,78 @@ would guess about the data. The rules, in full:
 5. **Freshness is arithmetic.** Owners and schema columns are **exhaustive** lists — but a
    *missing* ownership aspect, or a missing schema, is silence rather than denial.
 
+## Read this before you read the 100%
+
+A perfect score should make you suspicious, and it should. There are two failure modes that
+look exactly like this one from the outside, and neither is ruled out by the number itself:
+
+1. **the benchmark is too easy to be meaningful**, or
+2. **the benchmark is overfitted to the implementation it scores.**
+
+So here is the honest account, and it does not involve making the number worse.
+
+### 100% is the EXPECTED result, not a surprising one
+
+Attest's checkers are **deterministic code that implements exactly the rules these labels
+encode.** Freshness is a date comparison. Ownership is set membership. Schema is string and
+type comparison. Classification applies the precedence rules in
+[`policy.py`](../src/attest/checkers/policy.py). The labels apply *those same declared rules*
+to *those same catalog facts*.
+
+Given that, **anything below 100% would be a bug, not a difficulty signal.** A freshness case
+scoring wrong would mean the date arithmetic is broken. This benchmark is not a test of how
+*capable* the system is; it is a **regression net** and a **coverage proof** — that all 12
+cells are live, that the hard precedence cases resolve the way the policy says, and that no
+model has leaked into the verdict path.
+
+Reporting 97% here would not be more credible. It would mean something was broken.
+
+**So do not read the 100% as "Attest is smart".** Read it as: *the deterministic core does
+what it says it does, on every case including the ones designed to break it, every time.*
+
+### The number is only worth anything because it CAN move
+
+That is what the sabotage harness is for, and it is not a footnote — it runs **in the test
+suite**, on `just check` and in CI, not only when someone remembers to type `just
+bench-sabotage`. Replace the classification checker with one that affirms everything:
+
+| | Healthy | Sabotaged |
+| --- | --- | --- |
+| Accuracy | 100% | **67.5%** |
+| Supported precision | 1.000 | **0.536** |
+| Contradicted recall | 1.000 | **0.471** |
+| Correctness failures | 0 | **9** |
+| Coverage failures | 0 | **4** |
+
+A benchmark that cannot fail is a green light wired to nothing. This one fails, on demand,
+and the failure is asserted by a test.
+
+### What this benchmark does NOT prove
+
+Stated plainly, because naming the boundary is what makes the number credible rather than
+hollow:
+
+- **It is a seeded catalog, not a real one.** Every dataset here was written by
+  [`seed/generate_seed.py`](../seed/generate_seed.py) to be a specific kind of witness. Real
+  catalogs are messier: half-finished glossaries, tags applied by three teams with three
+  different meanings, `lastModified` timestamps that mean "when the pipeline ran" rather than
+  "when the data changed", and columns whose classification is *genuinely* contested by the
+  people who own them. **None of that is exercised here.**
+- **The labels apply the policy; they do not validate it.** If
+  "an untagged column on an unreviewed table is Insufficient-Coverage" is the *wrong rule*,
+  then the checker and the labels are wrong together and score 100% doing it. That is a
+  design argument, made in `policy.py`, and no benchmark settles it. (The cross-family
+  labeler is a partial check on this — see below — and it found exactly one such gap.)
+- **It does not measure whether the four claim types are the right four**, or whether an
+  agent's real output decomposes into them cleanly.
+- **It measures a system against ground truth it can, in principle, see.** The catalog is the
+  oracle *and* the input. That is the correct design for a groundedness auditor — the whole
+  point is fidelity to the catalog rather than to the world — but it means this benchmark
+  cannot tell you whether the *catalog* is right about the data.
+
+The number that would be genuinely hard to get, and which nobody has, is accuracy against a
+production catalog with contested metadata. This is not that, and it does not claim to be.
+
 ## Reference results
 
 Measured against Attest ([github.com/…/attest](../README.md)), `gpt-4o-mini`, DataHub Core
@@ -160,6 +232,42 @@ can in principle dip below 100% *without* such a leak, because extraction is a m
 the harness **diagnoses** rather than merely counting: if the extracted claim was identical
 across runs and the verdict moved, that is a leak and it is reported in capitals; if the
 extracted claim moved, that is extraction variance and a different finding. Neither occurred.
+
+### Where the model risk actually lives — and a correction to the obvious question
+
+The natural question is *"how many cases does the LLM never touch, so that 100% is really
+just measuring the checkers?"* The answer needs a correction before it needs a number.
+
+**In `--full` mode, zero of the 40 cases bypass the model.** All 40 go through decomposition.
+So the end-to-end 100% is not "the model was uninvolved" — it is *the model transcribed 40
+sentences correctly **and** the checkers then decided 40 claims correctly.* Two separate
+things, which is exactly why the harness runs both modes and reports extraction fidelity
+separately from accuracy.
+
+And the framing "the deterministic checker saves it" is **not what happens.** A checker handed
+the wrong claim will faithfully decide the wrong claim — it cannot rescue a mis-transcription,
+and it does not try to. What the deterministic core guarantees is that **the verdict is never
+invented**. What happens to a mangled claim is that it becomes a *visible gap* rather than a
+confident wrong answer: when the decomposer floored *"every 30 minutes"* to
+`max_age_hours: 0`, the claim schema rejected it and the case scored `No-Claim` — an audit
+with a hole in it, reported as such. That is the design working, and it is a different
+guarantee from the one the question assumes.
+
+With that said, here is the split — **27 of 40 cases put a non-trivial demand on the
+decomposer**, and 13 need only the claim type and the URN:
+
+| What the decomposer must get right | Cases | Why it's risky |
+| --- | --- | --- |
+| **column-scoping** (`field_path`) | 8 | Attach the claim to the table instead of the column and, under the precedence rules, the verdict can legitimately differ. |
+| **negation** (`present=False`) | 8 | "contains **no** PII". Drop the negation and the claim inverts — and nothing downstream can recover a lost "no". |
+| **numeric-window** (`max_age_hours`) | 7 | Prose to arithmetic: "refreshed daily" → 24. |
+| **type-assertion** (`native_type`) | 4 | "of type `NUMBER(12,2)`" carried onto the right column. |
+| **fractional-window** | 1 | **The one that actually broke.** See below. |
+| **term-urn** (glossary, not tag) | 1 | A glossary term URN rather than a tag URN. |
+| *type + URN only* | 13 | Still goes through the model; just gives it nothing subtle to get wrong. |
+
+**That second group is where the real risk lives, and it is where the one real failure
+happened.** `just bench-full` prints this table and marks any row that mis-extracted.
 
 ### What the benchmark caught on its first run
 
