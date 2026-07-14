@@ -19,7 +19,7 @@ Built solo for the DataHub Agent Hackathon.
 
 ## Stack
 
-- **Python 3.12**, LangGraph (FastAPI is a later session; nothing depends on it yet).
+- **Python 3.12**, LangGraph, FastAPI, SQLite (stdlib `sqlite3`, no ORM).
 - **OpenAI API only. Default `gpt-4o-mini`, and the default does not move.**
 
   There may be a key for another provider (Groq, etc.) sitting in `.env`. **Ignore it. Do
@@ -139,6 +139,79 @@ report. The invariants worth not rediscovering:
 - **Insufficient-Coverage is NEVER sent round the correction loop.** The catalog being
   silent is not the agent being wrong.
 
+**2c. The service (Session 4). The snapshot cache is a CONSISTENCY boundary, and the
+checkpoint does not soften because there is now an HTTP surface.**
+
+- [datahub/cache.py](src/attest/datahub/cache.py) — **the cache exists for correctness
+  first and speed second, and if it were only about speed it would be optional.** Without
+  it, two claims about one dataset in one audit are checked against two separate reads: if
+  a tag changes between them, Attest returns "contains PII: Supported" and "PII-free:
+  Supported" in the same report, each correct against the catalog as it saw it, and the
+  report is incoherent. A run resolves each entity **once**, and every claim in it is
+  decided against that one snapshot. That generalizes the rule revise.py already had (a
+  revision is re-checked against the same snapshot, never a re-fetch) from one claim to the
+  whole run.
+- **Cross-run caching would be a LIABILITY, not an optimization. Do not add it.** A
+  snapshot carried into a new audit means Attest verifying today's claim against a catalog
+  that no longer exists — the exact failure this project was built to catch, committed by
+  the tool that catches it. **Cache within an audit for consistency; always re-fetch for a
+  new audit for correctness.** Redis buys cross-process sharing and there is no
+  cross-process requirement: the only reader of a run's snapshots is the run itself. A dict
+  wins.
+- **The scoping is structural, not disciplinary.** The cache is created inside
+  `Pipeline.run()`, lives on that run's `_Ledger`, and dies with it. `Pipeline` holds no
+  cache attribute, so there is no object a second run could reach. Sharing one across runs
+  is not forbidden by a convention — it is unreachable from the code. `tests/test_cache.py`
+  asserts a second run re-fetches and sees a catalog that changed between runs.
+- **MEASURED:** 4 claims over 2 datasets = **2 fetches** (`just live`). Projected at the
+  nominal workload — 1000 claims/day over 50 datasets — **1000 fetches becomes 50**
+  (`cost.project_fetches`, pinned in tests). The dollars were never the operating cost; the
+  load on someone else's GMS was.
+- [store.py](src/attest/store.py) — **the audit history lives in Attest's DB, and DataHub
+  is the catalog, not the event store.** DataHub's `structuredProperties` are
+  **last-write-wins and unversioned**: write a verdict and yesterday's is *gone*, not
+  superseded. That is right for "what is true of this dataset now" and useless for every
+  question an auditor is for — has this agent's accuracy improved, was this ever
+  contradicted before someone fixed the tag, who approved this correction and what evidence
+  were they shown. Those are questions about **events**, and a last-write-wins field has no
+  events in it.
+- **`approvals` is append-only.** Re-deciding a claim writes a second row. Overwriting
+  would reproduce, inside Attest's own store, the very property that disqualified DataHub
+  from holding the history.
+- Plain SQL, no ORM, TEXT/INTEGER/REAL only, ISO-8601 timestamps, 0/1 booleans — the DDL
+  moves to Postgres by changing the connection. Anything you would filter BY (verdict,
+  claim type, URN, outcome, review status, timestamp) is a real indexed column; only
+  read-whole payloads are JSON blobs.
+- [writeback.py](src/attest/writeback.py) — on approval, the verdict is written back as
+  **five separate typed structured properties** (`attest.verdict`, `.claim_type`,
+  `.checked_at`, `.source_agent`, `.audit_run`), in ONE mutation. Not a text blob: the goal
+  is that "every contradicted ownership claim this week" is a real DataHub query.
+  `attest.audit_run` is the join key back into the store, which is what makes last-write-wins
+  survivable — the catalog holds the latest verdict, and points at the run that produced it.
+- **There is deliberately no `attest.confidence`.** Attest's verdicts come from
+  deterministic code; there IS no confidence, and the third verdict already carries the only
+  uncertainty in the system (about the *catalog's coverage*, not about the answer). Writing
+  `confidence: 0.95` would be inventing a number to look like an ML system — a fabricated
+  figure reported as a measurement, which is precisely what this project exists to catch.
+- **Nothing is written to DataHub until a human approves it.** Write-back is called from
+  exactly one place: the approval path. `POST /audit` changes nothing in the catalog, ever,
+  and `tests/test_api.py` asserts it. There is no `?auto_approve=true` and no "approve all";
+  an HTTP surface is exactly where that would have been traded away for convenience.
+- **A failed write-back is reported as failed.** The approval still stands — a human did
+  decide — but the catalog does not know, and the store records which. A silent failure
+  would leave DataHub disagreeing with the audit history and nobody any the wiser.
+- **Audits are SERIALIZED in the service, and it is about token accounting, not throughput.**
+  One `Pipeline` means one `LLM` handle means one shared `llm.usage` list, and observe.py
+  bills a step by slicing that list from a mark. Two concurrent audits would bill each
+  other's tokens — and the receipts are the product. Real concurrency means a Pipeline (and
+  an LLM) per run, which is a change to how the graph is constructed, not a lock to delete.
+- **A parked run is resumable for the life of the process, and `approve` says so (409).**
+  The typed ledger lives in memory beside the graph (§ above), so a restart loses the
+  *pause*, not the *audit* — verdicts and evidence are in the store the moment the run
+  returns. Applying a decision straight to the stored record would be easy and would quietly
+  bypass the `human_checkpoint` node: a second, unaudited path to the one thing in this
+  system that must not have one. Durable resume is a real feature; it is not that.
+
 **3. Three verdicts, and the third is load-bearing.** Insufficient-Coverage ≠ Contradicted.
 An agent is not wrong because the catalog is incomplete, and most real catalog entities are
 incomplete. Collapsing the two would make Attest cry wolf on every under-documented entity —
@@ -207,6 +280,21 @@ buried in a checker.
   Emitting one doesn't just fail — it **crashes the emitter mid-file and silently drops
   everything after it**. This cost hours to diagnose. Do not fake them as custom properties
   either.
+- **DataHub fabricates a structured-property definition for any well-formed URN, and it
+  breaks the WRITE path.** This is the twin of the `dataset(urn:)` / `exists` trap and it is
+  nastier, because the read looks fine. `entity(urn:)` on an undefined
+  `urn:li:structuredProperty:*` returns a **non-null** entity with a definition whose
+  `qualifiedName` is the **empty string**. A bootstrap that asks "is this property defined?"
+  and trusts a non-null answer is told *yes* about a property that does not exist, skips
+  creating it, and its first upsert then dies inside GMS with:
+
+      Failed to validate MCP ... Unexpected null value found for
+      urn:li:structuredProperty:attest.verdict Structured Property Definition.
+
+  which names the *write* and says nothing about the *read* that caused it. So existence is
+  computed from `definition.qualifiedName`, in `client.get_structured_property`, which is the
+  only supported way in. Pinned by `tests/test_client.py` — including a test that asserts
+  DataHub still fabricates, so nobody deletes the check as a redundant null-guard.
 - **Never write YAML with PowerShell's `Out-File`.** It emits a UTF-8 BOM that breaks the YAML
   parser. Use `[IO.File]::WriteAllText` or Python.
 - **Ingestion recipes must use relative `./` paths.** Absolute Windows paths hit a
@@ -246,6 +334,16 @@ src/attest/
   datahub/
     client.py          GraphQL client over httpx. Raises EntityNotFoundError.
     snapshot.py        Normalized read model. Preserves "absent" vs "empty".
+    cache.py           ONE RUN's view of the catalog. A consistency boundary, not a cache.
+  api/
+    app.py             FastAPI. Four endpoints. The checkpoint does not soften here.
+    service.py         Run, persist, approve, write back. Audits are serialized (tokens).
+    schemas.py         Wire types in and out.
+  record.py            AuditRecord: the persisted projection of a report. Loses nothing.
+  store.py             The audit history. SQLite, plain SQL, Postgres-shaped. Append-only
+                       approvals — DataHub is the catalog, NOT the event store.
+  writeback.py         Approved verdict -> DataHub structured properties. Queryable, and
+                       written only when a human says so. No fabricated confidence field.
   llm.py               The only module that calls a model.
   decompose.py         Agent prose -> typed claims. A URN must be quoted, never minted.
   explain.py           Verdict + evidence -> prose. Falls back to a deterministic template.
@@ -272,6 +370,7 @@ just setup     # install package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
+just serve     # run the API on :8000 (docs at /docs)
 just test      # the suite: live catalog, semantic layer offline. Free.
 just matrix    # just the 12-cell coverage assertion
 just check     # lint + test — what CI runs
@@ -322,6 +421,8 @@ carries its description for this reason; do not "tidy" them away.
 | **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. |
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
+| **Durable resume of a parked run** | The audit is persisted immediately; the *pause* is in-process. `POST /approve` on a run parked by a dead process is a 409, not a shortcut. | The typed ledger cannot go into checkpointed state (see the msgpack landmine). Making the pause durable means persisting the ledger separately and rehydrating it — real work, and it must not become a second path that bypasses the checkpoint node. |
+| **Concurrent audits** | Serialized by a lock in `AuditService`. | One `Pipeline` = one `LLM` = one shared `usage` list, and observe.py bills by slicing it. Concurrency needs a Pipeline per run, not a deleted lock. At 1000 claims/day this is idle capacity, not a bottleneck. |
 
 **Entity-not-found is now DECIDED** (it was the pipeline's call to make, and Session 3 made
 it). A claim about a dataset that does not exist surfaces as a `report.ClaimError`, kept
