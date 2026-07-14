@@ -28,6 +28,7 @@ from typing import Any
 from attest.claims import CheckResult, Claim, Evidence, Verdict
 from attest.cost import Cost
 from attest.crosscheck import Conflict
+from attest.datahub import CacheStats
 from attest.decompose import Dropped
 from attest.explain import Explanation
 from attest.observe import Trace
@@ -195,6 +196,10 @@ class AuditReport:
     error: str | None = None
     # Thread id, for resuming a run parked at the checkpoint.
     thread_id: str = ""
+    # What the run asked the catalog for, and how much of it was one snapshot answering
+    # many claims. Every verdict in this report was decided against the entities named
+    # here, read once each. See datahub/cache.py.
+    catalog: CacheStats = CacheStats()
 
     # --- receipts ------------------------------------------------------------
 
@@ -252,6 +257,11 @@ class AuditReport:
             "latency_ms": round(self.latency_ms, 1),
             "tokens": self.cost.total_tokens,
             "usd": self.cost.usd,
+            # The catalog receipt: entity lookups the claims asked for, versus GraphQL
+            # round trips actually made. Equal means the cache saved nothing.
+            "catalog_lookups": self.catalog.lookups,
+            "catalog_fetches": self.catalog.fetches,
+            "catalog_entities": self.catalog.entities,
         }
 
 

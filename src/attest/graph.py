@@ -97,7 +97,12 @@ from attest.claims import (
     SchemaClaim,
     Verdict,
 )
-from attest.datahub import DataHubClient, DataHubError, DatasetSnapshot
+from attest.datahub import (
+    DataHubClient,
+    DataHubError,
+    DatasetSnapshot,
+    SnapshotCache,
+)
 from attest.decompose import Dropped, decompose
 from attest.explain import Explanation, explain, template
 from attest.llm import LLM
@@ -160,6 +165,12 @@ class _Ledger:
     """One run's typed audit record. Held beside the graph, not inside it."""
 
     source_text: str
+    # The run's view of the catalog. Created per run, held here, and dropped with the
+    # ledger — which is what makes cross-run reuse structurally unreachable rather than
+    # merely discouraged: the Pipeline holds no cache of its own for a second run to find.
+    # See datahub/cache.py — a snapshot carried across runs is a stale ground truth, which
+    # is the exact failure Attest exists to catch.
+    catalog: SnapshotCache
     trace: Trace = field(default_factory=Trace)
 
     text: str = ""
@@ -326,14 +337,18 @@ class Pipeline:
         with ledger.trace.step(
             RESOLVE, StepKind.IO, claim_index=i, urn=claim.target_urn
         ) as s:
+            # Read through the RUN's cache, never the client directly. Two claims about
+            # one dataset are decided against one snapshot — the consistency argument in
+            # datahub/cache.py, and the reason this is not merely an optimization.
+            cached = claim.target_urn in ledger.catalog
             try:
-                ledger.snapshot = self.client.fetch_dataset(claim.target_urn)
-                s.outputs = {"resolved": True}
+                ledger.snapshot = ledger.catalog.fetch_dataset(claim.target_urn)
+                s.outputs = {"resolved": True, "cached": cached}
             except DataHubError as exc:
                 # A missing entity is an ERROR, not a verdict — see report.ClaimError.
                 # Recorded on the step and carried out of the verdict path entirely.
                 s.error = str(exc)
-                s.outputs = {"resolved": False}
+                s.outputs = {"resolved": False, "cached": cached}
                 ledger.errors.append(ClaimError(index=i, claim=claim, error=str(exc)))
                 log.warning("could not resolve %s: %s", claim.target_urn, exc)
 
@@ -630,7 +645,11 @@ class Pipeline:
         unsettled. Call `resume` to settle them.
         """
         thread_id = thread_id or str(uuid.uuid4())
-        self._ledgers[thread_id] = _Ledger(source_text=source_text)
+        self._ledgers[thread_id] = _Ledger(
+            source_text=source_text,
+            # A fresh cache, for this run only. Never reused, never shared.
+            catalog=SnapshotCache(self.client),
+        )
 
         state: AuditState = {
             "thread_id": thread_id,
@@ -700,7 +719,30 @@ class Pipeline:
             dropped=ledger.dropped,
             injection_findings=ledger.findings,
             thread_id=thread_id,
+            catalog=ledger.catalog.stats,
         )
+
+    def is_resumable(self, thread_id: str) -> bool:
+        """Is this run's typed ledger still here to be resumed with?
+
+        False after a restart, or after `forget`. A caller that wants to settle a parked
+        run has to know the difference between "no such run" and "that run's pause did not
+        survive this process", and this is how it finds out.
+        """
+        return thread_id in self._ledgers
+
+    def forget(self, thread_id: str) -> None:
+        """Drop a finished run's ledger, and with it that run's snapshots.
+
+        The pipeline is built once and run many times, so in a long-lived process (the API
+        is one) the ledgers would otherwise accumulate for the life of the process, each
+        pinning a run's catalog snapshots. Callers that have persisted a COMPLETE report
+        have no further use for its ledger and should say so.
+
+        A run parked at the checkpoint must NOT be forgotten: resuming it needs its typed
+        record, which is the one thing the graph's primitive state does not carry.
+        """
+        self._ledgers.pop(thread_id, None)
 
 
 def _with_review(audit: ClaimAudit, review: ReviewStatus) -> ClaimAudit:

@@ -17,6 +17,7 @@ from attest.cost import (
     cost_usd,
     price_of,
     project,
+    project_fetches,
 )
 
 
@@ -103,3 +104,33 @@ def test_the_measured_constants_are_present_and_nonzero():
 
     # A revision is the priciest call in the pipeline: it hands the evidence back.
     assert REVISE_PER_ATTEMPT.input > EXPLAIN_PER_CLAIM.input
+
+
+# --- the other cost: catalog reads -------------------------------------------
+
+
+def test_the_catalog_load_scales_with_entities_not_with_claims():
+    """The number the snapshot cache exists for, projected the same way the dollars are.
+
+    Without a run-scoped cache the catalog is read once per CLAIM; with one, once per
+    distinct DATASET. On the nominal workload that is 1000 fetches against 50 — the same
+    verdicts, and a twentieth of the load on someone else's server.
+    """
+    projected = project_fetches(Workload(claims_per_day=1_000, datasets=50))
+
+    assert projected.without_cache == 1_000
+    assert projected.with_cache == 50
+    assert projected.factor == 20.0
+
+
+def test_a_run_whose_claims_are_all_about_different_tables_saves_nothing():
+    """And the projection says so rather than flattering the cache.
+
+    The cache cannot fetch fewer entities than the run has distinct ones. A projection that
+    reported a saving here would be selling a number the code cannot deliver.
+    """
+    projected = project_fetches(Workload(claims_per_day=40, datasets=50))
+
+    assert projected.with_cache == 40, "the cache cannot save what was never re-read"
+    assert projected.without_cache == 40
+    assert projected.factor == 1.0
