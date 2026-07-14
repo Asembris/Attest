@@ -19,13 +19,14 @@ Built solo for the DataHub Agent Hackathon.
 
 ## Stack
 
-- **Python 3.12**, FastAPI + LangGraph.
+- **Python 3.12**, LangGraph (FastAPI is a later session; nothing depends on it yet).
 - **OpenAI API only.** Default `gpt-4o-mini`.
 - **The model is always a per-step config value, never hardcoded.** Every LLM step resolves
   its model through `settings.model_for(step)` ([src/attest/config.py](src/attest/config.py)),
   which falls back to `model_default`. This exists so one step — most likely semantic
   entailment — can be moved to a stronger model without dragging the cheap steps up with it.
-  Steps are `claim_extraction`, `evidence_selection`, `entailment`, `verdict`.
+  Steps are `claim_extraction` (decompose), `evidence_selection` (unused so far),
+  `entailment` (revise), `verdict` (explain).
 
 ## Architecture principles
 
@@ -56,6 +57,44 @@ Built, and the invariants worth not rediscovering:
   lowercase, or it trips the capitalized-word rule.
 - [crosscheck.py](src/attest/crosscheck.py): the model reports the verdict it reads and the
   fields it cited. Disagreement never changes the verdict; it is surfaced as a `Conflict`.
+
+**2b. The pipeline (Session 3) audits itself, and that is not decoration.**
+[graph.py](src/attest/graph.py) is a LangGraph state machine: sanitize → decompose → per
+claim (resolve → route → check → explain → guard → maybe correct) → human checkpoint →
+report. The invariants worth not rediscovering:
+
+- **Every step records a `kind`** — `deterministic` / `llm` / `io` — plus latency and token
+  spend ([observe.py](src/attest/observe.py)). The kind is what a node CLAIMS about itself;
+  the token count is the EVIDENCE that checks it. This is why checker nodes are handed the
+  `llm` handle even though they must never call a model: passing it *arms the trap*. A step
+  that cannot bill tokens cannot **detect** them.
+- [trajectory.py](src/attest/trajectory.py): seven named invariants asserted against the
+  run's own trace. The load-bearing one is `NO_LLM_IN_THE_VERDICT_PATH` — a verdict step
+  that spent any tokens, or a model call between `resolve` and the checker, fails the run.
+  This turns "the deterministic core is sacred" from a README claim into a property of the
+  run. **The expected path is declared in trajectory.py, NOT read off the graph's edges** —
+  derive it from the graph and it agrees by construction and asserts nothing.
+- **Every rule has a test that BREAKS it**, and four of them sabotage the *real* pipeline
+  (guard torn out, checker spending tokens, correction proposed unverified, router
+  miswired). Every other test stays green through all four — that is the point. A
+  trajectory check that only ever passes is a green light wired to nothing.
+- [revise.py](src/attest/revise.py): a revision **may not change the `target_urn` or the
+  `claim_type`**. Enforced by comparison after the fact, never by prompting. Without it an
+  agent escapes a finding by changing the subject — retarget the claim, re-verify green,
+  launder the falsehood. The revision is re-checked by the same checker against the **same
+  snapshot** (not a re-fetch: the agent is held to the facts it was *shown*, and a re-fetch
+  would let the catalog move underneath the loop).
+- **The retry cap (2) is a graph EDGE, not a counter.** An unbounded correction loop
+  against a paid API is a cost bug that ships silently.
+- **A correction is PROPOSED, never applied.** `ReviewStatus.PENDING` is the resting state;
+  an unattended run accepts nothing. This is an accountability choice, not a limitation —
+  an auditor that silently rewrites what it audits has stopped being an auditor, and the
+  correction would be the one fact in the system with no independent source.
+- **`CorrectionOutcome` names six outcomes, not a boolean.** `stood-firm` (the evidence
+  does not say what the truth is) is not `refused` is not `exhausted`. A success flag would
+  hide the loop's own failure modes, which is the failure mode this project is about.
+- **Insufficient-Coverage is NEVER sent round the correction loop.** The catalog being
+  silent is not the agent being wrong.
 
 **3. Three verdicts, and the third is load-bearing.** Insufficient-Coverage ≠ Contradicted.
 An agent is not wrong because the catalog is incomplete, and most real catalog entities are
@@ -132,6 +171,15 @@ buried in a checker.
   (`Did not find a registered class for d`).
 - **Attest's own code talks to DataHub via direct GraphQL over `httpx`, not the
   `acryl-datahub` SDK.** The CLI/SDK is for *ingestion only*.
+- **Never put a typed object in LangGraph's checkpointed state.** The checkpointer
+  serializes through msgpack and *currently* round-trips unregistered classes with a
+  warning — `Deserializing unregistered type ... will be blocked in a future version`.
+  Pydantic claims and frozen dataclasses survive today, so this looks fine and is a trap:
+  when it breaks, typed objects come back as bare dicts **after a resume**, which surfaces
+  as an `AttributeError` in a demo and nowhere else. So `AuditState` holds **primitives
+  only** (cursor, retry count, decisions) — all the control flow needs — and the typed
+  audit record lives in a `_Ledger` keyed by thread id, beside the graph. The checkpoint is
+  no less real for it: the `interrupt_before` pause is genuine.
 
 More landmines (quickstart's lying exit code, the eventually-consistent search index,
 structured-property value shapes) are in [docs/datahub-setup.md](docs/datahub-setup.md).
@@ -147,9 +195,23 @@ src/attest/
   datahub/
     client.py          GraphQL client over httpx. Raises EntityNotFoundError.
     snapshot.py        Normalized read model. Preserves "absent" vs "empty".
+  llm.py               The only module that calls a model.
+  decompose.py         Agent prose -> typed claims. A URN must be quoted, never minted.
+  explain.py           Verdict + evidence -> prose. Falls back to a deterministic template.
+  faithfulness.py      The guard. Every factual token must appear in the evidence.
+  crosscheck.py        Model/checker disagreement -> a Conflict, never a changed verdict.
+  sanitize.py          Untrusted agent text in, instruction-like spans stripped out.
+  graph.py             The LangGraph pipeline. Routing, the loop, the human checkpoint.
+  revise.py            Self-correction. A revision may not change the subject.
+  trajectory.py        Seven invariants asserted against the run's own trace.
+  observe.py           Step trace: kind, latency, tokens. What trajectory.py reads.
+  cost.py              Prices a run. An unpriced model costs None, never 0.
+  report.py            AuditReport: verdicts, proposed corrections, receipts.
 seed/                  Seed catalog generator + ingestion recipe (ground_truth.json).
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
 tests/                 Live-catalog pytest suite. Skips (does not pass) if DataHub is down.
+                       test_graph/test_trajectory run fully offline: control flow is not a
+                       statement about DataHub's wire format.
 ```
 
 ## Commands
@@ -170,8 +232,8 @@ just preflight # lint + test + live — required before pushing semantic-layer c
 
 **Run `just preflight` (lint + test + live) before any push that touches the semantic
 layer.** That means any change to `llm.py`, `decompose.py`, `explain.py`,
-`faithfulness.py`, `crosscheck.py`, `sanitize.py`, **or any prompt string in them**.
-`just check` is not enough for those files, and this is not a nicety:
+`faithfulness.py`, `crosscheck.py`, `sanitize.py`, `revise.py`, **or any prompt string or
+JSON schema in them**. `just check` is not enough for those files, and this is not a nicety:
 
 - **`just check` (offline, free) proves the guard still catches hallucinations.** It runs
   against a scripted fake that lies on demand — `Sarah Jennings`, an invented `ssn` column,
@@ -192,14 +254,30 @@ explanation needs a word, a checker must put that word in the evidence. Loosenin
 guard to make a test pass is the one change that would quietly destroy the product's
 reason to exist.
 
+The generalized form, learned the hard way in Session 3: **if the model omits a field, it
+is usually because you did not tell it what the field is for.** The first live run of the
+correction loop returned `owner_urn=null` on an ownership revision, and the claim was
+rejected as malformed. The model was not being evasive — `revise.SCHEMA` had been written
+with the field descriptions stripped, so it had been handed a bare `["string", "null"]` and
+told nothing about what belonged in it. **A JSON-schema field with no `description` is a
+prompt bug**, and it surfaces far downstream as a failed correction rather than as anything
+that looks like a prompt problem. Every field in `decompose.SCHEMA` and `revise.SCHEMA`
+carries its description for this reason; do not "tidy" them away.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
 | --- | --- | --- |
 | **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. |
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
-| **Entity-not-found propagation** | `fetch_dataset()` raises `EntityNotFoundError`; nothing above it catches that yet. | Correct at this layer — a missing entity is an error, not a verdict. How the pipeline surfaces it is a later decision. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
+
+**Entity-not-found is now DECIDED** (it was the pipeline's call to make, and Session 3 made
+it). A claim about a dataset that does not exist surfaces as a `report.ClaimError`, kept
+out of `audits` entirely and counted in no verdict tally. It is **not** a verdict: the
+catalog neither disagrees with the claim nor is silent about it — the question was
+malformed. Scoring it Insufficient-Coverage would launder a hallucinated URN into a
+legitimate-looking audit result, and the bad URN would never be seen.
 
 ## Commit convention — follow strictly
 
