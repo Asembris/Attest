@@ -50,6 +50,38 @@ def test_a_missing_entity_looks_exactly_like_an_empty_one_on_the_wire(
         assert raw[aspect] is None
 
 
+GHOST_PROPERTY = "urn:li:structuredProperty:attest.no_such_property"
+
+
+def test_an_undefined_structured_property_reads_as_none_not_as_a_hollow_definition(
+    client: DataHubClient,
+) -> None:
+    """The same fabrication, on the entity Attest WRITES to — and it breaks writes, not reads.
+
+    DataHub synthesizes a structuredProperty entity for any well-formed URN, complete with
+    a definition whose `qualifiedName` is the empty string. A bootstrap that asks "is this
+    property defined?" and trusts a non-null answer is told YES about a property that does
+    not exist, skips creating it, and its first upsert then dies inside GMS with
+    "Unexpected null value found for ... Structured Property Definition" — an error that
+    names the write and says nothing about the read that caused it.
+
+    This is the write-path twin of the `exists` check above, and it is here so nobody
+    deletes the qualifiedName test as a redundant null-check.
+    """
+    assert client.get_structured_property(GHOST_PROPERTY) is None
+
+    # Pins the server behaviour the guard exists for. If DataHub ever starts returning
+    # null here, this fails — and that is the signal to simplify, not a regression.
+    raw = client.execute(
+        client.STRUCTURED_PROPERTY_QUERY, {"urn": GHOST_PROPERTY}
+    )["entity"]
+    assert raw is not None, "DataHub no longer fabricates undefined structured properties"
+    assert raw["definition"]["qualifiedName"] == "", (
+        "the empty qualifiedName is what distinguishes a fabricated definition from a real "
+        "one; if that changed, get_structured_property must change with it"
+    )
+
+
 def test_snapshot_preserves_the_absent_aspects(client: DataHubClient) -> None:
     """None means the catalog is silent. Everything Insufficient-Coverage rests on this."""
     assert client.fetch_dataset(NO_TIMESTAMP).last_modified is None

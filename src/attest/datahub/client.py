@@ -198,10 +198,21 @@ class DataHubClient:
     def set_structured_property(
         self, asset_urn: str, property_urn: str, values: list[Any]
     ) -> dict[str, Any]:
-        """Write a structured property value onto an asset.
+        """Write one structured property value onto an asset."""
+        return self.set_structured_properties(asset_urn, {property_urn: values})
 
-        This is the write path Attest's verdicts will eventually travel: an
-        audit result attached to the dataset it is about, queryable afterwards.
+    def set_structured_properties(
+        self, asset_urn: str, properties: dict[str, list[Any]]
+    ) -> dict[str, Any]:
+        """Write several structured properties onto an asset, in ONE mutation.
+
+        One call, not one per property, and not for tidiness: a verdict written as five
+        separate mutations can half-fail, leaving a dataset carrying Attest's verdict but
+        not the run id that would let anyone check it. The aspect is written atomically or
+        not at all.
+
+        This is the write path Attest's verdicts travel — an audit result attached to the
+        dataset it is about, queryable afterwards. See writeback.py.
         """
         return self.execute(
             self.UPSERT_STRUCTURED_PROPERTIES,
@@ -209,9 +220,10 @@ class DataHubClient:
                 "assetUrn": asset_urn,
                 "params": [
                     {
-                        "structuredPropertyUrn": property_urn,
+                        "structuredPropertyUrn": urn,
                         "values": [self._property_value(v) for v in values],
                     }
+                    for urn, values in properties.items()
                 ],
             },
         )["upsertStructuredProperties"]
@@ -236,7 +248,29 @@ class DataHubClient:
     """
 
     def get_structured_property(self, urn: str) -> dict[str, Any] | None:
-        return self.execute(self.STRUCTURED_PROPERTY_QUERY, {"urn": urn}).get("entity")
+        """A structured property's definition, or None if it is not defined.
+
+        THE SAME TRAP AS `get_dataset`, and it bites harder. DataHub answers
+        `entity(urn:)` for ANY well-formed structuredProperty URN, synthesizing the entity
+        out of the URN string and handing back a definition whose `qualifiedName` is the
+        EMPTY STRING. A property nobody ever created is therefore a non-null object that
+        looks, to a truthiness check, exactly like a real one.
+
+        What that costs is not a bad read — it is a bad WRITE. A caller that bootstraps its
+        properties by asking "does this exist?" is told yes, skips creating it, and the
+        first upsert against it fails deep in GMS with
+
+            Failed to validate MCP ... Unexpected null value found for
+            urn:li:structuredProperty:attest.verdict Structured Property Definition.
+
+        which names the property, says nothing about why, and points at the write rather
+        than at the read that caused it. So existence is COMPUTED here, from the only field
+        that can tell the two apart, and this method is the only supported way in.
+        """
+        entity = self.execute(self.STRUCTURED_PROPERTY_QUERY, {"urn": urn}).get("entity")
+        if not entity or not (entity.get("definition") or {}).get("qualifiedName"):
+            return None
+        return entity
 
     CREATE_STRUCTURED_PROPERTY = """
     mutation createStructuredProperty($input: CreateStructuredPropertyInput!) {
