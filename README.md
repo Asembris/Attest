@@ -30,9 +30,13 @@ not get to reach one.
 **self-correction loop** — a contradicted claim is handed back to the source agent with the
 catalog's facts, and the revision is re-verified by the same deterministic checker. Plus
 **trajectory verification**, which holds each run to its own architecture, and full
-observability. 167 offline tests, 4 live.
+observability.
 
-Not built yet: the FastAPI surface, the web UI, continuous monitoring.
+**Session 4: the service.** A FastAPI surface, a SQLite audit history, structured
+**write-back to DataHub** on approval, and a **run-scoped snapshot cache** that turned out
+to be a consistency fix rather than a performance one. 202 offline tests, 5 live.
+
+Not built yet: the web UI, continuous monitoring, multi-tenancy, auth.
 
 ## Receipts
 
@@ -48,6 +52,7 @@ audited 3 claims in 14.3s (4392 tokens, $0.001006)
 | Cost per audited claim | **$0.000264** | [cost.py](src/attest/cost.py) |
 | Explanations model-authored, not template fallback | **13 / 13** | [`just live`](tests/test_live.py) |
 | **Self-correction guard fires against a real model** | **2 / 6 runs** | [below](#self-correction-and-why-it-cannot-be-gamed) |
+| Catalog fetches, 4 claims over 2 datasets | **2** (not 4) | [cache.py](src/attest/datahub/cache.py) |
 | Verdicts decided by a model | **0** — structurally, and asserted per run | [trajectory.py](src/attest/trajectory.py) |
 
 That third row is the one worth pausing on. Handed a **false claim it could not honestly
@@ -95,13 +100,94 @@ would have been easy to assume it was. Three things the numbers actually say:
    held, so even a rewiring that broke it would fail loudly rather than bill quietly. Raise
    the cap and the ceiling rises with it, deliberately and in one place. **The cap is the
    budget control.**
-2. **The real scaling pressure is catalog reads, not tokens.** `resolve_entity` fetches once
-   *per claim*. 1000 claims across 50 datasets is **1000 GraphQL fetches for 50 distinct
-   datasets** — 20× redundant. Snapshot caching within an audit window is the obvious win,
-   and it is a Session 4 item.
+2. **The real scaling pressure is catalog reads, not tokens — and it is now fixed.**
+   `resolve_entity` used to fetch once *per claim*: 1000 claims across 50 datasets was
+   **1000 GraphQL fetches for 50 distinct datasets**, 20× redundant. A run-scoped snapshot
+   cache makes that **50**. It turned out to be a correctness fix wearing a performance
+   fix's clothes — see [below](#the-snapshot-cache-is-a-consistency-boundary).
 3. **Per-tenant budget caps are a multi-tenancy concern, not a single-org one.** Cost is
    linear in claims/day: ~$9/mo per org means ~$900/mo at 100 orgs and ~$9k/mo at 1000. The
    cap matters *there*, and it should be enforced per tenant rather than globally.
+
+## The service
+
+```
+POST /audit                    submit an agent's output; get verdicts, evidence, receipts
+GET  /audit/{run_id}           retrieve a stored audit, whole
+POST /audit/{run_id}/approve   the human checkpoint: settle the proposed corrections
+GET  /health                   liveness — Attest's, and the catalog's, reported separately
+```
+
+`just serve`, then [localhost:8000/docs](http://localhost:8000/docs).
+
+**`POST /audit` changes nothing in the catalog. Ever.** It finds contradictions, asks the
+agent to correct them, re-verifies the corrections against the catalog — and then *proposes*
+them. There is no `?auto_approve=true` and no "approve all", and their absence is the
+design: an HTTP surface is exactly where the accountability decision from Session 3 would
+have been quietly traded away for a caller's convenience. An unattended script can audit all
+day and write nothing. [A test asserts it.](tests/test_api.py)
+
+### The snapshot cache is a consistency boundary
+
+The cost model said the real load was catalog reads, so the obvious fix was a cache. The
+obvious fix turned out to be the *less* important half.
+
+Without a cache, two claims about the same dataset in the same audit are checked against two
+**separate reads** of the catalog. If someone re-tags the table in between, Attest returns
+"contains PII: **Supported**" and "PII-free: **Supported**" in the same report — each correct
+against the catalog as it saw it, and together, nonsense. **A verification tool that cannot
+say which state of the world it verified against has not verified anything.**
+
+So a run resolves each entity exactly once, and every claim in that run is decided against
+that one snapshot. The report now means something precise: *these verdicts hold against the
+catalog as it stood when this run read it.* The speed is a side effect.
+
+**Cross-run caching would be a liability, not an optimization.** A snapshot carried into the
+next audit means verifying today's claim against a catalog that no longer exists — the exact
+failure Attest was built to catch, committed by the tool that catches it. So: **cache within
+an audit for consistency; always re-fetch for a new audit for correctness.** That is a design
+decision, not a missing feature, and the scoping is *structural* — the cache is created inside
+`run()`, lives on that run's ledger, and dies with it. There is no object for a second run to
+reach.
+
+(No Redis. It buys cross-process sharing, and nothing here needs it: the only reader of a
+run's snapshots is the run itself. It would buy a deployment dependency and a stale-data
+failure mode in exchange for nothing.)
+
+| | Fetches | |
+| --- | --- | --- |
+| 4 claims, 2 datasets — **measured** | 4 → **2** | `just live` |
+| 1000 claims/day, 50 datasets — projected | 1000 → **50** | [cost.py](src/attest/cost.py) |
+
+### DataHub is the catalog, not the event store
+
+On approval, the verdict is written back to DataHub as **typed structured properties** —
+`attest.verdict`, `attest.claim_type`, `attest.checked_at`, `attest.source_agent`,
+`attest.audit_run` — not as a text blob. The point is that *"show me every contradicted
+ownership claim caught this week"* becomes a real DataHub query.
+
+But DataHub's structured properties are **last-write-wins and unversioned**. Write a verdict
+today and yesterday's is *gone* — not superseded, gone. That is exactly right for "what is
+true of this dataset now", and useless for every question an auditor actually exists to
+answer:
+
+- has this agent's ownership accuracy improved since March?
+- was this claim ever contradicted, before someone fixed the tag?
+- who approved this correction, and what evidence were they shown?
+
+Every one of those is a question about **events**, and a last-write-wins field has no events
+in it. So the history — every run, every claim, every piece of evidence, every human decision
+— lives in [Attest's own store](src/attest/store.py), the catalog carries the *latest*
+verdict, and `attest.audit_run` is the key that joins them. Approvals are **append-only**:
+re-deciding a claim writes a second row, because overwriting would reproduce, inside Attest's
+own database, the very property that disqualified DataHub from holding the history.
+
+**There is deliberately no `attest.confidence`.** The verdicts come from deterministic code —
+date arithmetic, set membership, string comparison. There *is* no confidence, and the third
+verdict already carries the only uncertainty in the system (about the catalog's coverage, not
+about the answer). A `confidence: 0.95` would be a number invented to look like a machine
+learning system, and a fabricated figure reported as a measurement is the precise thing this
+project exists to catch.
 
 ## The coverage matrix
 
@@ -137,6 +223,7 @@ src/attest/            Attest's own code. Talks to DataHub over raw GraphQL (htt
   datahub/
     client.py          GraphQL client: datasets, structured properties, search.
     snapshot.py        Normalized read model. Preserves "absent" vs "empty".
+    cache.py           ONE RUN's view of the catalog. A consistency boundary, not a cache.
   --- the semantic layer: phrases verdicts, never decides them ---
   llm.py               The only place a model is called. Strict JSON, temperature=0.
   decompose.py         Agent prose -> typed claims. A URN must be quoted, never minted.
@@ -151,6 +238,11 @@ src/attest/            Attest's own code. Talks to DataHub over raw GraphQL (htt
   observe.py           Every step: kind, latency, tokens. The trace trajectory.py reads.
   cost.py              Prices a run. An unpriced model costs None, never 0.
   report.py            Verdicts, proposed corrections, receipts.
+  --- the service: an HTTP surface, a history, and a way back into the catalog ---
+  api/                 FastAPI. Four endpoints. The checkpoint does not soften here.
+  record.py            The persisted projection of a report. Keeps the evidence.
+  store.py             The audit history. SQLite, plain SQL, Postgres-shaped.
+  writeback.py         Approved verdict -> DataHub structured properties. Queryable.
 seed/                  Seed catalog generator + ingestion recipe.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
 tests/                 Live-catalog pytest suite. The semantic layer runs offline.
@@ -529,6 +621,8 @@ rather than guessing, because a wrong verdict has the same confident shape as a 
 | **Semantic term matching** | A glossary term implies PII **iff the catalog files it under the PII node**. A term nobody filed there implies nothing, however personal it reads. | Structure is a declaration someone made; a name is a guess. Deciding that an *unfiled* term entails a classification is semantic entailment, and it must be evidence-constrained rather than a vibe. Still deferred. |
 | **Ownership type** | `ownershipType` (technical vs business vs data steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim than "Alice is an owner." Checking it needs a claim schema that carries the role, which is a schema change, not an `if`. |
 | **Cross-dialect types** | Both of DataHub's type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
+| **Durable resume** | The audit is persisted the moment the run returns; the *pause* is in-process. Approving a run parked by a dead process is a 409, and its verdicts and evidence are still readable. | The easy fix — apply the decision straight to the stored record — would quietly bypass the `human_checkpoint` node: a second, unaudited path to the one thing in this system that must not have one. |
+| **Concurrent audits** | Serialized by a lock in the service. | One `Pipeline` means one `LLM` handle means one shared token ledger, and two concurrent runs would bill each other's tokens. **The receipts are the product.** Real concurrency means a pipeline per run, not a deleted lock — and at 1000 claims/day this is idle capacity, not a bottleneck. |
 
 **Entity-not-found is now decided** (it was Session 3's call to make). A claim about a
 dataset that does not exist is **not a verdict**. The catalog neither disagrees with it nor
@@ -545,6 +639,7 @@ Everything runs through [`just`](https://github.com/casey/just):
 just setup     # install the package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path (Session 0 spike)
+just serve     # run the API on :8000. Docs at /docs.
 just test      # the suite: live catalog, semantic layer offline. Free.
 just live      # the semantic layer + one full pipeline run against a REAL model.
                # Costs money — about $0.001. Prints the receipts quoted above.
