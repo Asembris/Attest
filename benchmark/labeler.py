@@ -41,6 +41,32 @@ that do not exist. A few-shot example drawn from the set being labeled is answer
 and it would show up as agreement.
 
 --------------------------------------------------------------------------------
+THE JUDGE IS NOT DETERMINISTIC, AND THAT IS A MEASUREMENT, NOT A CAVEAT
+--------------------------------------------------------------------------------
+
+Run this twice, with identical code, an identical prompt and temperature=0, and it disputes
+a DIFFERENT SET OF CASES. Measured here, in this repository, not quoted from a paper: the
+agreement RATE is stable while WHICH cases it disputes drifts between runs.
+
+That has one immediate consequence for how this tool is used: **one run's dispute list is
+not a fact about the labels.** Publishing it as though it were would make the finding an
+artefact of which run happened to get written to disk. So the labeler runs k times (default
+3) and separates two things that look identical from a single run:
+
+  - **disputed in EVERY run** — a real disagreement. Either the label is wrong or the case
+    is genuinely contested, and both are worth knowing.
+  - **disputed in SOME runs** — judge noise. It says nothing about the label.
+
+And it reports **judge self-consistency**: how often the model gives the same answer to the
+same question across runs. That number is about the JUDGE, not about the benchmark, and it
+is the single most important thing on the output — because a judge that answers its own
+question differently at temperature=0 cannot be a source of ground truth. It can only
+calibrate one.
+
+Which is, in the end, the sharpest available argument for this entire architecture. Attest's
+verdicts are date math and set membership. They cannot do this.
+
+--------------------------------------------------------------------------------
 What agreement does and does not prove
 --------------------------------------------------------------------------------
 
@@ -65,6 +91,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -379,8 +406,14 @@ def nemotron() -> LLM:
 
     from openai import OpenAI
 
+    # A TIMEOUT, and it is not boilerplate. The SDK's default is 10 minutes with retries, so
+    # ONE wedged request stalls a 40-case run for half an hour and looks identical to a slow
+    # one. This is a reasoning model — a labeling call legitimately takes ~10s and never 120.
     client = OpenAI(
-        api_key=settings.nvidia_api_key, base_url=settings.nvidia_base_url
+        api_key=settings.nvidia_api_key,
+        base_url=settings.nvidia_base_url,
+        timeout=120.0,
+        max_retries=3,
     ).chat.completions
     return LLM(client=client)  # type: ignore[arg-type]
 
@@ -414,6 +447,16 @@ def label(case: Case, catalog: Catalog, llm: LLM) -> Label:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "-k",
+        type=int,
+        default=3,
+        help=(
+            "label the benchmark k times. NOT a nicety: this judge is not deterministic "
+            "even at temperature=0, and one run's dispute list is not a fact about the "
+            "labels. See the module docstring."
+        ),
+    )
     ap.add_argument("--out", type=Path, default=RESULTS_DIR / "calibration.json")
     args = ap.parse_args()
 
@@ -421,7 +464,7 @@ def main() -> int:
     llm = nemotron()
     model = settings.model_for(Step.CALIBRATION)
 
-    print(f"\nCross-family calibration: {len(CASES)} cases")
+    print(f"\nCross-family calibration: {len(CASES)} cases, k={args.k}")
     print("  my labels     benchmark/cases.py (hand-labeled)")
     print(f"  their labels  {model}")
     print(
@@ -430,26 +473,77 @@ def main() -> int:
         "                Zheng et al. 2023, arXiv:2306.05685). Nemotron is Llama-family."
     )
 
-    labels = [label(case, catalog, llm) for case in CASES]
-    agreed = [x for x in labels if x.agrees]
-    disputed = [x for x in labels if not x.agrees]
+    # Each run is written to disk the moment it finishes. A single wedged request used to
+    # stall the job and throw away every COMPLETED run with it — twenty minutes of real
+    # measurement lost to one bad socket. A partial result is still a result.
+    runs: list[list[Label]] = []
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    for n in range(args.k):
+        runs.append([label(case, catalog, llm) for case in CASES])
+        rate = sum(x.agrees for x in runs[-1]) / len(CASES)
+        print(f"  run {n + 1}/{args.k}: {rate:.1%} agreement", flush=True)
+        (args.out.parent / f"calibration-run{n + 1}.json").write_text(
+            json.dumps(
+                [
+                    {"case": x.case_id, "mine": x.mine, "theirs": x.theirs,
+                     "their_reason": x.reason}
+                    for x in runs[-1]
+                ],
+                indent=2,
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
 
-    rate = len(agreed) / len(labels)
+    rates = [sum(x.agrees for x in run) / len(CASES) for run in runs]
+
+    # Per case: how many of the k runs agreed with me, and how many distinct verdicts the
+    # judge gave to the SAME question. The second is the interesting one.
+    by_case: dict[str, list[Label]] = {}
+    for run in runs:
+        for x in run:
+            by_case.setdefault(x.case_id, []).append(x)
+
+    unstable = {c: v for c, v in by_case.items() if len({x.theirs for x in v}) > 1}
+    always_disputed = {c: v for c, v in by_case.items() if not any(x.agrees for x in v)}
+    sometimes = {
+        c: v
+        for c, v in by_case.items()
+        if any(x.agrees for x in v) and not all(x.agrees for x in v)
+    }
+
     print(f"\n{'=' * 78}\nAGREEMENT\n{'=' * 78}")
-    print(f"  {len(agreed)}/{len(labels)}  ({rate:.1%})")
+    print(f"  per run       {', '.join(f'{r:.1%}' for r in rates)}")
+    print(f"  mean          {statistics.fmean(rates):.1%}")
 
-    if disputed:
-        print(f"\n  DISPUTED LABELS ({len(disputed)}) — surfaced, not resolved.")
-        print("  A disagreement is information: either my label is wrong, or the case is")
-        print("  ambiguous and has no business being in a benchmark. Both are worth knowing.\n")
-        for d in disputed:
-            print(f"    {d.case_id}")
+    # THE NUMBER THAT MATTERS, and it is about the JUDGE rather than about the labels.
+    consistency = 1 - len(unstable) / len(CASES)
+    print(f"\n  judge self-consistency (same answer to the same question across {args.k} runs)")
+    print(f"                {consistency:.1%}  —  {len(unstable)}/{len(CASES)} cases moved")
+    if unstable:
+        print("\n  A judge that answers its own question differently across runs, at")
+        print("  temperature=0, cannot be a source of ground truth. It is a CALIBRATION")
+        print("  instrument, and this is the measurement that says so. It is also exactly")
+        print("  why Attest's verdicts come from date math instead of from a model.")
+        for case_id, seen in unstable.items():
+            print(f"    {case_id}: {[x.theirs for x in seen]}  (mine: {seen[0].mine})")
+
+    if always_disputed:
+        print(f"\n  DISPUTED IN EVERY RUN ({len(always_disputed)}) — a real disagreement.")
+        print("  Either my label is wrong, or the case is genuinely contested. Surfaced,")
+        print("  never resolved by taking my own side.\n")
+        for case_id, seen in always_disputed.items():
+            d = seen[0]
+            print(f"    {case_id}")
             print(f"      mine    : {d.mine:22s} {d.my_rationale}")
             print(f"      theirs  : {d.theirs:22s} {d.reason}")
-            print(f"      decided on: {d.decisive_field}")
-    else:
-        print("\n  No disputed labels. An independent model family, applying the declared")
-        print("  policy to the declared facts, reached every label I recorded.")
+
+    if sometimes:
+        print(f"\n  DISPUTED IN SOME RUNS ONLY ({len(sometimes)}) — judge noise, not a finding")
+        print("  about the label. Reporting one run's list as 'the disputes' would be an")
+        print("  artefact of which run got published.")
+        for case_id, seen in sometimes.items():
+            print(f"    {case_id}: agreed in {sum(x.agrees for x in seen)}/{args.k} runs")
 
     print(
         "\n  WHAT THIS DOES NOT PROVE: the labeler is given the same policy I used, so this"
@@ -468,23 +562,27 @@ def main() -> int:
             {
                 "labeler": model,
                 "family": "llama (NVIDIA Nemotron) — deliberately NOT the pipeline's family",
-                "n_cases": len(labels),
-                "agreement": rate,
-                "agreed": len(agreed),
-                "disputed": [
+                "n_cases": len(CASES),
+                "k": args.k,
+                "agreement_per_run": rates,
+                "agreement_mean": statistics.fmean(rates),
+                "judge_self_consistency": consistency,
+                "unstable_across_runs": {
+                    c: [x.theirs for x in v] for c, v in unstable.items()
+                },
+                "disputed_in_every_run": [
                     {
-                        "case": d.case_id,
-                        "mine": d.mine,
-                        "my_rationale": d.my_rationale,
-                        "theirs": d.theirs,
-                        "their_reason": d.reason,
-                        "their_decisive_field": d.decisive_field,
+                        "case": c,
+                        "mine": v[0].mine,
+                        "my_rationale": v[0].my_rationale,
+                        "theirs": v[0].theirs,
+                        "their_reason": v[0].reason,
                     }
-                    for d in disputed
+                    for c, v in always_disputed.items()
                 ],
-                "labels": [
-                    {"case": x.case_id, "mine": x.mine, "theirs": x.theirs} for x in labels
-                ],
+                "disputed_in_some_runs": {
+                    c: sum(x.agrees for x in v) for c, v in sometimes.items()
+                },
                 "tokens": tokens,
                 "cost_usd": None,
             },
@@ -496,12 +594,13 @@ def main() -> int:
     print(f"\nwrote {args.out}")
 
     # A benchmark whose ground truth an independent family disputes on more than ~10% of
-    # cases has shakier ground truth than its author thinks. Fail loudly rather than
-    # publish a number built on it.
-    if rate < 0.90:
+    # cases has shakier ground truth than its author thinks. Judged on the MEAN, because
+    # one run's number is not a fact about the labels either.
+    mean = statistics.fmean(rates)
+    if mean < 0.90:
         print(
-            f"\n*** AGREEMENT IS {rate:.1%}, BELOW THE 90% THRESHOLD. The ground truth is "
-            f"shakier than it looks — fix the labels or cut the ambiguous cases. ***"
+            f"\n*** MEAN AGREEMENT IS {mean:.1%}, BELOW THE 90% THRESHOLD. The ground truth "
+            f"is shakier than it looks — fix the labels or cut the ambiguous cases. ***"
         )
         return 1
     return 0

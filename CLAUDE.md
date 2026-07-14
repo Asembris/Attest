@@ -408,25 +408,33 @@ invariants worth not rediscovering:
   labels encode, so agreement shows the labels *follow from* the policy — not that the policy
   is *right*. A wrong rule is applied wrongly by both and they agree. That is a design
   argument and it lives in policy.py.
-- **MEASURED: 38/40 (95%) agreement, 2 disputes, both kept and explained.** `class-15` found
-  the undeclared rule (`COMPLETENESS_REACHES_COLUMNS`, above) — the most valuable thing the
-  labeler did. `class-03` is labeler error: Nemotron misapplied precedence rule (c), which it
-  had been given.
-- **DECLARING THE RULE DID NOT CHANGE NEMOTRON'S MIND, AND AGREEMENT WENT DOWN: 97.5% -> 95%.**
-  Told the tie-break explicitly, it still disputes `class-15` — so that case is genuinely
-  CONTESTED, not underspecified, and it stays in the benchmark flagged as such. Worse, the
-  unrelated prompt addition flipped `class-03`, which it had previously gotten right. **Both
-  runs are published** (`calibration-before-policy-declared.json` and `calibration.json`) and
-  the WORSE number is the headline, because it is the one the current code reproduces.
-- **That instability is the sharpest argument for the whole architecture.** One unrelated
-  prompt edit flipped a judge's answer on a case it had already gotten right. That is
-  LLM-as-judge from the inside, and it is why verdicts come from date math and set membership
-  — and why this labeler calibrates ground truth and is NEVER allowed near the verdict path.
-- **Disagreements are SURFACED, never silently resolved**, and the harness exits non-zero
-  below 90% agreement. **Do not "fix" a dispute by editing the label to match the model, and
-  do not tune the prompt until it agrees** — I reached for the prompt once and it made the
-  number worse, which is the trap working as designed. Fix the POLICY, or cut the case as
-  ambiguous, or keep it and flag it as contested.
+- **THE JUDGE IS NOT DETERMINISTIC, AND THAT IS THE HEADLINE MEASUREMENT.** Six runs, identical
+  code, identical prompt, temperature=0: agreement 95%-97.5%, and the DISPUTED SET MOVES every
+  time — {class-15}, {class-03, class-15}, {class-03, class-13}, {class-03}, {}, {}. **Every
+  case it ever disputed it also agreed with on another run.** So no disagreement survives
+  repetition, the residual 5% is JUDGE NOISE rather than a finding about the labels, and **one
+  run's dispute list is a fact about which sample got written to disk.** The labeler therefore
+  runs k times (default 3) and separates "disputed in EVERY run" (real) from "disputed in SOME
+  runs" (noise) — from a single run those look identical. It also reports judge
+  self-consistency, which is a number about the JUDGE, not about the benchmark.
+- **This is the sharpest argument in the repo for the whole architecture.** A judge that
+  answers its own question differently at temperature=0 cannot BE ground truth; it can only
+  calibrate it. Attest's core answers identically every time — pass@5, 100%. Measured here, not
+  cited. (It also returned unparseable JSON twice, recovered by llm.py's retry-on-malformed, on
+  a narrow schema-constrained question.)
+- **It found a real bug anyway, and that is worth more than the percentage**: `class-15`
+  surfaced the undeclared tie-break (`COMPLETENESS_REACHES_COLUMNS`, above), a governance rule
+  that lived in an `if` inside a checker.
+- **Disagreements are SURFACED, never silently resolved**, and the harness exits non-zero below
+  90% MEAN agreement. **Do not "fix" a dispute by editing the label to match the model, and do
+  not tune the prompt until it agrees.** I declared the rule, re-ran, saw agreement FALL, and
+  nearly went back to the prompt to chase it — repetition showed the drop was noise. Tuning a
+  judge until it agrees with you is the benchmark author's characteristic failure, and running
+  it k times is what stops it.
+- **The labeler needs a request TIMEOUT and per-run persistence, and now has both.** The OpenAI
+  SDK defaults to a 10-minute timeout with retries, so ONE wedged socket stalls a 40-case run
+  for half an hour and looks exactly like a slow one — and with results written only at the
+  end, the stall threw away every completed run with it.
 
 ## Environment constraints — hard-won, do not rediscover
 

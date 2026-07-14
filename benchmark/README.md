@@ -224,7 +224,86 @@ from the set being labeled is answer-key leakage and would show up as agreement.
 **It never touches the verdict path.** No model decides a verdict in Attest, and that does not
 soften because a second model has appeared in the repository.
 
-### Result: 38/40, **95% agreement**. Two disputed labels, both kept and both explained.
+### Result: **95–97.5% agreement across six runs — and NO disagreement survives repetition.**
+
+The headline is not a single number, because a single number would be a lie of omission. Six
+runs of this labeler — **identical code, identical prompt, `temperature=0`** — produced this:
+
+| Run | Agreement | Cases it disputed |
+| --- | --- | --- |
+| 1 | 97.5% | `class-15` |
+| 2 | 95.0% | `class-03`, `class-15` |
+| 3 | 95.0% | `class-03`, `class-13` |
+| 4 | 97.5% | `class-03` |
+| 5 | 97.5% | — |
+| 6 | 95.0% | — |
+
+**Every case it ever disputed, it also agreed with in at least one other run.** Not one
+disagreement is stable. So the honest conclusion is: *an independent model family, applying
+the declared policy to the declared catalog facts, reaches these labels* — and the residual
+5% is **judge noise, not a finding about the labels.**
+
+Which means the first version of this section, written from a single run, was wrong. It said
+*"Nemotron disputes `class-15`"* as though that were a fact about the label. It was a fact
+about **which sample happened to get written to disk.** That is exactly the trap this whole
+exercise is supposed to catch, and it caught its author. The tool now runs `k` times by
+default and separates *disputed in every run* (a real disagreement) from *disputed in some
+runs* (noise) — because from one run those look identical.
+
+### The most important number here is about the JUDGE, not about the benchmark
+
+**A judge that answers its own question differently at temperature=0 cannot be a source of
+ground truth.** It can only calibrate one. That is measured here, in this repository, rather
+than cited from a paper — and it happened twice more besides: the model returned unparseable
+JSON on two runs and needed `llm.py`'s retry-on-malformed to recover, on a narrow,
+schema-constrained question.
+
+This is the sharpest available argument for the entire architecture. Attest's verdicts come
+from date math, set membership and string comparison. Asked the same question five times,
+they return the same answer five times — **pass@5, 100%, measured above**. They *cannot* do
+what this judge does. That is not a slogan; it is the difference between the two tables on
+this page.
+
+### It still found a real bug — which is why it is here
+
+`class-15` (*"the `signup_ts` column of `customer_profile` contains PII"*) is where two
+declared rules **collide**: "column over table" says the column's own labels decide, and
+"`Verified` licenses closed-world reasoning" says an absent tag on a reviewed table is a
+reviewed finding. `signup_ts` is untagged; its table is `Verified`.
+
+The policy declared both rules and **never said which wins.** The tie-break existed only as a
+*comment inside a checker* — a governance semantic buried in an `if`, which is precisely what
+[`policy.py`](../src/attest/checkers/policy.py) exists to prevent. Nemotron applied the
+propagation rule and returned Insufficient-Coverage where Attest returns Contradicted. It was
+not wrong; it was **under-informed, because nobody had written the rule down.**
+
+It is now declared as `COMPLETENESS_REACHES_COLUMNS`, with the asymmetry spelled out: a PII
+**signal** is a fact about the *data* and does not distribute over columns ("contains PII" is
+existential); `Verified` is a fact about the *review* and does. **Finding a rule that lived in
+an `if` instead of in the policy is the single most valuable thing this labeler did** — and it
+is worth more than the agreement percentage it produced.
+
+### One thing I did wrong, recorded rather than buried
+
+After declaring the rule I re-ran the labeler expecting agreement to rise. It **fell**, 97.5%
+→ 95%. I very nearly went back to the prompt to fix that — which is the exact failure mode of
+a benchmark author: *tuning the judge until it agrees with you.* Running it repeatedly instead
+showed the drop was noise, not a response to anything I had changed. Both artifacts are
+published ([`calibration-before-policy-declared.json`](results/calibration-before-policy-declared.json),
+[`calibration.json`](results/calibration.json)), and `CLAUDE.md` now says in as many words: do
+not edit a label to match the model, and do not tune the prompt until it agrees.
+
+### The rules this instrument follows
+
+- **Disagreements are surfaced, never resolved by taking my own side.**
+- **The harness exits non-zero below 90% mean agreement**, because ground truth an independent
+  family disputes on more than ~1 case in 10 is shakier than its author thinks.
+- **It never touches the verdict path**, and the pipeline default stays `gpt-4o-mini`.
+
+<details>
+<summary>The superseded single-run write-up (kept, because deleting it would be the dishonest part)</summary>
+
+### ~~Result: 38/40, 95% agreement. Two disputed labels, both kept and both explained.~~
 
 [`results/calibration.json`](results/calibration.json). `just bench-calibrate` reproduces it.
 Disagreements are **surfaced, not resolved.** The harness **exits non-zero below 90%
@@ -276,6 +355,8 @@ model.** A single unrelated addition to a prompt flipped a judge's answer on a c
 previously gotten right. That is what LLM-as-judge instability looks like from the inside, and
 it is why an auditor's verdicts come from date math and set membership instead — and why this
 labeler calibrates the ground truth and is *never* allowed near the verdict path.
+
+</details>
 
 **What agreement does not prove.** The labeler applies the *same policy* the labels encode. So
 agreement shows the labels **follow from** the policy — that the rules were not mis-applied or

@@ -265,19 +265,26 @@ non-zero if the numbers *don't* move.
 Llama-family model** — because LLM judges favor their own outputs (GPT-4 by ~10% win rate,
 Claude-v1 by ~25%; [Zheng et al. 2023](https://arxiv.org/abs/2306.05685)), and validating
 GPT-labeled ground truth with a GPT judge would inflate the number by construction. It never
-touches the verdict path. **Agreement: 38/40 (95%)**, and the two disputes are kept and
-explained rather than resolved away.
+touches the verdict path.
 
-One of them **found a bug in the governance policy**: an untagged column on a `Verified` table
-sits where two declared rules collide ("column over table" vs "`Verified` licenses closed-world
-reasoning"), and the tie-break existed only as a *comment inside a checker* — the exact thing
-[`policy.py`](src/attest/checkers/policy.py) exists to prevent. It is now declared
-(`COMPLETENESS_REACHES_COLUMNS`). Nemotron was not wrong; it was under-informed.
+**Agreement: 95–97.5% across six runs — and no disagreement survives repetition.** Every case
+Nemotron ever disputed, it also *agreed* with on another run, with identical code, an identical
+prompt and `temperature=0`. So the residual 5% is **judge noise, not a finding about the
+labels**, and any single run's dispute list is a fact about which sample got written to disk.
 
-And then — **declaring the rule did not change its mind, and agreement went *down*, 97.5% →
-95%**, because an unrelated prompt addition flipped a second case it had previously gotten
-right. Both numbers are published. That instability is what LLM-as-judge looks like from the
-inside, and it is the sharpest argument for why Attest's verdicts come from date math instead.
+**That is the sharpest argument in this repository for why Attest's verdicts come from code.**
+A judge that answers its own question differently at temperature=0 cannot be a source of ground
+truth — it can only calibrate one. Attest's core, asked the same question five times, answers
+identically five times: **pass@5, 100%**, in the table above. Measured here, not cited from a
+paper.
+
+**And the labeler earned its keep anyway: it found a bug in the governance policy.** An untagged
+column on a `Verified` table is where two declared rules collide ("column over table" vs
+"`Verified` licenses closed-world reasoning") — and the tie-break existed only as a *comment
+inside a checker*, the exact thing [`policy.py`](src/attest/checkers/policy.py) exists to
+prevent. Nemotron wasn't wrong; it was under-informed. Now declared as
+`COMPLETENESS_REACHES_COLUMNS`. Finding a rule that lived in an `if` is worth more than the
+percentage that surfaced it.
 
 ### Why not RAGAS or DeepEval?
 
