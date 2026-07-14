@@ -34,7 +34,18 @@ observability.
 
 **Session 4: the service.** A FastAPI surface, a SQLite audit history, structured
 **write-back to DataHub** on approval, and a **run-scoped snapshot cache** that turned out
-to be a consistency fix rather than a performance one. 202 offline tests, 5 live.
+to be a consistency fix rather than a performance one.
+
+**Session 5: durable resume and per-run token billing.** A run parked at the human
+checkpoint now survives the death of its process — and is resumed *through* the checkpoint
+node, never around it. The service's lock is gone, because the shared token ledger it was
+guarding is gone: each run forks its own model handle, so two concurrent audits cannot
+bill each other.
+
+**Session 6: the golden benchmark.** 40 hand-labeled claims, precision/recall/F1 per
+verdict, a confusion matrix, pass@k, a vacuity check that fails CI if the metrics stop
+measuring anything, and cross-family label calibration against a non-GPT model. 262
+offline tests, 5 live.
 
 Not built yet: the web UI, continuous monitoring, multi-tenancy, auth.
 
@@ -214,6 +225,88 @@ still have passed.
 
 [`tests/test_coverage.py`](tests/test_coverage.py) asserts all twelve cells against the
 live catalog, so this cannot silently regress. `just matrix` runs it alone.
+
+## The golden benchmark
+
+A groundedness auditor that cannot report its own accuracy is asking for the trust it
+refuses to give. So: **40 hand-labeled claims** against the seeded catalog, 26 of them
+marked *hard*, all 12 coverage cells populated, every label carrying a one-line rationale.
+It ships as a standalone, citable artifact — [`benchmark/`](benchmark/README.md) — usable by
+someone who has never seen this code.
+
+| | Deterministic core | Full pipeline (prose in) |
+| --- | --- | --- |
+| Accuracy | **100%** (40/40) | **100%** (40/40) |
+| Macro F1 | **1.000** | **1.000** |
+| Correctness failures (Supported ↔ Contradicted) | 0 | 0 |
+| Coverage failures (anything ↔ Insufficient) | 0 | 0 |
+| pass@k | **100%** (k=5) | **100%** (k=3) |
+| Cost | $0 | **$0.0138** / 40 claims |
+
+**pass@k is a bug detector, not a score.** Verdicts come from date math and set membership,
+so the same claim must produce the same verdict every time. A pass@k below 100% on the core
+would mean a model had leaked into the verdict path — the one thing
+[`trajectory.py`](src/attest/trajectory.py) exists to make impossible. The structural
+assertion and the empirical measurement agree.
+
+**The benchmark caught a real bug on its first run.** *"Updated every 30 minutes"* came back
+from extraction as `max_age_hours: 0` — the model floored 0.5 — which the claim schema
+correctly rejects (`gt=0`), so the claim was silently **dropped**. The fix was to widen the
+schema's *description* (fractions are allowed), never to relax `gt=0`, which would have
+admitted a meaningless "updated within zero hours" claim. Widen the evidence, never the
+guard. 97.5% → 100%.
+
+**And the benchmark can fail, which is the only reason to believe it.** `just bench-sabotage`
+replaces the classification checker with one that affirms everything: accuracy drops 100% →
+**67.5%**, Supported precision collapses to **0.536**, and 13 cases are named. It exits
+non-zero if the numbers *don't* move.
+
+**GPT does not grade GPT's homework.** The labels are cross-checked by **Nemotron, a
+Llama-family model** — because LLM judges favor their own outputs (GPT-4 by ~10% win rate,
+Claude-v1 by ~25%; [Zheng et al. 2023](https://arxiv.org/abs/2306.05685)), and validating
+GPT-labeled ground truth with a GPT judge would inflate the number by construction. It never
+touches the verdict path. **Agreement: 38/40 (95%)**, and the two disputes are kept and
+explained rather than resolved away.
+
+One of them **found a bug in the governance policy**: an untagged column on a `Verified` table
+sits where two declared rules collide ("column over table" vs "`Verified` licenses closed-world
+reasoning"), and the tie-break existed only as a *comment inside a checker* — the exact thing
+[`policy.py`](src/attest/checkers/policy.py) exists to prevent. It is now declared
+(`COMPLETENESS_REACHES_COLUMNS`). Nemotron was not wrong; it was under-informed.
+
+And then — **declaring the rule did not change its mind, and agreement went *down*, 97.5% →
+95%**, because an unrelated prompt addition flipped a second case it had previously gotten
+right. Both numbers are published. That instability is what LLM-as-judge looks like from the
+inside, and it is the sharpest argument for why Attest's verdicts come from date math instead.
+
+### Why not RAGAS or DeepEval?
+
+Not used, and this is a decision rather than an omission.
+
+**Both frameworks score an LLM-generated answer against retrieved context.** That is the
+right tool for a RAG pipeline, where a model produces the answer and the question is how
+faithful that answer is to what was retrieved. **Attest has no such answer to score.** Its
+verdicts come from date math, set membership and string comparison — the model is permitted
+to *phrase* a verdict and never to reach one. There is no generation in the verdict path for
+a groundedness metric to grade.
+
+What Attest is, statistically, is a **deterministic three-class classifier**, and the correct
+way to evaluate one of those is precision, recall and F1 against hand-labeled ground truth,
+with a confusion matrix. That is `sklearn.metrics`, and it is what the harness uses.
+
+Adopting DeepEval would mean one of two things, and both are bad. Either it would be used for
+metrics it was not built for — or, worse, its presence would *imply that Attest's verdicts are
+LLM-judged when they explicitly are not*. That would undercut
+`NO_LLM_IN_THE_VERDICT_PATH`, which is the strongest engineering claim this system makes.
+**A dependency that contradicts a core architectural principle is a liability, not
+credibility.**
+
+Worth noting on its own terms: DeepEval's author states that G-Eval is non-deterministic and
+that a benchmark resting on it cannot be fully trusted. Their most deterministic offering, the
+DAG metric, decomposes an evaluation into narrow binary LLM judgements — which is a genuinely
+good instinct, and it is **strictly weaker than what is here**, because Attest's verdicts are
+not narrow LLM judgements at all. They are code. The DAG philosophy was arrived at
+independently and then gone past.
 
 ## Layout
 

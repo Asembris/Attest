@@ -339,6 +339,95 @@ via a `Verified` completeness marker someone deliberately applied. All such gove
 live in [policy.py](src/attest/checkers/policy.py) as reviewable data rather than as an `if`
 buried in a checker.
 
+**`COMPLETENESS_REACHES_COLUMNS` (Session 6): the marker propagates DOWN even though signals
+do not, and the asymmetry is the point.** A PII *signal* is a fact about the DATA, and
+"contains PII" is existential — so a table's PII tag says nothing about its untagged
+`signup_ts`. `Verified` is a fact about the REVIEW ("the team looked and tagged what they
+found"), so a column they did not tag is a column they reviewed and found clean. Hence: an
+untagged column of a **Verified** table is *Contradicted* for "contains PII"; the same
+untagged column of an **unverified** table is *Insufficient-Coverage*. Same claim, same
+shape; the only difference is whether anyone looked.
+
+**This rule was IN THE CODE before it was in the policy, and that was the bug.** It lived as
+a comment inside `check_classification` — a governance semantic buried in an `if`, which is
+the exact thing policy.py exists to prevent. It was found by the benchmark's cross-family
+labeler (§7): Nemotron, handed the whole declared policy, applied the propagation rule and
+returned Insufficient-Coverage where Attest returns Contradicted. **It was not wrong** — it
+had been told both rules and never told how they interact, because nobody had written that
+down. That is what a second model family is FOR, and it is the only disagreement in 40 cases.
+
+**7. The benchmark is the evidence, and it can fail.** [benchmark/](benchmark/README.md) —
+40 hand-labeled claims, 26 hard, all 12 cells, a one-line rationale per label. The
+invariants worth not rediscovering:
+
+- **RAGAS and DeepEval are deliberately NOT used, and the reasoning goes in the README.**
+  Both score an LLM-generated answer against retrieved context. Attest's verdicts are not
+  generated — they are date math and set membership — so there is nothing to score. It is a
+  deterministic 3-class classifier and the right tool is precision/recall/F1 against
+  hand-labeled truth (`sklearn.metrics`). Worse, adopting a judge framework would *imply*
+  the verdicts are LLM-judged when they explicitly are not, undercutting
+  `NO_LLM_IN_THE_VERDICT_PATH` — the strongest claim the system makes. **A dependency that
+  contradicts a core architectural principle is a liability, not credibility.**
+- **Per-verdict metrics, never aggregate accuracy**, and the confusion matrix is *read*:
+  Supported↔Contradicted is a CORRECTNESS failure (the worst thing this product can do);
+  anything↔Insufficient is a COVERAGE failure (crying wolf, or certifying silence). Different
+  bugs, different fixes.
+- **Two modes, because "Attest got it wrong" is two different bugs.** `core` feeds the
+  structured claim to the checkers (free, exact, no model). `--full` feeds the PROSE to the
+  whole pipeline. When full is worse, `extraction fidelity` says whether the decomposer
+  mis-transcribed the sentence. A case that is right by luck — wrong claim, right verdict —
+  is counted correct AND named, because banking those flatters a broken decomposer.
+- **pass@k is a BUG DETECTOR, not a score.** A deterministic checker cannot return two
+  answers. pass@k < 100% on the core means a model leaked into the verdict path, and the
+  harness diagnoses rather than counts: same extracted claim + different verdict = a LEAK
+  (capitals); different extracted claim = decomposition variance, a different finding.
+  MEASURED: 100% at k=5 (core) and k=3 (full).
+- **MEASURED: 100% / macro-F1 1.000 on both core and full pipeline; $0.0138 per 40 claims;
+  40/40 model-authored explanations, 0 guard rejections; 0 correctness and 0 coverage
+  failures.**
+- **The vacuity check is `just bench-sabotage`, and it EXITS NON-ZERO if the numbers do not
+  move.** Replace the classification checker with one that affirms everything: 100% → 67.5%,
+  Supported precision → 0.536, 13 cases named. A benchmark that cannot fail is a green light
+  wired to nothing.
+- **The benchmark found a real bug on its first run, and the fix was the CLAUDE.md rule.**
+  "Updated every 30 minutes" came back from extraction as `max_age_hours: 0` (the model
+  floored 0.5), which `FreshnessClaim` rightly rejects (`gt=0`) — so the claim was silently
+  DROPPED. Every example in the schema's description was a whole number ≥ 24, so the model
+  learned the field's shape from them. Widened the description; did **not** relax `gt=0`,
+  which would admit a meaningless "within zero hours" claim. *Widen the evidence, never the
+  guard.* 97.5% → 100%.
+- **Cross-family calibration: Nemotron (Llama family), and the FAMILY is the point.** LLM
+  judges favor their own outputs (GPT-4 ~10% higher win rate, Claude-v1 ~25%; Zheng et al.
+  2023, arXiv:2306.05685), so letting GPT validate GPT-labeled ground truth would inflate
+  every number by construction. Few-shot, because it raises judge self-consistency 65% →
+  77.5% (same paper) — and the shots are **synthetic**, because a few-shot example drawn from
+  the labeled set is answer-key leakage. It resolves its model through
+  `settings.model_for(Step.CALIBRATION)` and calls it through `llm.py`, so both invariants
+  hold. **It never touches the verdict path, and the pipeline default stays `gpt-4o-mini`.**
+- **What calibration does NOT prove, and say so:** the labeler is given the same policy the
+  labels encode, so agreement shows the labels *follow from* the policy — not that the policy
+  is *right*. A wrong rule is applied wrongly by both and they agree. That is a design
+  argument and it lives in policy.py.
+- **MEASURED: 38/40 (95%) agreement, 2 disputes, both kept and explained.** `class-15` found
+  the undeclared rule (`COMPLETENESS_REACHES_COLUMNS`, above) — the most valuable thing the
+  labeler did. `class-03` is labeler error: Nemotron misapplied precedence rule (c), which it
+  had been given.
+- **DECLARING THE RULE DID NOT CHANGE NEMOTRON'S MIND, AND AGREEMENT WENT DOWN: 97.5% -> 95%.**
+  Told the tie-break explicitly, it still disputes `class-15` — so that case is genuinely
+  CONTESTED, not underspecified, and it stays in the benchmark flagged as such. Worse, the
+  unrelated prompt addition flipped `class-03`, which it had previously gotten right. **Both
+  runs are published** (`calibration-before-policy-declared.json` and `calibration.json`) and
+  the WORSE number is the headline, because it is the one the current code reproduces.
+- **That instability is the sharpest argument for the whole architecture.** One unrelated
+  prompt edit flipped a judge's answer on a case it had already gotten right. That is
+  LLM-as-judge from the inside, and it is why verdicts come from date math and set membership
+  — and why this labeler calibrates ground truth and is NEVER allowed near the verdict path.
+- **Disagreements are SURFACED, never silently resolved**, and the harness exits non-zero
+  below 90% agreement. **Do not "fix" a dispute by editing the label to match the model, and
+  do not tune the prompt until it agrees** — I reached for the prompt once and it made the
+  number worse, which is the trap working as designed. Fix the POLICY, or cut the case as
+  ambiguous, or keep it and flag it as contested.
+
 ## Environment constraints — hard-won, do not rediscover
 
 - **DataHub Core, Docker quickstart, pinned to v1.5.0.6.** Pinned *deliberately, for
@@ -470,6 +559,12 @@ src/attest/
   cost.py              Prices a run. An unpriced model costs None, never 0.
   report.py            AuditReport: verdicts, proposed corrections, receipts.
 seed/                  Seed catalog generator + ingestion recipe (ground_truth.json).
+benchmark/             The golden benchmark. A standalone, citable artifact.
+  cases.py             40 hand-labeled claims. The generator; cases.json is the artifact.
+  cases.json           The dataset. Committed, unlike seed's output: cite-able.
+  run_eval.py          Precision/recall/F1 per verdict, confusion matrix, pass@k, --sabotage.
+  labeler.py           Nemotron as an independent second labeler. NEVER in the verdict path.
+  README.md            The dataset, usable by someone who has never seen this code.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
 tests/                 Live-catalog pytest suite. Skips (does not pass) if DataHub is down.
                        test_graph/test_trajectory run fully offline: control flow is not a
@@ -487,6 +582,10 @@ just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub o
 just test      # the suite: live catalog, semantic layer offline. Free.
 just matrix    # just the 12-cell coverage assertion
 just resume    # durable resume + per-run token billing (the two Session 5 properties)
+just bench     # the golden benchmark vs the DETERMINISTIC CORE, pass@5. Free.
+just bench-full      # ...vs the whole pipeline, real model. ~1.5 cents.
+just bench-sabotage  # THE VACUITY CHECK. Non-zero exit if breaking a checker moves nothing.
+just bench-calibrate # cross-family labels (Nemotron). Needs NVIDIA_API_KEY.
 just check     # lint + test — what CI runs
 just live      # the semantic layer against a REAL model. Costs money.
 just preflight # lint + test + live — required before pushing semantic-layer changes
