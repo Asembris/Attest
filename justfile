@@ -30,9 +30,13 @@ health:
 
 # --- the service -------------------------------------------------------------
 
-# Run the API. Docs at http://localhost:8000/docs.
+# Run the API. Docs at http://localhost:8003/docs.
+#
+# 8003 is pinned, not incidental: DataHub owns 8080 (GMS) and 9002 (UI) on this machine,
+# and a port clash surfaces as an audit that cannot reach the catalog — which reads like a
+# DataHub outage rather than a collision. Overridable with ATTEST_API_PORT.
 serve:
-    python -m uvicorn attest.api.app:app --reload --port 8000
+    python -m uvicorn attest.api.app:app --reload --port {{env("ATTEST_API_PORT", "8003")}}
 
 # --- verification ------------------------------------------------------------
 
@@ -48,6 +52,12 @@ live:
 # Just the coverage matrix: can every claim type still reach every verdict?
 matrix:
     python -m pytest tests/test_coverage.py -v
+
+# Durable resume and per-run token billing: the two Session 5 properties, on their own.
+# A parked run survives the death of its process, and two concurrent audits do not bill
+# each other. Offline and free.
+resume:
+    python -m pytest tests/test_resume.py tests/test_concurrency.py -v
 
 # Lint. `ruff format` is deliberately not a gate — see the note below.
 lint:

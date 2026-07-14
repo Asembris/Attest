@@ -55,6 +55,21 @@ class Settings(BaseSettings):
     # structured properties are last-write-wins. See store.py.
     store_path: str = Field(default="attest.db", alias="ATTEST_STORE_PATH")
 
+    # LangGraph's checkpoints: the PAUSED GRAPH of a run parked at the human checkpoint.
+    # A separate file from the audit history on purpose. LangGraph owns these tables and
+    # their shape moves with its release cadence, not ours; the audit history is Attest's
+    # own schema and nothing outside store.py may alter it. Sharing one file would put a
+    # dependency's migrations in the same blast radius as the evidence trail.
+    checkpoint_path: str = Field(
+        default="attest-checkpoints.db", alias="ATTEST_CHECKPOINT_PATH"
+    )
+
+    # The port the API binds to. Pinned explicitly rather than left to a framework
+    # default: DataHub already owns 8080 (GMS) and 9002 (UI) on the same machine, and a
+    # collision surfaces as an audit that cannot reach the catalog, which reads like a
+    # DataHub outage rather than a port clash.
+    api_port: int = Field(default=8003, alias="ATTEST_API_PORT")
+
     model_default: str = Field(default="gpt-4o-mini", alias="ATTEST_MODEL_DEFAULT")
     model_claim_extraction: str | None = Field(
         default=None, alias="ATTEST_MODEL_CLAIM_EXTRACTION"

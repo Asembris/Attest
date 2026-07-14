@@ -19,17 +19,19 @@ convenience.
 work: network calls to DataHub, network calls to OpenAI, and a synchronous LangGraph
 invoke. Declared `async`, it would run ON the event loop and stall every other request in
 the process, including `/health`. Declared `def`, Starlette runs it in a threadpool and the
-loop stays free. (The service serializes audits internally anyway — see service.py for why
-that is about token accounting, not about throughput.)
+loop stays free — and since Session 5 removed the service's lock, two audits submitted at
+once really do run at once (service.py).
 """
 
 from __future__ import annotations
 
 import logging
+import sqlite3
 from functools import lru_cache
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from langgraph.checkpoint.sqlite import SqliteSaver
 
 from attest import __version__
 from attest.api.schemas import (
@@ -56,10 +58,19 @@ def get_service() -> AuditService:
     A FastAPI dependency, so a test overrides it with `app.dependency_overrides` and gets a
     service wired to a fake model and a temp database. Nothing in the routes reaches for a
     global.
+
+    The checkpointer is SQLite and its file is NOT the audit history's. LangGraph owns those
+    tables and their shape moves with its release cadence; the audit history is Attest's own
+    schema and the evidence trail is in it. Sharing one file would put a dependency's
+    migrations in the same blast radius as the thing this product exists to keep.
     """
     client = DataHubClient()
+    # check_same_thread=False because the endpoints are `def`, so Starlette runs them in a
+    # threadpool and the saver is legitimately touched from several threads. SqliteSaver
+    # holds its own lock; sqlite3 serializes writes underneath it.
+    checkpoints = sqlite3.connect(settings.checkpoint_path, check_same_thread=False)
     return AuditService(
-        pipeline=Pipeline(client=client),
+        pipeline=Pipeline(client=client, saver=SqliteSaver(checkpoints)),
         store=AuditStore(settings.store_path),
         client=client,
     )

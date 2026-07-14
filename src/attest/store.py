@@ -43,6 +43,25 @@ first, so the record of who signed off on what survives someone changing their m
 review status shown on a claim is the LATEST decision; the earlier ones are still there.
 Overwriting them would reproduce, in Attest's own store, the exact property that disqualified
 DataHub from holding the history.
+
+--------------------------------------------------------------------------------
+Session 5 changed the schema, and an old database is REFUSED rather than half-read
+--------------------------------------------------------------------------------
+
+Durable resume rebuilds a parked run's typed ledger out of this store (replay.py), which
+made every lossy column a correctness bug rather than a cosmetic one. Four columns were
+added (`claims.rejected`, `claims.violations`, `steps.models`, `steps.error`) and three
+changed from rendered strings to structured JSON (`claims.conflicts`, `runs.dropped`,
+`runs.injection_findings`) — a `str()` cannot be parsed back, and a resumed run has to
+re-render them exactly.
+
+A pre-Session-5 database physically cannot hold a Session-5 record, and its rows cannot be
+migrated: the structure was never written down, only its rendering. So `AuditStore` detects
+one and REFUSES to open it, by name, with what to do about it. The alternative — inferring
+the missing structure from the rendered string — would mean Attest fabricating fields to
+fill its own audit trail, which is the one thing it is least entitled to do. The alternative
+after that, letting the INSERT fail at run time inside `just serve`, is a demo-breaker
+disguised as a migration policy.
 """
 
 from __future__ import annotations
@@ -63,10 +82,14 @@ from attest.record import (
     AuditRecord,
     ClaimErrorRecord,
     ClaimRecord,
+    ConflictView,
     CorrectionView,
+    DroppedView,
     EvidenceView,
+    FindingView,
     Receipts,
     StepView,
+    ViolationView,
 )
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
 
@@ -89,6 +112,8 @@ CREATE TABLE IF NOT EXISTS runs (
     catalog_lookups     INTEGER NOT NULL DEFAULT 0,
     catalog_fetches     INTEGER NOT NULL DEFAULT 0,
     catalog_entities    INTEGER NOT NULL DEFAULT 0,
+    -- JSON objects, not rendered strings: [{reason, payload}] and [{pattern, matched}].
+    -- A resumed run rebuilds these, and a string cannot be parsed back into a pair.
     dropped             TEXT NOT NULL DEFAULT '[]',
     injection_findings  TEXT NOT NULL DEFAULT '[]'
 );
@@ -105,7 +130,13 @@ CREATE TABLE IF NOT EXISTS claims (
     explanation         TEXT NOT NULL DEFAULT '',
     explanation_source  TEXT NOT NULL DEFAULT 'template',
     faithful            INTEGER NOT NULL DEFAULT 1,
+    -- WHICH tokens the guard rejected. `faithful = 0` with nothing here would be a finding
+    -- with no evidence, which is not a shape this system is entitled to store.
+    violations          TEXT NOT NULL DEFAULT '[]',
     conflicts           TEXT NOT NULL DEFAULT '[]',
+    -- The model drafts that were thrown away, and why. An auditor that quietly retries
+    -- until something passes is hiding its own failure rate.
+    rejected            TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (run_id, claim_index)
 );
 
@@ -149,7 +180,13 @@ CREATE TABLE IF NOT EXISTS steps (
     latency_ms    REAL NOT NULL DEFAULT 0,
     input_tokens  INTEGER NOT NULL DEFAULT 0,
     output_tokens INTEGER NOT NULL DEFAULT 0,
+    -- NULL means UNPRICED, never free — and `models` is how a reader (and a resumed run)
+    -- knows WHICH model could not be priced. Drop the names and the run's total silently
+    -- becomes a sum where it should have been None. See cost.py and replay.py.
     cost_usd      REAL,
+    models        TEXT NOT NULL DEFAULT '[]',
+    -- A step that raised still ran, and the trace says so.
+    error         TEXT,
     PRIMARY KEY (run_id, seq)
 );
 
@@ -203,6 +240,10 @@ class ClaimHit:
     source_agent: str
 
 
+class StoreError(RuntimeError):
+    """This database cannot hold what Attest now records. Said plainly, at open time."""
+
+
 class AuditStore:
     """Attest's audit history. One connection, guarded — the API calls this from a pool."""
 
@@ -215,8 +256,41 @@ class AuditStore:
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        self._refuse_an_incompatible_database()
         self._db.executescript(SCHEMA)
         self._db.commit()
+
+    def _refuse_an_incompatible_database(self) -> None:
+        """A pre-Session-5 database is rejected here, not discovered mid-INSERT.
+
+        `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table, so an older
+        database would open cleanly, serve reads, and then fail on the first write with
+        "table claims has no column named rejected" — from inside a running service, on the
+        one path that matters. The columns cannot be back-filled either: three of them
+        changed from a rendered string to the structure that produced it, and reconstructing
+        the structure from the string means Attest inventing the contents of its own audit
+        trail. So it says so instead. See the module docstring.
+        """
+        existing = self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'claims'"
+        ).fetchone()
+        if existing is None:
+            return  # a new database. It gets the current schema below.
+
+        columns = {
+            row["name"] for row in self._db.execute("PRAGMA table_info(claims)").fetchall()
+        }
+        if "rejected" in columns:
+            return
+
+        raise StoreError(
+            f"{self.path} was written by a pre-Session-5 Attest and cannot hold what a run "
+            f"now records: the guard's rejected drafts, its faithfulness violations, the "
+            f"models a step called, and structured conflicts. Its rows cannot be migrated — "
+            f"the structure was never stored, only its rendering, and inferring it back "
+            f"would mean fabricating audit history. Move it aside, or point "
+            f"ATTEST_STORE_PATH at a new file."
+        )
 
     def close(self) -> None:
         self._db.close()
@@ -274,8 +348,10 @@ class AuditStore:
                     r.catalog_lookups,
                     r.catalog_fetches,
                     r.catalog_entities,
-                    json.dumps(list(record.dropped)),
-                    json.dumps(list(record.injection_findings)),
+                    json.dumps([d.model_dump(mode="json") for d in record.dropped]),
+                    json.dumps(
+                        [f.model_dump(mode="json") for f in record.injection_findings]
+                    ),
                 ),
             )
 
@@ -283,8 +359,8 @@ class AuditStore:
                 db.execute(
                     "INSERT INTO claims (run_id, claim_index, claim_type, target_urn,"
                     " raw_text, claim_json, verdict, reason, explanation,"
-                    " explanation_source, faithful, conflicts)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " explanation_source, faithful, violations, conflicts, rejected)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         record.run_id,
                         claim.index,
@@ -297,7 +373,11 @@ class AuditStore:
                         claim.explanation,
                         claim.explanation_source,
                         int(claim.faithful),
-                        json.dumps(list(claim.conflicts)),
+                        json.dumps(
+                            [v.model_dump(mode="json") for v in claim.faithfulness_violations]
+                        ),
+                        json.dumps([c.model_dump(mode="json") for c in claim.conflicts]),
+                        json.dumps(list(claim.rejected)),
                     ),
                 )
                 for seq, e in enumerate(claim.evidence):
@@ -343,7 +423,8 @@ class AuditStore:
             for step in record.steps:
                 db.execute(
                     "INSERT INTO steps (run_id, seq, name, kind, claim_index, latency_ms,"
-                    " input_tokens, output_tokens, cost_usd) VALUES (?,?,?,?,?,?,?,?,?)",
+                    " input_tokens, output_tokens, cost_usd, models, error)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         record.run_id,
                         step.seq,
@@ -354,6 +435,8 @@ class AuditStore:
                         step.input_tokens,
                         step.output_tokens,
                         step.cost_usd,
+                        json.dumps(list(step.models)),
+                        step.error,
                     ),
                 )
 
@@ -451,7 +534,13 @@ class AuditStore:
                     explanation=c["explanation"],
                     explanation_source=c["explanation_source"],
                     faithful=bool(c["faithful"]),
-                    conflicts=tuple(json.loads(c["conflicts"])),
+                    faithfulness_violations=tuple(
+                        ViolationView(**v) for v in json.loads(c["violations"])
+                    ),
+                    conflicts=tuple(
+                        ConflictView(**k) for k in json.loads(c["conflicts"])
+                    ),
+                    rejected=tuple(json.loads(c["rejected"])),
                     correction=_correction(corrected.get(c["claim_index"])),
                 )
                 for c in claims
@@ -488,11 +577,15 @@ class AuditStore:
                     input_tokens=s["input_tokens"],
                     output_tokens=s["output_tokens"],
                     cost_usd=s["cost_usd"],
+                    models=tuple(json.loads(s["models"])),
+                    error=s["error"],
                 )
                 for s in steps
             ),
-            dropped=tuple(json.loads(run["dropped"])),
-            injection_findings=tuple(json.loads(run["injection_findings"])),
+            dropped=tuple(DroppedView(**d) for d in json.loads(run["dropped"])),
+            injection_findings=tuple(
+                FindingView(**f) for f in json.loads(run["injection_findings"])
+            ),
         )
 
     def approvals(self, run_id: str) -> tuple[Approval, ...]:

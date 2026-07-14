@@ -67,6 +67,37 @@ So the graph's state holds only primitives (cursor, retry count, decisions), whi
 the *control flow* needs, and the typed audit record lives in a ledger keyed by thread id.
 The checkpoint is no less real for it: the interrupt is a genuine pause of a genuine graph.
 Only the accumulating output is kept where a serializer cannot maim it.
+
+--------------------------------------------------------------------------------
+Durable resume (Session 5): TWO durable things, and only one of them is LangGraph's
+--------------------------------------------------------------------------------
+
+The pause is durable because the checkpointer is (`SqliteSaver`, injected — see `saver`).
+The typed ledger is durable because the STORE is: a run's verdicts, evidence, explanations
+and receipts are written down the moment the run returns, parked or not. So a restart
+loses neither, and `rehydrate` puts them back together — the graph's own state from
+LangGraph's tables, the typed record from Attest's, rebuilt by replay.py.
+
+**The resumed run goes through `human_checkpoint`, exactly like an unrestarted one.** That
+is the point of rehydrating rather than applying the decision straight to the stored
+record, which would have been half the code and would have created a second path to the
+one thing in this system that must not have one — an unaudited one, invisible from the
+outside, taken only after a restart. `tests/test_resume.py` asserts the node appears in the
+resumed trace, and that assertion is the whole difference between one durable path and two.
+
+--------------------------------------------------------------------------------
+One LLM handle per run (Session 5): the receipts are per-run BY CONSTRUCTION
+--------------------------------------------------------------------------------
+
+observe.py bills a step by slicing `llm.usage` from a mark taken when the step opened, so a
+handle shared by two concurrent runs bills each run for the other's tokens. Until Session 5
+a lock in the service made that unreachable by serializing audits. The lock is gone, and
+what replaces it is not a smaller lock: the LLM handle now lives on the `_Ledger` — one per
+run, forked from the pipeline's (llm.py `for_run`), sharing the transport and nothing else.
+Cross-billing is not forbidden by a convention, it is unreachable, in the same way that
+cross-run snapshot reuse is unreachable (datahub/cache.py). `tests/test_concurrency.py`
+runs two audits through one service, with one deliberately held open across the whole of
+the other, and asserts each receipt bills only its own tokens.
 """
 
 from __future__ import annotations
@@ -77,10 +108,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal, TypedDict
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from attest import faithfulness, trajectory
+from attest import faithfulness, replay, trajectory
 from attest.checkers import (
     check_classification,
     check_freshness,
@@ -98,6 +130,7 @@ from attest.claims import (
     Verdict,
 )
 from attest.datahub import (
+    CacheStats,
     DataHubClient,
     DataHubError,
     DatasetSnapshot,
@@ -107,6 +140,7 @@ from attest.decompose import Dropped, decompose
 from attest.explain import Explanation, explain, template
 from attest.llm import LLM
 from attest.observe import StepKind, Trace
+from attest.record import AuditRecord
 from attest.report import (
     Attempt,
     AuditReport,
@@ -171,6 +205,12 @@ class _Ledger:
     # See datahub/cache.py — a snapshot carried across runs is a stale ground truth, which
     # is the exact failure Attest exists to catch.
     catalog: SnapshotCache
+    # The run's model handle, with the run's OWN token ledger. Same argument as the cache,
+    # one floor down: the Pipeline holds a handle, but no run uses it — each forks its own
+    # (llm.py `for_run`), so two concurrent audits cannot bill each other's tokens. That is
+    # what replaced the lock in api/service.py, and it is structural rather than
+    # disciplinary for the same reason the cache is.
+    llm: LLM
     trace: Trace = field(default_factory=Trace)
 
     text: str = ""
@@ -181,6 +221,13 @@ class _Ledger:
     audits: list[ClaimAudit] = field(default_factory=list)
     errors: list[ClaimError] = field(default_factory=list)
 
+    # A REHYDRATED run's catalog receipt, replayed from the store. The original run did
+    # read the catalog; this process did not, and its cache is empty and must stay so — a
+    # resumed run resolves nothing. Reporting the empty cache's 0 fetches would understate
+    # what the audit actually cost DataHub, which is a receipt, and the receipts are the
+    # product. None on a live run: the cache speaks for itself. See replay.py.
+    replayed_catalog: CacheStats | None = None
+
     # --- scratch for the claim currently in flight ----------------------------
     snapshot: DatasetSnapshot | None = None
     result: CheckResult | None = None
@@ -189,6 +236,10 @@ class _Ledger:
     revision: Revision | None = None
     proposal: Claim | None = None
     outcome: CorrectionOutcome = CorrectionOutcome.NOT_ATTEMPTED
+
+    @property
+    def catalog_stats(self) -> CacheStats:
+        return self.replayed_catalog or self.catalog.stats
 
     def reset_claim(self) -> None:
         self.snapshot = None
@@ -201,12 +252,23 @@ class _Ledger:
 
 
 class Pipeline:
-    """Attest's audit pipeline. Build once, run many times.
+    """Attest's audit pipeline. Build once, run many times, concurrently.
 
-    `llm` and `client` are injected so the whole graph tests offline against a scripted
-    fake and a fixture catalog — the same discipline as llm.py. `now` is injected for the
-    same reason conftest derives it from the catalog: a freshness verdict that depends on
-    the wall clock is a test that goes red in a fortnight against correct code.
+    `llm`, `client` and `saver` are injected so the whole graph tests offline against a
+    scripted fake, a fixture catalog and an in-memory checkpointer — the same discipline as
+    llm.py. `now` is injected for the same reason conftest derives it from the catalog: a
+    freshness verdict that depends on the wall clock is a test that goes red in a fortnight
+    against correct code.
+
+    The `llm` handed in here is a TEMPLATE, not the handle a run uses. Every run forks its
+    own from it (`LLM.for_run`) and puts it on that run's ledger, which is what makes token
+    billing per-run by construction — see the module docstring, and the lock that used to
+    be in api/service.py and is not any more.
+
+    `saver` is what makes a parked run survive a restart. In-memory by default (a CLI run
+    and the whole offline suite have no restart to survive); the service passes a
+    `SqliteSaver`. A pause the checkpointer does not know about cannot be resumed, and
+    `rehydrate` says so rather than inventing one.
     """
 
     def __init__(
@@ -215,11 +277,13 @@ class Pipeline:
         client: DataHubClient | None = None,
         now: datetime | None = None,
         max_retries: int = MAX_RETRIES,
+        saver: BaseCheckpointSaver | None = None,
     ) -> None:
         self.llm = llm or LLM()
         self.client = client or DataHubClient()
         self.now = now
         self.max_retries = max_retries
+        self.saver: BaseCheckpointSaver = saver or InMemorySaver()
         self._ledgers: dict[str, _Ledger] = {}
         self.graph = self._build()
 
@@ -295,9 +359,10 @@ class Pipeline:
         g.add_edge(CHECKPOINT, ASSEMBLE)
         g.add_edge(ASSEMBLE, END)
 
-        # interrupt_before is what makes the checkpoint a PAUSE rather than a flag: the
-        # run stops with its state intact and cannot proceed until a human resumes it.
-        return g.compile(checkpointer=InMemorySaver(), interrupt_before=[CHECKPOINT])
+        # interrupt_before is what makes the checkpoint a PAUSE rather than a flag: the run
+        # stops with its state intact and cannot proceed until a human resumes it. The
+        # saver is what makes that pause outlive the process.
+        return g.compile(checkpointer=self.saver, interrupt_before=[CHECKPOINT])
 
     # --- nodes ----------------------------------------------------------------
 
@@ -316,11 +381,11 @@ class Pipeline:
 
     def _decompose(self, state: AuditState) -> AuditState:
         ledger = self._ledger(state)
-        with ledger.trace.step(DECOMPOSE, StepKind.LLM, llm=self.llm) as s:
+        with ledger.trace.step(DECOMPOSE, StepKind.LLM, llm=ledger.llm) as s:
             # decompose() sanitizes again, which is idempotent on already-clean text. The
             # SANITIZE node exists so the redaction is a visible stage of the trajectory
             # rather than a side effect buried inside the decomposer.
-            result = decompose(ledger.text, llm=self.llm)
+            result = decompose(ledger.text, llm=ledger.llm)
             ledger.claims = result.claims
             ledger.dropped = result.dropped
             s.outputs = {"claims": len(result.claims), "dropped": len(result.dropped)}
@@ -375,7 +440,7 @@ class Pipeline:
                 name,
                 StepKind.DETERMINISTIC,
                 claim_index=i,
-                llm=self.llm,
+                llm=ledger.llm,
                 urn=claim.target_urn,
             ) as s:
                 ledger.result = _CHECK[name](claim, snapshot, self.now)
@@ -392,9 +457,9 @@ class Pipeline:
         assert result is not None
 
         with ledger.trace.step(
-            EXPLAIN, StepKind.LLM, claim_index=i, llm=self.llm, verdict=result.verdict.value
+            EXPLAIN, StepKind.LLM, claim_index=i, llm=ledger.llm, verdict=result.verdict.value
         ) as s:
-            ledger.explanation = explain(result, llm=self.llm)
+            ledger.explanation = explain(result, llm=ledger.llm)
             s.outputs = {
                 "source": ledger.explanation.source,
                 "conflicts": len(ledger.explanation.conflicts),
@@ -420,7 +485,7 @@ class Pipeline:
         assert result is not None and written is not None
 
         with ledger.trace.step(
-            GUARD, StepKind.DETERMINISTIC, claim_index=i, llm=self.llm
+            GUARD, StepKind.DETERMINISTIC, claim_index=i, llm=ledger.llm
         ) as s:
             verified = faithfulness.check(written.text, result)
             if not verified.ok:
@@ -453,9 +518,9 @@ class Pipeline:
 
         attempt = state.get("retries", 0) + 1
         with ledger.trace.step(
-            REVISE, StepKind.LLM, claim_index=i, llm=self.llm, attempt=attempt
+            REVISE, StepKind.LLM, claim_index=i, llm=ledger.llm, attempt=attempt
         ) as s:
-            ledger.revision = revise(result, llm=self.llm)
+            ledger.revision = revise(result, llm=ledger.llm)
             s.outputs = {
                 "revised": ledger.revision.ok,
                 "rejected": ledger.revision.rejected,
@@ -481,7 +546,7 @@ class Pipeline:
             RECHECK,
             StepKind.DETERMINISTIC,
             claim_index=i,
-            llm=self.llm,  # arms the token trap: a re-check that calls a model is not one
+            llm=ledger.llm,  # arms the token trap: a re-check that calls a model is not one
             attempt=state["retries"],
         ) as s:
             result = _CHECK[CHECKER[revised.claim_type]](revised, snapshot, self.now)
@@ -649,6 +714,9 @@ class Pipeline:
             source_text=source_text,
             # A fresh cache, for this run only. Never reused, never shared.
             catalog=SnapshotCache(self.client),
+            # A fresh token ledger, for this run only. Same argument: two runs sharing one
+            # would bill each other, and the receipts are the product.
+            llm=self.llm.for_run(),
         )
 
         state: AuditState = {
@@ -719,30 +787,75 @@ class Pipeline:
             dropped=ledger.dropped,
             injection_findings=ledger.findings,
             thread_id=thread_id,
-            catalog=ledger.catalog.stats,
+            catalog=ledger.catalog_stats,
         )
 
-    def is_resumable(self, thread_id: str) -> bool:
-        """Is this run's typed ledger still here to be resumed with?
+    # --- durable resume -------------------------------------------------------
 
-        False after a restart, or after `forget`. A caller that wants to settle a parked
-        run has to know the difference between "no such run" and "that run's pause did not
-        survive this process", and this is how it finds out.
+    def is_parked(self, thread_id: str) -> bool:
+        """Is the GRAPH stopped at the human checkpoint for this run?
+
+        A question for the checkpointer, not for this process's memory. With a durable
+        saver it is still true after a restart, which is what makes `rehydrate` possible;
+        with the in-memory one it is not, and a caller is told that rather than being
+        handed a shortcut.
         """
-        return thread_id in self._ledgers
+        state = self.graph.get_state(self._config(thread_id))
+        return CHECKPOINT in (state.next or ())
+
+    def rehydrate(self, thread_id: str, record: AuditRecord) -> bool:
+        """Rebuild a parked run's typed ledger from the store, so `resume` can finish it.
+
+        Two halves of one run, from two durable places. The graph's own state — cursor,
+        retry counts, where it stopped — comes back from the checkpointer on its own. The
+        typed audit record cannot be in that state (the msgpack landmine, see above), so it
+        is rebuilt from what the store wrote down when the run parked. replay.py does the
+        rebuilding, and it is deliberately lossless in every field the report is made of.
+
+        Returns False when the CHECKPOINTER has no parked graph for this thread. That is
+        the one thing rehydration cannot manufacture, and it must not: a decision applied
+        to a run whose checkpoint node never ran is exactly the unaudited second path this
+        design exists to forbid. Better a 409 than a shortcut.
+        """
+        if thread_id in self._ledgers:
+            return True  # never parked by a dead process — the live ledger is authoritative
+        if not self.is_parked(thread_id):
+            return False
+
+        replayed = replay.from_record(record)
+        self._ledgers[thread_id] = _Ledger(
+            source_text=replayed.source_text,
+            # Empty, and it stays empty: a resumed run resolves nothing. The ORIGINAL run's
+            # catalog receipt is carried separately rather than re-derived from this — see
+            # `replayed_catalog`, and datahub/cache.py on why a snapshot must never cross a
+            # run boundary, let alone a process one.
+            catalog=SnapshotCache(self.client),
+            llm=self.llm.for_run(),
+            trace=replayed.trace,
+            claims=replayed.claims,
+            dropped=replayed.dropped,
+            findings=replayed.findings,
+            audits=replayed.audits,
+            errors=replayed.errors,
+            replayed_catalog=replayed.catalog,
+        )
+        return True
 
     def forget(self, thread_id: str) -> None:
-        """Drop a finished run's ledger, and with it that run's snapshots.
+        """Drop a finished run's ledger and its checkpoints. Nothing here is resumable after.
 
         The pipeline is built once and run many times, so in a long-lived process (the API
         is one) the ledgers would otherwise accumulate for the life of the process, each
-        pinning a run's catalog snapshots. Callers that have persisted a COMPLETE report
-        have no further use for its ledger and should say so.
+        pinning a run's catalog snapshots — and, now, the checkpointer's tables would grow a
+        graph state per audit forever. Callers that have persisted a COMPLETE report have no
+        further use for either and should say so.
 
-        A run parked at the checkpoint must NOT be forgotten: resuming it needs its typed
-        record, which is the one thing the graph's primitive state does not carry.
+        A run parked at the checkpoint must NOT be forgotten. Its typed record could be
+        rebuilt from the store, but its PAUSE could not: delete the checkpoint and the only
+        honest answer to a later approval is that the run cannot be resumed.
         """
         self._ledgers.pop(thread_id, None)
+        self.saver.delete_thread(thread_id)
 
 
 def _with_review(audit: ClaimAudit, review: ReviewStatus) -> ClaimAudit:
