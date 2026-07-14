@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # normal network nothing. Set false to keep certifi as the only trust source.
     ssl_os_truststore: bool = Field(default=True, alias="ATTEST_SSL_TRUSTSTORE")
 
+    # Attest's own audit history: every run, its evidence, and every human decision.
+    # DataHub holds the LATEST verdict per dataset; it cannot hold the history, because
+    # structured properties are last-write-wins. See store.py.
+    store_path: str = Field(default="attest.db", alias="ATTEST_STORE_PATH")
+
     model_default: str = Field(default="gpt-4o-mini", alias="ATTEST_MODEL_DEFAULT")
     model_claim_extraction: str | None = Field(
         default=None, alias="ATTEST_MODEL_CLAIM_EXTRACTION"

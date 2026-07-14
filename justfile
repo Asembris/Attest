@@ -28,6 +28,12 @@ probe:
 health:
     @(Invoke-RestMethod http://localhost:8080/config).versions.'acryldata/datahub'.version
 
+# --- the service -------------------------------------------------------------
+
+# Run the API. Docs at http://localhost:8000/docs.
+serve:
+    python -m uvicorn attest.api.app:app --reload --port 8000
+
 # --- verification ------------------------------------------------------------
 
 # Run the suite against the live seeded catalog.

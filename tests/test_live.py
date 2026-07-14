@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from fastapi.testclient import TestClient
 from tests.conftest import (
     ALICE,
     CAROL,
@@ -40,6 +41,8 @@ from tests.conftest import (
     UNREVIEWED,
 )
 
+from attest.api.app import app, get_service
+from attest.api.service import AuditService
 from attest.checkers import check
 from attest.claims import (
     Claim,
@@ -51,14 +54,16 @@ from attest.claims import (
     Verdict,
 )
 from attest.config import settings
-from attest.cost import monitoring_projection
+from attest.cost import monitoring_projection, project_fetches
 from attest.decompose import decompose
 from attest.explain import explain
 from attest.faithfulness import check as check_faithfulness
 from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
+from attest.store import AuditStore
 from attest.trajectory import RECHECK, REVISE, Rule
+from attest.writeback import AUDIT_RUN, VERDICT
 
 pytestmark = [
     pytest.mark.live,
@@ -321,3 +326,120 @@ def test_an_unrevisable_claim_is_never_corrected_into_a_different_true_one(clien
     assert report.trace.named(RECHECK) == [], "nothing was revised, so nothing may be verified"
     assert report.status is RunStatus.COMPLETE, "nothing to propose, so no human is summoned"
     assert report.trajectory.ok
+
+
+# --- the service, live -------------------------------------------------------
+
+
+def test_the_service_end_to_end_against_the_real_catalog(client, now, tmp_path, capsys):
+    """One real audit through the real API: submit, retrieve, approve, and write back.
+
+    Real model, real catalog, real database, real HTTP. What is proved here that the
+    offline API suite cannot prove:
+
+      - the snapshot cache's saving is REAL against a real DataHub, not against a fake that
+        counts its own calls: four claims over two datasets make two GraphQL round trips
+      - an approved verdict actually lands on a real dataset as a real structured property,
+        readable back out of DataHub — which is the whole claim being made by writing it as
+        a structured property rather than as a text blob
+
+    The agent's output below is built to exercise the service rather than flatter it: three
+    claims about ONE dataset (so the cache has something to do) and one false claim about
+    another that the catalog can positively correct (so there is a proposal to approve).
+
+    NOTE: this test WRITES to the local catalog — `attest.*` structured properties on
+    support_tickets. That is the feature. Nothing reads them back except this test, and
+    `just seed` restores the catalog from scratch.
+    """
+    agent_output = (
+        f"I reviewed the warehouse. The dataset {DOCUMENTED} is owned by {ALICE}. "
+        f"It is refreshed daily. It has an email column of type VARCHAR(255). "
+        f"The dataset {OWNED_BY_CAROL} is owned by {DANA}."
+    )
+
+    service = AuditService(
+        pipeline=Pipeline(llm=LLM(), client=client, now=now),
+        store=AuditStore(tmp_path / "attest.db"),
+        client=client,
+    )
+    app.dependency_overrides[get_service] = lambda: service
+    try:
+        with TestClient(app) as http:
+            assert http.get("/health").json()["datahub"] == "up"
+
+            # --- POST /audit -------------------------------------------------
+            created = http.post(
+                "/audit", json={"agent_output": agent_output, "source_agent": "warehouse-bot"}
+            )
+            assert created.status_code == 201, created.text
+            audit = created.json()
+            run_id = audit["run_id"]
+
+            assert audit["receipts"]["trajectory_ok"], audit["receipts"]["trajectory_summary"]
+            verdicts = {c["target_urn"]: c["verdict"] for c in audit["claims"]}
+            assert verdicts[OWNED_BY_CAROL] == "Contradicted"
+
+            # THE CACHE, MEASURED AGAINST A REAL SERVER. Several claims about one dataset
+            # cost one fetch, and every one of them was decided against that one snapshot.
+            receipts = audit["receipts"]
+            assert receipts["catalog_lookups"] > receipts["catalog_fetches"], (
+                "the run made as many catalog round trips as it had claims — the cache did "
+                "nothing, or was bypassed"
+            )
+            assert receipts["catalog_fetches"] == receipts["catalog_entities"] == 2
+
+            # --- nothing has been written, and nothing will be until a human says so
+            assert audit["status"] == "awaiting-review"
+            proposals = [c for c in audit["claims"] if c["correction"]["review"] == "pending"
+                         and c["correction"]["outcome"] == "corrected"]
+            assert len(proposals) == 1, "a real model did not correct a correctable claim"
+            proposal = proposals[0]
+            assert proposal["correction"]["proposal"]["owner_urn"] == CAROL
+
+            # --- GET /audit/{id} ---------------------------------------------
+            stored = http.get(f"/audit/{run_id}").json()
+            assert stored["run_id"] == run_id
+            assert all(c["evidence"] for c in stored["claims"])
+            assert stored["steps"], "the trajectory's evidence did not survive the store"
+
+            # --- POST /audit/{id}/approve ------------------------------------
+            approved = http.post(
+                f"/audit/{run_id}/approve",
+                json={"decisions": [
+                    {"claim_index": proposal["index"], "accept": True, "reviewer": "live-test"}
+                ]},
+            )
+            assert approved.status_code == 200, approved.text
+            settled = approved.json()
+
+            assert settled["audit"]["status"] == "complete"
+            assert settled["writebacks"] == [
+                {"target_urn": OWNED_BY_CAROL, "ok": True, "detail": ""}
+            ]
+
+        # --- and the verdict is really on the dataset, in DataHub -------------
+        written = {
+            p["structuredProperty"]["urn"]: [v["stringValue"] for v in p["values"]]
+            for p in (client.get_dataset(OWNED_BY_CAROL)["structuredProperties"] or {})
+            .get("properties", [])
+        }
+        assert written[VERDICT.urn] == ["Contradicted"], (
+            "the approved verdict never reached the catalog"
+        )
+        assert written[AUDIT_RUN.urn] == [run_id], (
+            "the catalog carries a verdict with no way back to the audit that produced it"
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    with capsys.disabled():
+        r = settled["audit"]["receipts"]
+        saved = r["catalog_lookups"] - r["catalog_fetches"]
+        print(f"\n\n  SERVICE: audited {len(settled['audit']['claims'])} claims, run {run_id}")
+        print(f"  PROJECTED: {project_fetches()}")
+        print(
+            f"  CATALOG: {r['catalog_lookups']} lookups over {r['catalog_entities']} "
+            f"datasets -> {r['catalog_fetches']} fetches ({saved} saved)"
+        )
+        print(f"  WROTE BACK: {VERDICT.qualified_name}=Contradicted on {OWNED_BY_CAROL}")
+        print()
