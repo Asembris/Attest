@@ -29,6 +29,7 @@ import ssl
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from attest import cost
 from attest.config import Step, settings
 
 log = logging.getLogger(__name__)
@@ -76,12 +77,37 @@ class ChatClient(Protocol):
 
 @dataclass
 class Usage:
-    """What a step cost. Recorded so a run can be audited after the fact."""
+    """What a step cost. Recorded so a run can be audited after the fact.
+
+    Token counts come from the API's own `usage` block, never from a local estimate — a
+    guessed token count printed as a receipt is not a receipt. A client that reports no
+    usage (the scripted fake in the tests) leaves them at zero and `cost_usd` at None,
+    which is honest: nothing was spent because nothing was called.
+    """
 
     step: Step
     model: str
     attempts: int = 1
     repaired: bool = False
+    input_tokens: int = 0
+    output_tokens: int = 0
+    # None means "we cannot price this", NOT "this was free". See cost.py.
+    cost_usd: float | None = None
+
+    @property
+    def total_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens
+
+
+def _tokens(response: Any) -> tuple[int, int]:
+    """(input, output) token counts from a response, or (0, 0) if it reports none."""
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return 0, 0
+    return (
+        int(getattr(usage, "prompt_tokens", 0) or 0),
+        int(getattr(usage, "completion_tokens", 0) or 0),
+    )
 
 
 @dataclass
@@ -195,8 +221,19 @@ class LLM:
                 if not isinstance(parsed, dict):
                     raise MalformedOutput(f"expected a JSON object, got {type(parsed).__name__}")
 
+                input_tokens, output_tokens = _tokens(response)
                 self.usage.append(
-                    Usage(step=step, model=model, attempts=attempt, repaired=attempt > 1)
+                    Usage(
+                        step=step,
+                        model=model,
+                        attempts=attempt,
+                        repaired=attempt > 1,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        cost_usd=cost.cost_usd(model, input_tokens, output_tokens)
+                        if (input_tokens or output_tokens)
+                        else None,
+                    )
                 )
                 return parsed
 
