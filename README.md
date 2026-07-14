@@ -30,16 +30,32 @@ not get to reach one.
 **self-correction loop** — a contradicted claim is handed back to the source agent with the
 catalog's facts, and the revision is re-verified by the same deterministic checker. Plus
 **trajectory verification**, which holds each run to its own architecture, and full
-observability. 157 offline tests, 3 live.
+observability. 167 offline tests, 4 live.
 
 Not built yet: the FastAPI surface, the web UI, continuous monitoring.
+
+## Receipts
+
+Every number here is **measured against `gpt-4o-mini`**, not estimated — from the clock, the
+API's own token counts, and repeated live runs. `just live` reproduces all of them.
 
 ```
 audited 3 claims in 14.3s (4392 tokens, $0.001006)
 ```
 
-Measured, not estimated — from the clock and the API's own token counts. `just live`
-prints it.
+| Receipt | Measured | Where |
+| --- | --- | --- |
+| Cost per audited claim | **$0.000264** | [cost.py](src/attest/cost.py) |
+| Explanations model-authored, not template fallback | **13 / 13** | [`just live`](tests/test_live.py) |
+| **Self-correction guard fires against a real model** | **2 / 6 runs** | [below](#self-correction-and-why-it-cannot-be-gamed) |
+| Verdicts decided by a model | **0** — structurally, and asserted per run | [trajectory.py](src/attest/trajectory.py) |
+
+That third row is the one worth pausing on. Handed a **false claim it could not honestly
+correct**, `gpt-4o-mini` tried to escape the finding — by swapping the fabricated column for
+real ones — in **2 of 6 runs**. The subject rule caught it every time. It is not a guard
+against a hypothetical adversary: it is a guard against **the model we actually ship**,
+firing at a measured rate of roughly one run in three. Details
+[below](#self-correction-and-why-it-cannot-be-gamed).
 
 ### What it costs to operate
 
@@ -66,11 +82,19 @@ At **1000 claims/day, 50 datasets, one org** — `gpt-4o-mini`:
 continuous monitoring at one-org scale, so it is *not* the argument for sampling — and it
 would have been easy to assume it was. Three things the numbers actually say:
 
-1. **Corrections, not claims, are what move a bill.** A revision hands the evidence back to
-   the model, making it the priciest call in the pipeline, and it fires *only* on
-   Contradicted claims — exactly the ones anyone cares about. Worst case is **2.86× the
-   quiet case**, and that ceiling exists *only because the retry cap is a graph edge*. Raise
-   the cap and the ceiling rises with it. The cap is the budget control.
+1. **The cost bound is structural, not aspirational.** Corrections, not claims, are what move
+   a bill: a revision hands the evidence back to the model, making it the priciest call in
+   the pipeline, and it fires *only* on Contradicted claims — exactly the ones anyone cares
+   about. The worst case is **2.86× the quiet case**, and the reason that is a *ceiling*
+   rather than a hope is that **the retry cap is a graph edge, not a runtime check**. It is
+   not a counter some code path can forget to increment, or an `if` an exception can skip
+   past: `recheck` has exactly two outgoing edges, and the one back to `revise` is guarded
+   by the cap. There is no path through the graph that revises a claim three times — so
+   $0.76/day is not "what we expect to spend", it is **what the topology permits us to
+   spend**. [`trajectory.py`](src/attest/trajectory.py) then asserts per run that the bound
+   held, so even a rewiring that broke it would fail loudly rather than bill quietly. Raise
+   the cap and the ceiling rises with it, deliberately and in one place. **The cap is the
+   budget control.**
 2. **The real scaling pressure is catalog reads, not tokens.** `resolve_entity` fetches once
    *per claim*. 1000 claims across 50 datasets is **1000 GraphQL fetches for 50 distinct
    datasets** — 20× redundant. Snapshot caching within an audit window is the obvious win,

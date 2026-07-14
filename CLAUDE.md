@@ -20,7 +20,27 @@ Built solo for the DataHub Agent Hackathon.
 ## Stack
 
 - **Python 3.12**, LangGraph (FastAPI is a later session; nothing depends on it yet).
-- **OpenAI API only.** Default `gpt-4o-mini`.
+- **OpenAI API only. Default `gpt-4o-mini`, and the default does not move.**
+
+  There may be a key for another provider (Groq, etc.) sitting in `.env`. **Ignore it. Do
+  not swap the default to it, and do not "optimize costs" by doing so.** Two reasons, and
+  the first is the serious one:
+
+  1. **Every measured number in this project was measured against `gpt-4o-mini`** — the
+     $0.000264/claim receipt, the 2-in-6 rate at which the model attempts the column-swap
+     escape, the 13/13 model-authored explanation rate, the whole cost projection. Swapping
+     the model invalidates all of them *at once*, and they are the project's evidence. A
+     benchmark whose ground truth moves with its provider is not a benchmark.
+  2. It would solve a cost problem that **does not exist**: ~$9/mo per org (see cost.py).
+     Trading away every receipt to save nine dollars is not a trade.
+
+  The per-step model config (`settings.model_for`) stays — that is what lets ONE step move
+  to a stronger model deliberately. It is not an invitation to move the default.
+
+  **The one legitimate future use of a second provider** is cross-model-family calibration
+  of the benchmark labels, so that GPT is not grading GPT's homework. That is a Session 6
+  concern, it needs a different model *family* (not merely a different provider serving
+  similar weights), and it is a validation exercise — never a cost swap.
 - **The model is always a per-step config value, never hardcoded.** Every LLM step resolves
   its model through `settings.model_for(step)` ([src/attest/config.py](src/attest/config.py)),
   which falls back to `model_default`. This exists so one step — most likely semantic
