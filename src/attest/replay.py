@@ -38,10 +38,25 @@ What is NOT rebuilt, said out loud
 --------------------------------------------------------------------------------
 
 `StepRecord.inputs` / `.outputs` are step summaries for a human reading the log ("cached:
-true", "claims: 3"). They are not part of the persisted projection, nothing in the report,
-the receipts or trajectory.py reads them, and a resumed run's replayed steps carry them
-empty. That is a real difference from an unrestarted run's in-memory trace and it is worth
-knowing about; it is not a difference in anything the run REPORTS.
+true", "claims: 3"). They are not part of the persisted projection, and a resumed run's
+replayed steps carry them empty. That is a real difference from an unrestarted run's
+in-memory trace; it is not a difference in anything the run REPORTS.
+
+**And that is an INVARIANT, not an observation.** "Nothing a reader sees is computed from a
+step's inputs or outputs" is true today, and a fact about the code that nobody asserts stays
+true only until the afternoon somebody changes it. The moment a receipt, a summary, or a
+trajectory rule reads `step.outputs`, a resumed run begins reporting something an
+unrestarted one does not — on the path a human uses to approve a change to the catalog —
+and every other test stays green, because every other test runs in one process and never
+replays anything. That is the same shape as the truststore bug in llm.py (CLAUDE.md): a
+failure structurally invisible to the suite that should have caught it.
+
+So it is asserted, the way NO_LLM_IN_THE_VERDICT_PATH is asserted:
+`tests/test_resume.py::test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs`
+strips the summaries out of a real run's trace and demands that the record, the receipts,
+the printable summary and the trajectory verdict are all unmoved. Two sabotages prove it
+bites. **If you want the report to say something a step currently only logs, PERSIST it
+(add a column, as Session 5 did for `models` and `error`) — do not read it off the trace.**
 
 The run's `SnapshotCache` is not rebuilt either, and must not be. A resumed run resolves
 nothing — it applies decisions to verdicts that were already reached — so it needs no
