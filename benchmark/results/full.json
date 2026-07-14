@@ -1,0 +1,97 @@
+{
+  "mode": "full",
+  "k": 3,
+  "sabotaged": null,
+  "n_cases": 40,
+  "coverage": {
+    "freshness/Supported": 2,
+    "freshness/Contradicted": 4,
+    "freshness/Insufficient-Coverage": 1,
+    "ownership/Supported": 3,
+    "ownership/Contradicted": 2,
+    "ownership/Insufficient-Coverage": 2,
+    "classification/Supported": 6,
+    "classification/Contradicted": 9,
+    "classification/Insufficient-Coverage": 4,
+    "schema/Supported": 4,
+    "schema/Contradicted": 2,
+    "schema/Insufficient-Coverage": 1
+  },
+  "metrics": {
+    "accuracy": 1.0,
+    "macro_f1": 1.0,
+    "per_verdict": {
+      "Supported": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 15
+      },
+      "Contradicted": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 17
+      },
+      "Insufficient-Coverage": {
+        "precision": 1.0,
+        "recall": 1.0,
+        "f1": 1.0,
+        "support": 8
+      }
+    },
+    "confusion_matrix": [
+      [
+        15,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        17,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        8,
+        0
+      ],
+      [
+        0,
+        0,
+        0,
+        0
+      ]
+    ],
+    "labels": [
+      "Supported",
+      "Contradicted",
+      "Insufficient-Coverage",
+      "No-Claim"
+    ],
+    "correctness_failures": 0,
+    "coverage_failures": 0,
+    "extraction_failures": 0,
+    "mis_extracted_but_right": [],
+    "errors": []
+  },
+  "semantic_layer": {
+    "explanations": 40,
+    "model_authored": 40,
+    "model_authored_rate": 1.0,
+    "fell_back_to_template": 0,
+    "guard_rejected_drafts": 0,
+    "guard_rejection_rate": 0.0
+  },
+  "cost_usd": 0.0138309,
+  "latency_ms": 204052.17379999702,
+  "consistency": {
+    "k": 3,
+    "pass_at_k": 1.0,
+    "unstable": [],
+    "verdict_path_leaks": []
+  }
+}

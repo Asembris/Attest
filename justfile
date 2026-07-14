@@ -53,6 +53,31 @@ live:
 matrix:
     python -m pytest tests/test_coverage.py -v
 
+# --- the golden benchmark ----------------------------------------------------
+
+# 40 hand-labeled claims against the DETERMINISTIC CORE. Free, exact, no model involved.
+# Precision/recall/F1 per verdict, a confusion matrix, and pass@5 consistency.
+bench:
+    python -m benchmark.run_eval -k 5
+
+# The same 40 claims through the WHOLE pipeline, on a real model. Costs about 1.5 cents.
+bench-full:
+    python -m benchmark.run_eval --full -k 3
+
+# THE VACUITY CHECK. Break a checker and prove the benchmark notices. A benchmark that
+# cannot fail is a green light wired to nothing. Exits non-zero if the numbers do NOT move.
+bench-sabotage:
+    python -m benchmark.run_eval --sabotage classification
+
+# Cross-family calibration: re-label the benchmark with Nemotron (Llama family), so that
+# GPT is not grading GPT's homework. Needs NVIDIA_API_KEY. Surfaces every disputed label.
+bench-calibrate:
+    python -m benchmark.labeler
+
+# Rebuild benchmark/cases.json from benchmark/cases.py (the generator is the source).
+bench-cases:
+    python -m benchmark.cases
+
 # Durable resume and per-run token billing: the two Session 5 properties, on their own.
 # A parked run survives the death of its process, and two concurrent audits do not bill
 # each other. Offline and free.
