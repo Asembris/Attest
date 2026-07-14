@@ -23,9 +23,12 @@ rejects nothing.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from tests.conftest import (
     ALICE,
+    CAROL,
     COLUMN_ONLY_PII,
     DANA,
     DOCUMENTED,
@@ -51,7 +54,10 @@ from attest.config import settings
 from attest.decompose import decompose
 from attest.explain import explain
 from attest.faithfulness import check as check_faithfulness
+from attest.graph import Pipeline
 from attest.llm import LLM
+from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
+from attest.trajectory import Rule
 
 pytestmark = [
     pytest.mark.live,
@@ -160,3 +166,103 @@ def test_a_real_model_extracts_real_claims(snapshot):
     assert {"ownership", "freshness"} <= kinds
     # Every claim points at the URN the agent actually wrote — never an invented one.
     assert all(c.target_urn == DOCUMENTED for c in result.claims)
+
+
+# --- the whole pipeline, live ------------------------------------------------
+
+
+def test_the_full_pipeline_end_to_end(client, now, capsys):
+    """One real audit run: real model, real catalog, real graph, real receipts.
+
+    The agent's output below is engineered to exercise the pipeline rather than to flatter
+    it — a true claim, a false one the catalog can positively correct, and one the catalog
+    is silent about. That mix is the point: it is the only way one run reaches a Supported,
+    a Contradicted, the self-correction loop, the human checkpoint, and an
+    Insufficient-Coverage that must NOT be dragged into the loop.
+
+    What is asserted is the architecture, not the model's prose:
+      - the deterministic core decided every verdict (trajectory verification, live)
+      - nothing unfaithful shipped
+      - the correction was PROPOSED, and it is still pending when the run returns
+
+    The measured receipts are printed, because the README quotes them and a receipt nobody
+    ever printed is an estimate wearing a receipt's clothes.
+    """
+    agent_output = (
+        f"I reviewed the warehouse. The dataset {DOCUMENTED} is owned by {ALICE}. "
+        f"The dataset {OWNED_BY_CAROL} is owned by {DANA}. "
+        f"The dataset {UNREVIEWED} is owned by {ALICE}."
+    )
+
+    pipeline = Pipeline(llm=LLM(), client=client, now=now)
+    report = pipeline.run(agent_output)
+
+    # --- the pipeline took the path it says it took --------------------------
+    assert report.trajectory.ok, (
+        f"the live run violated its own architecture: {report.trajectory.summary}"
+    )
+    assert Rule.NO_LLM_IN_THE_VERDICT_PATH in report.trajectory.checked
+    assert Rule.NO_CORRECTION_WITHOUT_RE_VERIFICATION in report.trajectory.checked
+
+    # A real model extracted three ownership claims about three real URNs.
+    assert len(report.audits) == 3, [a.claim.raw_text for a in report.audits]
+    assert report.errors == (), [e.error for e in report.errors]
+
+    verdicts = {a.claim.target_urn: a.verdict for a in report.audits}
+    assert verdicts[DOCUMENTED] is Verdict.SUPPORTED
+    assert verdicts[OWNED_BY_CAROL] is Verdict.CONTRADICTED
+    assert verdicts[UNREVIEWED] is Verdict.INSUFFICIENT_COVERAGE
+
+    # --- nothing unfaithful shipped, whatever the model wrote ----------------
+    for audit in report.audits:
+        assert audit.explanation.faithfulness.ok, (
+            f"shipped unfaithful prose: {audit.explanation.faithfulness.summary}"
+        )
+
+    # --- the self-correction loop ran, and only where it should have ---------
+    contradicted = next(a for a in report.audits if a.verdict is Verdict.CONTRADICTED)
+    silent = next(
+        a for a in report.audits if a.verdict is Verdict.INSUFFICIENT_COVERAGE
+    )
+
+    # The catalog is silent, not disagreeing. There is nothing to correct, and dragging it
+    # into the loop would be Attest crying wolf on an under-documented entity.
+    assert silent.correction.outcome is CorrectionOutcome.NOT_ATTEMPTED
+
+    # A real model, shown the catalog's owners, corrects itself to one of them — and the
+    # correction is re-verified by CODE before anyone is asked to look at it.
+    assert contradicted.correction.outcome is CorrectionOutcome.CORRECTED, (
+        f"the loop did not correct a correctable claim: "
+        f"{[str(a) for a in contradicted.correction.attempts]}"
+    )
+    assert contradicted.correction.proposal.owner_urn == CAROL
+    assert contradicted.correction.attempts[0].verdict is Verdict.SUPPORTED
+
+    # --- and it was PROPOSED, never published --------------------------------
+    assert report.status is RunStatus.AWAITING_REVIEW
+    assert contradicted.correction.review is ReviewStatus.PENDING
+    assert len(report.proposals) == 1
+
+    final = pipeline.resume(
+        report.thread_id, [Decision(claim_index=contradicted.index, accept=True)]
+    )
+    assert final.status is RunStatus.COMPLETE
+    assert final.audits[contradicted.index].correction.review is ReviewStatus.ACCEPTED
+    # Accepting a correction does not unsay the original claim.
+    assert final.audits[contradicted.index].verdict is Verdict.CONTRADICTED
+
+    # --- the receipts, measured ----------------------------------------------
+    cost = final.cost
+    assert cost.is_known, f"unpriced model in the run: {cost.unpriced_models}"
+    assert cost.total_tokens > 0, "a live run that spent no tokens did not happen"
+    assert final.latency_ms > 0
+
+    with capsys.disabled():
+        print(f"\n\n  RECEIPTS: {final.receipts()}")
+        print(f"  {json.dumps(final.summary(), indent=2, default=str)}")
+        print("\n  TRAJECTORY: " + final.trajectory.summary)
+        print("  rules exercised: " + ", ".join(r.value for r in final.trajectory.checked))
+        print("\n  STEPS:")
+        for step in final.trace:
+            print(f"    {step}")
+        print()
