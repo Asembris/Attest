@@ -5,12 +5,30 @@ is where a run is executed, written down, and — only when a human says so — 
 the catalog.
 
 --------------------------------------------------------------------------------
-Why audits are serialized, and why that is not a performance failure
+Audits run CONCURRENTLY, and the thing that made that safe is not a smaller lock
 --------------------------------------------------------------------------------
 
-One `Pipeline` is built and reused. Each run now forks its own LLM handle (`LLM.for_run`),
-so the token accounting is already per-run — but the lock stays for now, and comes off in
-its own commit with the test that proves the receipts survive it.
+Until Session 5 this class took a lock around every audit, and the reason was token
+accounting rather than throughput: one `Pipeline` meant one `LLM` handle, which meant ONE
+shared `llm.usage` list, and observe.Trace bills a step by slicing that list from a mark
+(observe.py). Two audits through one handle would bill each other — run A's decompose step
+charged with whatever run B spent while A was in flight. The receipts ARE the product, and a
+cost-per-claim figure that silently mixes two runs is exactly the unfounded number Attest
+exists to catch, printed by Attest itself.
+
+The fix was to remove the sharing, not to guard it. Each run now forks its own LLM handle
+onto its own ledger (`LLM.for_run`, graph.py), sharing the HTTP transport underneath and
+nothing else, so cross-billing is unreachable rather than merely prevented — a lock is a
+convention, and the next person to hold it wrong is not stopped by a comment. Everything
+else here was already per-run or already thread-safe: the ledgers and the checkpointer are
+keyed by thread id, the snapshot cache lives on the ledger, the store has its own lock, and
+httpx's client is thread-safe.
+
+So the lock is gone, and two users no longer queue behind each other.
+`tests/test_concurrency.py` is the proof, and it is a proof about the RECEIPTS: two audits
+run at once, one held open across the whole of the other, and each bills only its own
+tokens. A concurrency fix that silently cross-billed would be worse than the queue it
+replaced.
 
 --------------------------------------------------------------------------------
 A parked run survives a restart, and it is resumed through the checkpoint NODE
@@ -35,7 +53,6 @@ manufacture a pause that did not survive.
 from __future__ import annotations
 
 import logging
-import threading
 import uuid
 from datetime import UTC, datetime
 
@@ -78,12 +95,16 @@ class AuditService:
         # reads through — the pipeline's may be wrapped or faked. Defaults to it.
         self.client = client or pipeline.client
         self.write_back = write_back
-        self._lock = threading.Lock()
 
     # --- audit ----------------------------------------------------------------
 
     def audit(self, agent_output: str, source_agent: str = "") -> AuditRecord:
         """Run one audit, persist it, and return what was persisted.
+
+        No lock. Concurrent audits are safe because nothing mutable is shared between them
+        — each run has its own ledger, its own snapshot cache, and its own LLM handle with
+        its own token ledger. See the module docstring, and note that the property that
+        matters is not "it does not crash" but "each receipt bills only its own tokens".
 
         The record is written BEFORE it is returned. A run whose verdicts reached a caller
         but never reached the store would be an audit with no audit trail.
@@ -91,8 +112,7 @@ class AuditService:
         run_id = str(uuid.uuid4())
         started = datetime.now(tz=UTC)
 
-        with self._lock:  # the Session 4 lock: shared token accounting
-            report = self.pipeline.run(agent_output, thread_id=run_id)
+        report = self.pipeline.run(agent_output, thread_id=run_id)
 
         record = record_module.from_report(
             report, run_id=run_id, source_agent=source_agent, created_at=started
@@ -156,8 +176,7 @@ class AuditService:
                 f"settled outside the checkpoint node."
             )
 
-        with self._lock:
-            report = self.pipeline.resume(run_id, decisions)
+        report = self.pipeline.resume(run_id, decisions)
 
         settled = record_module.from_report(
             report,
