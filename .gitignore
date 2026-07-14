@@ -14,6 +14,12 @@ venv/
 # Logs
 *.log
 
+# Attest's audit history. Created by the service at ATTEST_STORE_PATH (default
+# ./attest.db). A run's own record, not source — and it carries agent output.
+*.db
+*.db-wal
+*.db-shm
+
 # DataHub CLI
 datapacks/
 
