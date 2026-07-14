@@ -118,7 +118,10 @@ POST /audit/{run_id}/approve   the human checkpoint: settle the proposed correct
 GET  /health                   liveness — Attest's, and the catalog's, reported separately
 ```
 
-`just serve`, then [localhost:8000/docs](http://localhost:8000/docs).
+`just serve`, then [localhost:8003/docs](http://localhost:8003/docs). The port is pinned
+deliberately: DataHub already owns 8080 (GMS) and 9002 (UI) on the same machine, and a
+collision surfaces as an audit that cannot reach the catalog — which reads like a DataHub
+outage rather than a port clash.
 
 **`POST /audit` changes nothing in the catalog. Ever.** It finds contradictions, asks the
 agent to correct them, re-verifies the corrections against the catalog — and then *proposes*
@@ -621,8 +624,35 @@ rather than guessing, because a wrong verdict has the same confident shape as a 
 | **Semantic term matching** | A glossary term implies PII **iff the catalog files it under the PII node**. A term nobody filed there implies nothing, however personal it reads. | Structure is a declaration someone made; a name is a guess. Deciding that an *unfiled* term entails a classification is semantic entailment, and it must be evidence-constrained rather than a vibe. Still deferred. |
 | **Ownership type** | `ownershipType` (technical vs business vs data steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim than "Alice is an owner." Checking it needs a claim schema that carries the role, which is a schema change, not an `if`. |
 | **Cross-dialect types** | Both of DataHub's type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
-| **Durable resume** | The audit is persisted the moment the run returns; the *pause* is in-process. Approving a run parked by a dead process is a 409, and its verdicts and evidence are still readable. | The easy fix — apply the decision straight to the stored record — would quietly bypass the `human_checkpoint` node: a second, unaudited path to the one thing in this system that must not have one. |
-| **Concurrent audits** | Serialized by a lock in the service. | One `Pipeline` means one `LLM` handle means one shared token ledger, and two concurrent runs would bill each other's tokens. **The receipts are the product.** Real concurrency means a pipeline per run, not a deleted lock — and at 1000 claims/day this is idle capacity, not a bottleneck. |
+| **Step inputs/outputs across a restart** | A run's per-step summaries (`cached: true`) are not persisted, so a *replayed* step carries them empty. | They are a debugging convenience: nothing in the report, the receipts or the trajectory reads them. Everything a resumed run *reports* is rebuilt exactly, and the test compares the two records whole. Stated rather than left to be found. |
+| **Store migrations** | The schema changed in Session 5; a pre-Session-5 database is refused at open, by name, with what to do about it. | Three columns went from a rendered string to the structure that produced it. Inferring the structure back out of the string would be Attest fabricating its own audit trail — which is the one thing it may not do. A real deployment needs a real migration; this does not pretend to be one. |
+
+**Durable resume and concurrent audits were the Session 4 boundaries, and Session 5 closed
+both — by removing a shared thing, not by guarding it.** A run parked at the human
+checkpoint now survives the death of its process: the paused graph comes back from SQLite,
+the typed ledger is rebuilt from the audit history, and **the resumed run goes through the
+`human_checkpoint` node like any other** — which is the whole feature, because applying the
+decision straight to the stored record would have been half the code and would have created
+a second, unaudited path to the one thing in this system that must not have one. The bar was
+not "it resumes" but *"it resumes and the report is identical to an unrestarted run's"*: a
+restarted audit that quietly reports something different is invisible, and it is on the path
+a human uses to approve a change to the catalog.
+
+The sharpest thing that fell out of holding that bar: the step trace did not persist which
+**models** a step called. `Trace.cost` reports a run's dollars as `None` — never `0` — when
+a model that spent tokens has no price, and it identifies those models *by name* off the
+step. Rebuild the trace without them, and a resumed run computes `usd = sum(...) = 0.0`
+where the original honestly said *unknown*. **A restarted audit fabricating a cost figure the
+original refused to state** is the None-is-not-zero rule breaking inside Attest's own
+receipts — the exact failure this project exists to catch, committed by the thing that
+catches it. It has a test.
+
+And the lock is gone. It was never about throughput: one pipeline meant one LLM handle meant
+one shared token ledger, and two concurrent runs would have billed each other. So the sharing
+went, not the safety — each run forks its own handle. The test holds one audit's first model
+call **open across the whole of another** and asserts each receipt bills only its own tokens:
+with a shared handle, run A is billed **480 tokens for 240 tokens of work**. A concurrency fix
+that silently cross-bills is worse than the queue it replaced.
 
 **Entity-not-found is now decided** (it was Session 3's call to make). A claim about a
 dataset that does not exist is **not a verdict**. The catalog neither disagrees with it nor
@@ -639,11 +669,12 @@ Everything runs through [`just`](https://github.com/casey/just):
 just setup     # install the package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path (Session 0 spike)
-just serve     # run the API on :8000. Docs at /docs.
+just serve     # run the API on :8003. Docs at /docs.  (8080/9002 belong to DataHub)
 just test      # the suite: live catalog, semantic layer offline. Free.
 just live      # the semantic layer + one full pipeline run against a REAL model.
                # Costs money — about $0.001. Prints the receipts quoted above.
 just matrix    # just the 12-cell coverage assertion
+just resume    # durable resume + per-run token billing, on their own. Free.
 just lint
 just check     # lint + test — what CI runs
 just preflight # lint + test + live. Required before pushing a prompt change.

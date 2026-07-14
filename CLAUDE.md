@@ -20,6 +20,9 @@ Built solo for the DataHub Agent Hackathon.
 ## Stack
 
 - **Python 3.12**, LangGraph, FastAPI, SQLite (stdlib `sqlite3`, no ORM).
+- **`langgraph-checkpoint-sqlite` is PINNED to `==3.1.0`.** It is the one real version risk
+  in the tree — a separate package on its own release cadence, and it owns the tables a
+  parked run is resumed from. See §2d.
 - **OpenAI API only. Default `gpt-4o-mini`, and the default does not move.**
 
   There may be a key for another provider (Groq, etc.) sitting in `.env`. **Ignore it. Do
@@ -200,17 +203,77 @@ checkpoint does not soften because there is now an HTTP surface.**
 - **A failed write-back is reported as failed.** The approval still stands — a human did
   decide — but the catalog does not know, and the store records which. A silent failure
   would leave DataHub disagreeing with the audit history and nobody any the wiser.
-- **Audits are SERIALIZED in the service, and it is about token accounting, not throughput.**
-  One `Pipeline` means one `LLM` handle means one shared `llm.usage` list, and observe.py
-  bills a step by slicing that list from a mark. Two concurrent audits would bill each
-  other's tokens — and the receipts are the product. Real concurrency means a Pipeline (and
-  an LLM) per run, which is a change to how the graph is constructed, not a lock to delete.
-- **A parked run is resumable for the life of the process, and `approve` says so (409).**
-  The typed ledger lives in memory beside the graph (§ above), so a restart loses the
-  *pause*, not the *audit* — verdicts and evidence are in the store the moment the run
-  returns. Applying a decision straight to the stored record would be easy and would quietly
-  bypass the `human_checkpoint` node: a second, unaudited path to the one thing in this
-  system that must not have one. Durable resume is a real feature; it is not that.
+*(Session 4 serialized audits behind a lock and 409'd a run parked by a dead process. Both
+were resolved in Session 5 — see §2d, which supersedes them.)*
+
+**2d. Durable resume and per-run token billing (Session 5). Both were closed by REMOVING a
+shared thing, not by guarding it.**
+
+- **`langgraph-checkpoint-sqlite` is PINNED (`==3.1.0`), and it is the one real version
+  risk in the tree.** It is a separate distribution on its own release cadence against
+  `langgraph>=1.0` — already three major versions of its own — and it owns the tables a
+  *parked run* is resumed from. A minor bump that reshapes them turns "approve this
+  correction" into a 409 for every run parked before the upgrade, and the audit looks fine
+  right up until someone tries to sign it off. Bump it deliberately, with
+  `tests/test_resume.py` green, or not at all.
+- **TWO durable things, from two places, and only one of them is LangGraph's.** The paused
+  *graph* is durable because the checkpointer is; the typed *ledger* is durable because the
+  store already was (verdicts and evidence are written the moment a run returns, parked or
+  not). `Pipeline.rehydrate` puts them back together — [replay.py](src/attest/replay.py)
+  rebuilds the ledger from the stored `AuditRecord`. The ledger still may NOT go into
+  checkpointed state: the msgpack landmine is unchanged, and durable resume is precisely
+  the path on which it would bite.
+- **LangGraph's checkpoints live in their OWN database** (`ATTEST_CHECKPOINT_PATH`, default
+  `attest-checkpoints.db`). LangGraph owns those tables and their shape moves with its
+  releases; the audit history is Attest's schema and the evidence trail is in it. One file
+  would put a dependency's migrations in the same blast radius as the evidence.
+- **The resumed run goes through the `human_checkpoint` NODE, and the test that asserts so
+  is the whole feature.** Applying the decision straight to the stored record would be half
+  the code and would create a second path to the one thing in this system that must not
+  have one — unaudited, invisible from outside, taken only after a restart. `test_resume.py`
+  asserts `human_checkpoint` appears in the *resumed* trace, at the index the run parked
+  at. Without that assertion, "durable resume" and "the Session 4 shortcut we refused" are
+  indistinguishable from the outside.
+- **"It resumes" was never the bar. "It resumes and the report is identical" is.** A
+  restarted run that reports something subtly different is invisible, and it is on the path
+  a human uses to approve a change to the catalog. So the resumed record is compared whole
+  against an unrestarted run's, modulo the wall clock and the run's identity.
+- **MEASURED, and the reason `record.py` grew four fields.** `StepRecord.models` was not
+  stored. `Trace.cost` reports a run's dollars as `None` — never `0` — when a model that
+  spent tokens has no price, and it finds those models *by name* off the step. Rebuild a
+  trace without them and the unpriced set comes back empty, so a resumed run computes
+  `usd = sum(...) = 0.0` where the original honestly said "unknown": **a restarted audit
+  fabricating a cost figure the original refused to state.** That is None-is-not-zero
+  breaking inside Attest's own receipts. Also added: the guard's `rejected` drafts, its
+  `faithfulness_violations`, and `StepRecord.error`. And conflicts / dropped claims /
+  injection findings became **structured pairs rather than rendered strings** — a `str()`
+  cannot be parsed back, so a resumed run could not re-render them.
+- **The store schema therefore CHANGED, and a pre-Session-5 database is REFUSED at open.**
+  `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table, so an old DB would open
+  cleanly and die on the first INSERT — inside a running service. Its rows cannot be
+  migrated: three columns changed from a rendered string to the structure that produced it,
+  and inferring the structure back means Attest fabricating its own audit trail. So
+  `AuditStore` raises `StoreError` by name, with what to do about it.
+- **The lock is GONE, and what replaced it is not a smaller lock.** The LLM handle now lives
+  on the `_Ledger` — one per run, forked via `LLM.for_run()`, sharing the HTTP transport and
+  nothing else. Cross-billing is *unreachable* rather than *prevented*, exactly as cross-run
+  snapshot reuse is (§2c). Everything else was already per-run or already thread-safe:
+  ledgers and checkpointer keyed by thread id, cache on the ledger, store has its own lock,
+  httpx is thread-safe.
+- **The concurrency test is a test about the RECEIPTS, not about not-crashing.** Two audits
+  through one service, with run A's first model call **held open across the whole of run B**,
+  so B's tokens are all spent inside the window A's decompose step slices. Shared handle:
+  **A bills 480 tokens for 240 tokens of work** (measured, by sabotage). Per-run handle: 240.
+  A concurrency fix that silently cross-bills is worse than the queue it replaced. And if
+  the lock ever comes back, B cannot start while A is held, so the fake **fails the run by
+  name** rather than hanging the suite.
+- **`forget` now deletes the run's checkpoints too.** A service is a long-lived process and a
+  paused graph per audit, forever, is a leak. A completed run is not resumable, so it keeps
+  no pause.
+- **A 409 still exists, and it is the honest case:** the store says a run is awaiting review
+  and the checkpointer has no paused graph for it (checkpoints wiped, or an in-memory saver
+  across a restart). All the stored evidence is right there, which is exactly what would make
+  faking the pause feel reasonable. It is still refused.
 
 **3. Three verdicts, and the third is load-bearing.** Insufficient-Coverage ≠ Contradicted.
 An agent is not wrong because the catalog is incomplete, and most real catalog entities are
@@ -295,6 +358,18 @@ buried in a checker.
   computed from `definition.qualifiedName`, in `client.get_structured_property`, which is the
   only supported way in. Pinned by `tests/test_client.py` — including a test that asserts
   DataHub still fabricates, so nobody deletes the check as a redundant null-guard.
+- **The TLS repair in `llm.py` must REBUILD the client, and memoizing the client is what
+  breaks it.** `truststore.inject_into_ssl()` changes how *new* SSL contexts are created; it
+  cannot reach inside the one an existing client's transport already holds. Session 5
+  memoized the lazily-built OpenAI client (a fork per run must not open a connection pool
+  per run) and thereby made the retry reuse the *pre-injection* client — so it repeated the
+  same handshake against the same untrusting context and failed identically, while the log
+  line cheerfully announced a repair that did nothing. `_use_os_truststore` therefore drops
+  `_built`, and `_built` is kept separate from `client` precisely so it can be dropped:
+  `client` is the caller's (the scripted fake) and must never be thrown away.
+  **`just check` was green throughout** — the fake needs no TLS — and only `just live` caught
+  it. That is the cadence rule in this file, working, on a change that did not look like a
+  semantic-layer change at all.
 - **Never write YAML with PowerShell's `Out-File`.** It emits a UTF-8 BOM that breaks the YAML
   parser. Use `[IO.File]::WriteAllText` or Python.
 - **Ingestion recipes must use relative `./` paths.** Absolute Windows paths hit a
@@ -337,9 +412,13 @@ src/attest/
     cache.py           ONE RUN's view of the catalog. A consistency boundary, not a cache.
   api/
     app.py             FastAPI. Four endpoints. The checkpoint does not soften here.
-    service.py         Run, persist, approve, write back. Audits are serialized (tokens).
+    service.py         Run, persist, approve, write back. Audits run CONCURRENTLY: the
+                       lock is gone because the shared token ledger it guarded is gone.
     schemas.py         Wire types in and out.
-  record.py            AuditRecord: the persisted projection of a report. Loses nothing.
+  record.py            AuditRecord: the persisted projection of a report. Loses nothing —
+                       and since Session 5 a resumed run is REBUILT from it, so what it
+                       drops, a restarted run would report differently.
+  replay.py            The record, read backwards: a parked run's typed ledger, rebuilt.
   store.py             The audit history. SQLite, plain SQL, Postgres-shaped. Append-only
                        approvals — DataHub is the catalog, NOT the event store.
   writeback.py         Approved verdict -> DataHub structured properties. Queryable, and
@@ -351,6 +430,7 @@ src/attest/
   crosscheck.py        Model/checker disagreement -> a Conflict, never a changed verdict.
   sanitize.py          Untrusted agent text in, instruction-like spans stripped out.
   graph.py             The LangGraph pipeline. Routing, the loop, the human checkpoint.
+                       Injectable saver (durable pause); one LLM handle per run (receipts).
   revise.py            Self-correction. A revision may not change the subject.
   trajectory.py        Seven invariants asserted against the run's own trace.
   observe.py           Step trace: kind, latency, tokens. What trajectory.py reads.
@@ -370,9 +450,10 @@ just setup     # install package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
-just serve     # run the API on :8000 (docs at /docs)
+just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub owns 8080/9002
 just test      # the suite: live catalog, semantic layer offline. Free.
 just matrix    # just the 12-cell coverage assertion
+just resume    # durable resume + per-run token billing (the two Session 5 properties)
 just check     # lint + test — what CI runs
 just live      # the semantic layer against a REAL model. Costs money.
 just preflight # lint + test + live — required before pushing semantic-layer changes
@@ -421,8 +502,17 @@ carries its description for this reason; do not "tidy" them away.
 | **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. |
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
-| **Durable resume of a parked run** | The audit is persisted immediately; the *pause* is in-process. `POST /approve` on a run parked by a dead process is a 409, not a shortcut. | The typed ledger cannot go into checkpointed state (see the msgpack landmine). Making the pause durable means persisting the ledger separately and rehydrating it — real work, and it must not become a second path that bypasses the checkpoint node. |
-| **Concurrent audits** | Serialized by a lock in `AuditService`. | One `Pipeline` = one `LLM` = one shared `usage` list, and observe.py bills by slicing it. Concurrency needs a Pipeline per run, not a deleted lock. At 1000 claims/day this is idle capacity, not a bottleneck. |
+| **A step's `inputs` / `outputs` across a restart** | The trace's per-step summaries (`cached: true`, `claims: 3`) are not persisted, so a *replayed* step carries them empty. | They are a debugging convenience, not part of the record: nothing in the report, the receipts or trajectory.py reads them. Everything a resumed run REPORTS is rebuilt exactly, and `test_resume.py` compares the two records whole. Said out loud rather than left to be discovered. |
+| **Store migrations** | The schema changed in Session 5 and a pre-Session-5 database is refused at open, by name. | There is no data in the wild, and the alternative — inferring the lost structure back out of its rendering — is Attest fabricating its own audit trail. A real deployment needs a real migration; this is not one, and it does not pretend to be. |
+
+**Durable resume is now BUILT** (Session 5). A run parked at the human checkpoint survives
+the death of its process: the paused graph comes back from `SqliteSaver`, the typed ledger
+is rebuilt from the store by [replay.py](src/attest/replay.py), and the resumed run goes
+through the `human_checkpoint` node like any other. See §2d.
+
+**Concurrent audits are now BUILT** (Session 5). The lock is gone, because the thing it was
+guarding — one shared `llm.usage` list — is gone: each run forks its own handle. Two audits
+run at once and each receipt bills only its own tokens. See §2d.
 
 **Entity-not-found is now DECIDED** (it was the pipeline's call to make, and Session 3 made
 it). A claim about a dataset that does not exist surfaces as a `report.ClaimError`, kept
