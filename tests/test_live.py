@@ -51,13 +51,14 @@ from attest.claims import (
     Verdict,
 )
 from attest.config import settings
+from attest.cost import monitoring_projection
 from attest.decompose import decompose
 from attest.explain import explain
 from attest.faithfulness import check as check_faithfulness
 from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
-from attest.trajectory import Rule
+from attest.trajectory import RECHECK, REVISE, Rule
 
 pytestmark = [
     pytest.mark.live,
@@ -259,6 +260,7 @@ def test_the_full_pipeline_end_to_end(client, now, capsys):
 
     with capsys.disabled():
         print(f"\n\n  RECEIPTS: {final.receipts()}")
+        print(f"  PROJECTED: {monitoring_projection()}")
         print(f"  {json.dumps(final.summary(), indent=2, default=str)}")
         print("\n  TRAJECTORY: " + final.trajectory.summary)
         print("  rules exercised: " + ", ".join(r.value for r in final.trajectory.checked))
@@ -266,3 +268,56 @@ def test_the_full_pipeline_end_to_end(client, now, capsys):
         for step in final.trace:
             print(f"    {step}")
         print()
+
+
+def test_an_unrevisable_claim_is_never_corrected_into_a_different_true_one(client):
+    """An UNREVISABLE claim yields no correction — and a real model tries to cheat anyway.
+
+    The case: a schema claim about a column that does not exist. It is Contradicted, and it
+    is the one Contradicted verdict in the seed that CANNOT be corrected. A SchemaClaim has
+    no `present=False`, so "this table does not have an ssn column" is inexpressible, and
+    withdrawing a claim is not revising it. The only honest moves are to stand firm, or to
+    fail.
+
+    WHAT A REAL MODEL ACTUALLY DOES, measured over six runs of gpt-4o-mini at temperature=0:
+
+        stood-firm  4/6   set unchanged=true. The honest answer.
+        refused     2/6   tried to swap `ssn` for the table's ENTIRE real column list
+                          (customer_id, email, full_name, is_active, signup_ts).
+
+    Both are correct outcomes and neither produces a proposal. But look at what the second
+    one is: without revise.subject(), those two runs each re-verify SUPPORTED, become a
+    CORRECTED proposal, and put a human in front of a green correction for a claim that was
+    simply false. A false "has an ssn column" laundered into an unrelated true one, a third
+    of the time. The subject rule is not a hypothetical guard against a hypothetical model.
+
+    So this test asserts the property that holds in ALL SIX runs — Attest invents no
+    correction for an unrevisable claim — rather than the specific outcome, which is the
+    model's to choose. Asserting `stood-firm` alone made this test flake 1-in-3, and a
+    flaky assertion on a load-bearing invariant is worse than no assertion: it trains people
+    to re-run it. `stood-firm`'s reachability is pinned OFFLINE, deterministically, in
+    tests/test_graph.py; what is measured here is that reality gets a vote at all.
+    """
+    agent_output = f"The dataset {DOCUMENTED} has an ssn column."
+
+    pipeline = Pipeline(llm=LLM(), client=client)
+    report = pipeline.run(agent_output)
+
+    audit = next(a for a in report.audits if a.claim.claim_type.value == "schema")
+    assert audit.verdict is Verdict.CONTRADICTED
+
+    # THE INVARIANT: an unrevisable claim is not corrected. Nothing is proposed, nothing is
+    # re-verified, and the agent stays wrong. Both honest outcomes satisfy it; a swapped
+    # column would not, and would have satisfied every other assertion in this file.
+    assert audit.correction.outcome in (
+        CorrectionOutcome.STOOD_FIRM,
+        CorrectionOutcome.REFUSED,
+    ), f"an unrevisable claim produced {audit.correction.outcome.value}"
+    assert audit.correction.proposal is None, (
+        "Attest proposed a correction for a claim that cannot be corrected — almost "
+        "certainly by swapping in a column that does exist"
+    )
+    assert report.trace.named(REVISE), "the agent was never given the chance to revise"
+    assert report.trace.named(RECHECK) == [], "nothing was revised, so nothing may be verified"
+    assert report.status is RunStatus.COMPLETE, "nothing to propose, so no human is summoned"
+    assert report.trajectory.ok
