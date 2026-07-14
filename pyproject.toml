@@ -6,11 +6,13 @@ requires-python = ">=3.12"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
+    "fastapi>=0.115",
     "httpx>=0.28",
     "langgraph>=1.0",
     "openai>=2.0",
     "pydantic>=2.11",
     "pydantic-settings>=2.14",
+    "uvicorn>=0.34",
     # Use the OS certificate store: certifi alone fails behind a TLS-inspecting
     # network, which is not an outage and not a bad key. See llm.py.
     "truststore>=0.10",

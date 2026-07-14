@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
-from attest.datahub import DatasetSnapshot, EntityNotFoundError
+from attest.datahub import DataHubError, DatasetSnapshot, EntityNotFoundError
 
 
 @dataclass
@@ -134,6 +134,48 @@ class FakeCatalog:
 
     def close(self) -> None:  # pragma: no cover — the Pipeline never closes what it is given
         pass
+
+
+class FakeDataHub(FakeCatalog):
+    """A catalog that can also be WRITTEN to, and remembers what was written.
+
+    The read side is FakeCatalog. The write side records structured-property upserts
+    instead of performing them, so a test can assert exactly what would have reached the
+    real catalog — which for the write-back path is the whole question. `fail` makes the
+    server refuse, because an approval whose catalog write failed must be reported as
+    failed rather than as a quiet success.
+    """
+
+    def __init__(self, snapshots: dict[str, DatasetSnapshot], fail: bool = False) -> None:
+        super().__init__(snapshots)
+        self.fail = fail
+        self.defined: list[str] = []
+        # asset urn -> {property urn: values}. Last write wins, exactly like DataHub.
+        self.written: dict[str, dict[str, list[Any]]] = {}
+
+    def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
+        if self.fail:
+            raise DataHubError("GraphQL transport error: the catalog is down")
+        return {"appConfig": {"appVersion": "v1.5.0.6"}}
+
+    def get_structured_property(self, urn: str) -> dict[str, Any] | None:
+        if self.fail:
+            raise DataHubError("GraphQL transport error: the catalog is down")
+        return {"urn": urn} if urn in self.defined else None
+
+    def create_structured_property(self, qualified_name: str, **kwargs: Any) -> dict[str, Any]:
+        if self.fail:
+            raise DataHubError("GraphQL transport error: the catalog is down")
+        self.defined.append(f"urn:li:structuredProperty:{qualified_name}")
+        return {"urn": f"urn:li:structuredProperty:{qualified_name}"}
+
+    def set_structured_properties(
+        self, asset_urn: str, properties: dict[str, list[Any]]
+    ) -> dict[str, Any]:
+        if self.fail:
+            raise DataHubError("GraphQL errors: could not write")
+        self.written.setdefault(asset_urn, {}).update(properties)
+        return {"properties": []}
 
 
 def dataset(urn: str, **aspects: Any) -> DatasetSnapshot:
