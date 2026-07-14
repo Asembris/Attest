@@ -112,16 +112,53 @@ def _tokens(response: Any) -> tuple[int, int]:
 
 @dataclass
 class LLM:
-    """Structured-JSON calls to OpenAI, with the model resolved per step."""
+    """Structured-JSON calls to OpenAI, with the model resolved per step.
 
+    **`usage` is the receipt, and it belongs to ONE run.** observe.py bills a step by
+    slicing this list from a mark taken when the step opened, so every token appended to
+    it while a step is in flight is charged to that step. Two audits sharing one handle
+    would therefore bill each other: run A's decompose step would be charged with whatever
+    run B spent while A was waiting on the API — and the receipts are the product.
+
+    `for_run()` is what makes that structurally impossible. Each run gets its own handle
+    with its own `usage`, forked from the one the pipeline was built with, sharing the
+    transport underneath and nothing else. The billing is then per-run by construction
+    rather than by a lock that a later refactor is free to remove.
+    """
+
+    # An INJECTED client — the scripted fake in the tests, or a preconfigured SDK client.
+    # If it is set, nothing here builds anything.
     client: ChatClient | None = None
     max_attempts: int = 2
     usage: list[Usage] = field(default_factory=list)
     _truststore_injected: bool = False
+    # The OpenAI client this handle built for itself, memoized. Kept SEPARATE from `client`
+    # because it is ours to throw away: the TLS repair below has to rebuild it, and it must
+    # never throw away a client the caller injected.
+    _built: ChatClient | None = None
+    # The handle this one was forked from. A fork owns its own `usage` and borrows the
+    # parent's transport — including the OpenAI client the parent builds lazily, and the
+    # truststore repair the parent may have had to make. Set only by `for_run`.
+    _forked_from: LLM | None = None
+
+    def for_run(self) -> LLM:
+        """A handle for ONE audit run: this one's transport, its own token ledger.
+
+        One HTTP client (thread-safe, connection-pooled, built once) and N usage lists,
+        rather than one usage list shared by N runs. That is the whole difference between
+        a receipt and a total.
+        """
+        return LLM(max_attempts=self.max_attempts, _forked_from=self)
 
     def _chat(self) -> ChatClient:
+        if self._forked_from is not None:
+            # One client for the process, built by the handle the pipeline holds. A fork
+            # that built its own would open a connection pool per audit.
+            return self._forked_from._chat()
         if self.client is not None:
             return self.client
+        if self._built is not None:
+            return self._built
         # Imported lazily so the deterministic core never pulls in the SDK, and so a
         # missing key is an error at call time rather than at import time.
         from openai import OpenAI
@@ -132,7 +169,11 @@ class LLM:
                 "the semantic layer does. Copy .env.example to .env and fill it in."
             )
 
-        return OpenAI(api_key=settings.openai_api_key).chat.completions  # type: ignore[return-value]
+        # Memoized: the SDK client is thread-safe and pools connections, so every run in
+        # this process shares it. What must NOT be shared is `usage` — see the class
+        # docstring — and that is per-handle.
+        self._built = OpenAI(api_key=settings.openai_api_key).chat.completions  # type: ignore[assignment]
+        return self._built  # type: ignore[return-value]
 
     def _use_os_truststore(self) -> bool:
         """Fall back to the OS certificate store after a TLS failure. Once, then never.
@@ -150,6 +191,11 @@ class LLM:
         attempted only once TLS has actually failed, and if it is unavailable we say so and
         re-raise the original error rather than swallowing it.
         """
+        if self._forked_from is not None:
+            # The repair is a property of the transport, not of a run. Delegating it means
+            # the first run to hit a TLS-inspecting proxy fixes it for every run after it,
+            # rather than each run rediscovering the same broken network.
+            return self._forked_from._use_os_truststore()
         if self._truststore_injected or not settings.ssl_os_truststore:
             return False
         try:
@@ -161,9 +207,19 @@ class LLM:
             return False
 
         self._truststore_injected = True
+
+        # THROW THE BUILT CLIENT AWAY. `truststore.inject_into_ssl()` changes how new SSL
+        # contexts are created; it cannot reach inside the one the existing client's
+        # transport already holds. So the retry has to happen on a client built AFTER the
+        # injection, or it repeats the same handshake against the same untrusting context
+        # and fails identically — with the log line above cheerfully claiming a repair that
+        # did nothing. `client` is the caller's and is never touched; `_built` is ours.
+        self._built = None
+
         log.warning(
-            "TLS verification failed against certifi's CA bundle — retrying with the OS "
-            "certificate store. This is what a TLS-inspecting network looks like."
+            "TLS verification failed against certifi's CA bundle — rebuilding the client "
+            "against the OS certificate store. This is what a TLS-inspecting network looks "
+            "like."
         )
         return True
 
