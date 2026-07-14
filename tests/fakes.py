@@ -27,10 +27,17 @@ class FakeChat:
 
     `replies` are consumed in order; the last one repeats if the caller asks again, so a
     test that only cares about one reply does not have to pad the list.
+
+    `tokens` is off by default and the default is meaningful: a client that reports no usage
+    leaves Usage at zero and cost_usd at None, which is honest — nothing was spent because
+    nothing was called. Set it to make the fake BILL, which is what the tests about billing
+    (test_concurrency.py) and about unpriced models (test_resume.py) need. A receipt cannot
+    be tested against a client that never charges for anything.
     """
 
     replies: list[str]
     calls: list[dict[str, Any]] = field(default_factory=list)
+    tokens: tuple[int, int] | None = None
 
     def create(
         self,
@@ -51,8 +58,15 @@ class FakeChat:
         index = min(len(self.calls) - 1, len(self.replies) - 1)
         content = self.replies[index]
         return SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content=content))]
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+            usage=self._usage(),
         )
+
+    def _usage(self) -> Any:
+        if self.tokens is None:
+            return None
+        prompt, completion = self.tokens
+        return SimpleNamespace(prompt_tokens=prompt, completion_tokens=completion)
 
     @property
     def prompts(self) -> list[str]:
