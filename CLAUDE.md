@@ -525,6 +525,14 @@ invariants worth not rediscovering:
   *And it fails LOUD-then-silent.* A repair that logs success and does nothing is worse than
   one that crashes: the operator reads the log, believes the network was fixed, and hunts
   for the bug somewhere else entirely.
+- **Node/npm/Vite is the SAME TLS trap as Python, one runtime over.** This is a
+  TLS-inspecting network: the corporate CA is not in Node's bundled root store, so
+  `npm install` and `vite build` fail on a certificate/SSL error exactly as the OpenAI SDK,
+  DataHub quickstart, and `curl` did. **The fix is `NODE_USE_SYSTEM_CA=1`** — the Node twin
+  of the Python `truststore` injection, same root cause (corporate CA absent from the tool's
+  default bundle), different runtime. `just ui` sets it; set it in the shell session before
+  any manual npm/node command (`$env:NODE_USE_SYSTEM_CA="1"`). Node 18+; harmless when the CA
+  is already trusted, so it is set unconditionally rather than only on failure.
 - **Never write YAML with PowerShell's `Out-File`.** It emits a UTF-8 BOM that breaks the YAML
   parser. Use `[IO.File]::WriteAllText` or Python.
 - **Ingestion recipes must use relative `./` paths.** Absolute Windows paths hit a
