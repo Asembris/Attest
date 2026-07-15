@@ -51,11 +51,18 @@ serve:
 
 # Build the frontend into frontend/dist, which `serve` static-mounts at the root.
 #
+# ALWAYS a fresh build, or a loud abort — never a stale dist. The old dist is deleted FIRST,
+# then a failed `npm install` or `vite build` THROWS (non-zero exit), so `just demo` can never
+# fall through to serving yesterday's bundle: it either serves this source or refuses to start.
+# The guard is `$LASTEXITCODE`, not `$?` — `$?` is unreliable for native commands and was the
+# hole a skipped build slipped through. vite empties outDir on every build, so a completed
+# build fully replaces dist; the pre-delete covers the case where the build never completes.
+#
 # NODE_USE_SYSTEM_CA=1 is the Node twin of the Python truststore fix (see CLAUDE.md): this
 # is a TLS-inspecting network and npm/Vite otherwise fail on an untrusted corporate CA.
 ui:
-    $env:NODE_USE_SYSTEM_CA="1"; cd frontend; npm install; if ($?) { npm run build }
-    @Write-Host "frontend built -> frontend/dist. Run 'just serve' and open http://localhost:8003"
+    $env:NODE_USE_SYSTEM_CA="1"; cd frontend; if (Test-Path dist) { Remove-Item -Recurse -Force dist }; npm install; if ($LASTEXITCODE -ne 0) { throw "npm install failed -- refusing to leave a stale bundle" }; npm run build; if ($LASTEXITCODE -ne 0) { throw "vite build failed -- refusing to leave a stale bundle" }
+    @Write-Host "frontend built FRESH -> frontend/dist. Run 'just serve' and open http://localhost:8003"
 
 # The whole demo, one command, ONE process. Build the UI into frontend/dist, then serve the
 # SPA and the API from a single uvicorn on :8003 (the build is static-mounted under FastAPI,
