@@ -3,8 +3,8 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Hero from './components/Hero';
 import AuditResults from './components/AuditResults';
 import Benchmark from './components/Benchmark';
-import { health as fetchHealth, submitAudit, ApiError } from './api/client';
-import type { AuditRecord, HealthResponse } from './api/types';
+import { health as fetchHealth, submitAudit, approve, ApiError } from './api/client';
+import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from './api/types';
 
 type View = 'hero' | 'auditing' | 'results' | 'benchmark';
 
@@ -13,6 +13,9 @@ export default function App() {
   const [record, setRecord] = useState<AuditRecord | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [writebacks, setWritebacks] = useState<WriteBackView[] | null>(null);
+  const [approving, setApproving] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchHealth()
@@ -22,6 +25,8 @@ export default function App() {
 
   async function runAudit(text: string) {
     setError(null);
+    setWritebacks(null);
+    setApproveError(null);
     setView('auditing');
     try {
       const result = await submitAudit(text, 'attest-ui');
@@ -32,6 +37,25 @@ export default function App() {
         e instanceof ApiError ? e.detail : 'Could not reach the audit service. Is it running on :8003?';
       setError(detail);
       setView('hero');
+    }
+  }
+
+  async function settle(decisions: DecisionRequest[]) {
+    if (!record) return;
+    setApproving(true);
+    setApproveError(null);
+    try {
+      const response = await approve(record.run_id, decisions);
+      // The settled record replaces the parked one: its proposals now carry accepted/rejected
+      // reviews and its status is complete, so the review bar and buttons retire on their own.
+      setRecord(response.audit);
+      setWritebacks(response.writebacks);
+    } catch (e) {
+      const detail =
+        e instanceof ApiError ? e.detail : 'Could not reach the audit service to submit the decision.';
+      setApproveError(detail);
+    } finally {
+      setApproving(false);
     }
   }
 
@@ -66,6 +90,10 @@ export default function App() {
           <AuditResults
             record={record}
             health={health}
+            writebacks={writebacks}
+            approving={approving}
+            approveError={approveError}
+            onApprove={settle}
             onBack={() => setView('hero')}
             onShowBenchmark={() => setView('benchmark')}
           />
