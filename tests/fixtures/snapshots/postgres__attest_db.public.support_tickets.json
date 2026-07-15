@@ -3,7 +3,7 @@
   "name": "support_tickets",
   "platform": "postgres",
   "description": "Customer support tickets. One row per ticket.",
-  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "last_modified": "2026-07-15T14:20:41.353000Z",
   "owners": [
     "urn:li:corpuser:carol.davis"
   ],
@@ -53,10 +53,7 @@
       "terms": []
     }
   ],
-  "custom_properties": {
-    "seeded_by": "attest/seed/generate_seed.py",
-    "exercises_verdict": "Supported"
-  },
+  "custom_properties": {},
   "term_parents": {
     "urn:li:glossaryTerm:CustomerIdentifier": []
   }

@@ -3,7 +3,7 @@
   "name": "legacy_accounts",
   "platform": "postgres",
   "description": null,
-  "last_modified": "2025-05-22T18:58:37.116000Z",
+  "last_modified": "2025-05-24T20:20:41.353000Z",
   "owners": null,
   "tags": [
     "urn:li:tag:Deprecated"
@@ -35,9 +35,6 @@
       "terms": []
     }
   ],
-  "custom_properties": {
-    "seeded_by": "attest/seed/generate_seed.py",
-    "exercises_verdict": "Insufficient-Coverage"
-  },
+  "custom_properties": {},
   "term_parents": {}
 }
