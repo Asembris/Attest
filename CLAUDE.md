@@ -601,7 +601,8 @@ benchmark/             The golden benchmark. A standalone, citable artifact.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
 tests/                 Live-catalog pytest suite. Skips (does not pass) if DataHub is down.
                        test_graph/test_trajectory run fully offline: control flow is not a
-                       statement about DataHub's wire format.
+                       statement about DataHub's wire format. `-n auto` parallelizes it
+                       (Session 7); the live suite is refused under parallel by conftest.
 ```
 
 ## Commands
@@ -612,7 +613,7 @@ just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
 just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub owns 8080/9002
-just test      # the suite: live catalog, semantic layer offline. Free.
+just test      # the suite ACROSS CORES (-n auto). Live catalog, semantic layer offline. Free.
 just matrix    # just the 12-cell coverage assertion
 just resume    # durable resume + per-run token billing (the two Session 5 properties)
 just bench     # the golden benchmark vs the DETERMINISTIC CORE, pass@5. Free.
@@ -659,6 +660,38 @@ told nothing about what belonged in it. **A JSON-schema field with no `descripti
 prompt bug**, and it surfaces far downstream as a failed correction rather than as anything
 that looks like a prompt problem. Every field in `decompose.SCHEMA` and `revise.SCHEMA`
 carries its description for this reason; do not "tidy" them away.
+
+**8. Parallel test execution (Session 7). The offline suite runs across cores; the live
+suite is refused under parallel, structurally.**
+
+- **`-n auto` (pytest-xdist) is wired into `just test`/`just check`.** The offline suite
+  parallelizes freely and it is safe by construction, not by luck: every real write a test
+  makes is scoped to a per-test `tmp_path` (its store, its checkpoints), and every read from
+  the live catalog is idempotent — so N workers are only more LOAD on DataHub, never a
+  different answer. Verified: 263 passed identically serial and at every worker count.
+- **Isolation did NOT turn out harder than it sounds, and here is why.** The one thing that
+  writes to the *shared* catalog is `test_live` (it approves a real audit and writes
+  `attest.*` structured properties onto real seeded datasets). Everything else writes to a
+  `tmp_path` or to a fake. So there was no per-worker write-target to build: keep the one
+  writer serial and the rest parallelize with nothing to coordinate.
+- **The live suite is REFUSED under parallel workers, in `pytest_configure`, before any
+  worker spawns.** Two live workers — one approving while another audits the same dataset —
+  read a catalog the other is halfway through mutating (last-write-wins on shared entities),
+  and the flake lands on the one path that writes to someone's catalog. So it is refused by
+  name, not discouraged. The refusal is in `pytest_configure` on the CONTROLLER, keyed on
+  the mark expression, **not** in `pytest_collection_modifyitems` — that runs on the
+  workers, where `numprocesses` is already 0 and a raise would let a sibling worker write
+  first. Learned by watching it not fire. `just live` (no `-n`) is serial and never trips it.
+- **`just test -n0 …` forces serial** for debugging — the last `-n` wins, so `-n0` disables
+  distribution and you get real tracebacks, working pdb, and un-interleaved output.
+- **CAVEAT the parallel work surfaced, worth knowing: the "offline" suite is not offline.**
+  ~126 of the 263 tests READ the live catalog (they spend no tokens, but they need DataHub
+  up). When DataHub is down they SKIP — `137 passed, 126 skipped` — and that reads as GREEN.
+  This is pre-existing (true serially too) and deliberate (`tests/` "skips, does not pass, if
+  DataHub is down"), but it is the same shape as the `just check` blind spot: a green tick
+  that is a statement about a smaller program. **If a green run looks suspiciously fast,
+  check the skip count, not just the pass count.** `just live` and `just preflight` are what
+  actually exercise the catalog-write path.
 
 ## Known deferred items — document, don't fix
 

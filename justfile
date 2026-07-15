@@ -40,9 +40,18 @@ serve:
 
 # --- verification ------------------------------------------------------------
 
-# Run the suite against the live seeded catalog.
+# Run the suite against the live seeded catalog, ACROSS CORES.
+#
+# `-n auto` parallelizes the offline suite (pytest-xdist). It is safe because every real
+# write a test makes is scoped to a per-test tmp_path and every catalog read is idempotent
+# -- so N workers are only more load on DataHub, never a different answer. The LIVE suite is
+# the one exception (it writes attest.* to shared datasets) and conftest.py REFUSES to run
+# it in parallel, by name, before any worker spawns. `just live` stays serial.
+#
+# Debugging one test? `just test -n0 path::test` -- the last -n wins, so -n0 forces serial
+# (real tracebacks, working pdb, un-interleaved output).
 test *ARGS:
-    python -m pytest {{ARGS}}
+    python -m pytest -n auto {{ARGS}}
 
 # The semantic layer against a REAL model. Costs money; needs OPENAI_API_KEY.
 # The rest of the suite runs offline against a scripted fake and is free.

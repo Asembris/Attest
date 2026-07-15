@@ -23,6 +23,45 @@ from attest.datahub import DataHubClient, DataHubError, DatasetSnapshot
 
 GROUND_TRUTH = Path(__file__).resolve().parents[1] / "seed" / "ground_truth.json"
 
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Refuse to run the LIVE suite under parallel workers. Structural, not a convention.
+
+    The offline suite parallelizes freely: every real write it makes is scoped to a
+    per-test `tmp_path` (its store and its checkpoints), and everything it reads from the
+    live catalog is idempotent, so N workers reading the seeded datasets at once is only
+    more load, never a different answer.
+
+    The LIVE suite is the exception, and it is a hard one. `test_live` approves a real audit
+    and writes `attest.*` structured properties onto real seeded datasets
+    (`support_tickets`, `customer_profile`). Those writes are last-write-wins on shared
+    entities. Run two live workers at once — one approving while another audits the same
+    dataset — and each reads a catalog the other is halfway through mutating: flaky
+    cross-talk, and the flake would land on the one path that writes to someone's catalog.
+
+    So this is refused rather than discouraged, and refused HERE — in `pytest_configure`, on
+    the xdist controller, BEFORE any worker spawns — so no catalog write can happen before
+    the refusal lands. (The obvious place, `pytest_collection_modifyitems`, runs on the
+    workers, where `numprocesses` is already reset to 0 and a raise would let a sibling
+    worker write first. Learned by watching it not fire.)
+
+    The signal is the mark expression, because that is what actually selects the live tests.
+    The default `addopts` is `-m 'not live'`, so `just check -n auto` carries `not live` and
+    this never fires; `just live` carries `-m live` but no `-n`, so this never fires. The
+    only way to reach the refusal is to ask for the live tests AND parallel workers at once
+    — and the answer is no, by name, with what to do instead.
+    """
+    parallel = bool(getattr(config.option, "numprocesses", None))
+    markexpr = getattr(config.option, "markexpr", "") or ""
+    selects_live = "live" in markexpr and "not live" not in markexpr
+    if parallel and selects_live:
+        raise pytest.UsageError(
+            "the live suite writes attest.* properties to shared seeded datasets and "
+            "cannot run under parallel workers without cross-talk. Run it serially: "
+            "`just live` (no -n). See tests/conftest.py::pytest_configure."
+        )
+
+
 # --- the seeded catalog, by role ---------------------------------------------
 # Named for what each dataset PROVES, not for what it contains. A test that reads
 # `UNREVIEWED` instead of a URN says why that dataset was chosen.
