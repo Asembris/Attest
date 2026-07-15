@@ -171,6 +171,12 @@ class RunStatus(StrEnum):
     # Parked at the human checkpoint: there are corrections nobody has signed off. The
     # verdicts are final and readable; only the CORRECTIONS are unsettled.
     AWAITING_REVIEW = "awaiting-review"
+    # The run did not keep to its own architecture — a trajectory invariant was violated
+    # (trajectory.py). The report is NOT trustworthy evidence: a checker may have called a
+    # model, an explanation may have skipped the guard, a correction may have been proposed
+    # unverified. A flagged run is UN-APPROVABLE and nothing it proposes may reach the
+    # catalog. This is a hard gate, not an alarm — see graph._report and api/service.approve.
+    FLAGGED = "flagged"
 
 
 @dataclass(frozen=True)

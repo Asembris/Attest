@@ -374,6 +374,39 @@ def test_approving_an_unknown_run_is_a_404(client):
     assert response.status_code == 404
 
 
+def test_a_run_that_violated_its_own_architecture_cannot_be_approved(tmp_path):
+    """THE HARD GATE (Session 13). A trajectory violation blocks the write-back path.
+
+    The pipeline is sabotaged the way a hurried refactor would sabotage it — the guard node
+    torn out — so NO_EXPLANATION_WITHOUT_THE_GUARD fails. The run still finds a contradiction,
+    still corrects it, and still PROPOSES the correction: the report looks approvable in every
+    respect except the one that matters. Before this session it was stored, served, and
+    approvable, with the violation logged and ignored. Now the run is FLAGGED and the approval
+    is refused, so nothing it proposes can reach the catalog.
+    """
+    service, catalog = build(tmp_path, *CONTRADICTED)
+    # The sabotage: the guard node becomes a no-op. Rebuilding re-binds the compiled graph.
+    service.pipeline._guard = lambda state: {}  # type: ignore[method-assign]
+    service.pipeline.graph = service.pipeline._build()
+
+    with TestClient(app) as c:
+        submitted = c.post("/audit", json={"agent_output": SAYS}).json()
+        # The run is flagged, not awaiting-review, even though it has a proposal on offer.
+        assert submitted["status"] == "flagged"
+        assert submitted["receipts"]["trajectory_ok"] is False
+        assert submitted["claims"][0]["correction"]["outcome"] == "corrected"
+
+        response = c.post(
+            f"/audit/{submitted['run_id']}/approve",
+            json={"decisions": [{"claim_index": 0, "accept": True}]},
+        )
+
+    assert response.status_code == 409
+    assert "flagged" in response.text and "cannot be" in response.text
+    # And the gate held: nothing a flagged run proposed reached the catalog.
+    assert catalog.written == {}, "a flagged run's correction reached the catalog"
+
+
 def test_a_run_whose_pause_is_gone_is_a_409_not_a_shortcut(client):
     """A parked run now survives a restart (tests/test_resume.py). A DELETED pause does not.
 

@@ -43,7 +43,12 @@ from attest.api.schemas import (
     HealthResponse,
     WriteBackView,
 )
-from attest.api.service import AuditService, NotResumable, RunNotFound
+from attest.api.service import (
+    AuditService,
+    NotResumable,
+    RunNotFound,
+    TrajectoryViolation,
+)
 from attest.config import settings
 from attest.datahub import DataHubClient
 from attest.graph import Pipeline
@@ -149,6 +154,12 @@ def approve(
         )
     except RunNotFound as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except TrajectoryViolation as exc:
+        # A flagged run is un-approvable. 409: the run's state conflicts with the request,
+        # and no evidence in it can be signed off — the same shape as a run whose pause is
+        # gone, and refused for the same reason: the one path that writes to a catalog must
+        # not be reachable from a report the pipeline could not vouch for.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     except NotResumable as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
