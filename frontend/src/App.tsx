@@ -1,25 +1,45 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Hero from './components/Hero';
 import AuditResults from './components/AuditResults';
 import Benchmark from './components/Benchmark';
+import { health as fetchHealth, submitAudit, ApiError } from './api/client';
+import type { AuditRecord, HealthResponse } from './api/types';
 
 type View = 'hero' | 'auditing' | 'results' | 'benchmark';
 
 export default function App() {
   const [view, setView] = useState<View>('hero');
+  const [record, setRecord] = useState<AuditRecord | null>(null);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchHealth()
+      .then(setHealth)
+      .catch(() => setHealth(null));
+  }, []);
+
+  async function runAudit(text: string) {
+    setError(null);
+    setView('auditing');
+    try {
+      const result = await submitAudit(text, 'attest-ui');
+      setRecord(result);
+      setView('results');
+    } catch (e) {
+      const detail =
+        e instanceof ApiError ? e.detail : 'Could not reach the audit service. Is it running on :8003?';
+      setError(detail);
+      setView('hero');
+    }
+  }
 
   return (
     <AnimatePresence mode="wait">
       {view === 'hero' && (
         <motion.div key="hero" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-          <Hero
-            onRunAudit={() => {
-              setView('auditing');
-              setTimeout(() => setView('results'), 1600);
-            }}
-            onShowBenchmark={() => setView('benchmark')}
-          />
+          <Hero onRunAudit={runAudit} onShowBenchmark={() => setView('benchmark')} error={error} />
         </motion.div>
       )}
 
@@ -36,14 +56,19 @@ export default function App() {
         </motion.div>
       )}
 
-      {view === 'results' && (
+      {view === 'results' && record && (
         <motion.div
           key="results"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.4 }}
         >
-          <AuditResults onBack={() => setView('hero')} onShowBenchmark={() => setView('benchmark')} />
+          <AuditResults
+            record={record}
+            health={health}
+            onBack={() => setView('hero')}
+            onShowBenchmark={() => setView('benchmark')}
+          />
         </motion.div>
       )}
 
@@ -63,11 +88,11 @@ export default function App() {
 
 function AuditingState() {
   const steps = [
-    'Parsing claims from agent output...',
-    'Extracting entity references...',
-    'Querying data catalog...',
-    'Matching claims against metadata...',
-    'Computing verdicts...',
+    'Sanitizing agent output...',
+    'Decomposing claims...',
+    'Resolving entities in the catalog...',
+    'Running deterministic checks...',
+    'Generating guarded explanations...',
   ];
 
   return (

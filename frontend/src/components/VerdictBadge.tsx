@@ -1,26 +1,26 @@
 import { motion } from 'framer-motion';
 import { Check, X, HelpCircle } from 'lucide-react';
-import type { Verdict } from '../data/mockData';
+import type { Verdict } from '../api/types';
 
 const config: Record<
   Verdict,
   { label: string; color: string; bg: string; border: string; icon: typeof Check }
 > = {
-  supported: {
+  Supported: {
     label: 'Supported',
     color: 'text-supported',
     bg: 'bg-supported/10',
     border: 'border-supported/30',
     icon: Check,
   },
-  contradicted: {
+  Contradicted: {
     label: 'Contradicted',
     color: 'text-contradicted',
     bg: 'bg-contradicted/10',
     border: 'border-contradicted/30',
     icon: X,
   },
-  insufficient: {
+  'Insufficient-Coverage': {
     label: 'Insufficient Coverage',
     color: 'text-insufficient',
     bg: 'bg-insufficient/10',
@@ -53,14 +53,11 @@ export default function VerdictBadge({
 
 export function VerdictDot({ verdict }: { verdict: Verdict }) {
   const colors: Record<Verdict, string> = {
-    supported: 'bg-supported',
-    contradicted: 'bg-contradicted',
-    insufficient: 'bg-insufficient',
+    Supported: 'bg-supported',
+    Contradicted: 'bg-contradicted',
+    'Insufficient-Coverage': 'bg-insufficient',
   };
   return (
-    <motion.span
-      layout
-      className={`inline-block w-2 h-2 rounded-full ${colors[verdict]}`}
-    />
+    <motion.span layout className={`inline-block w-2 h-2 rounded-full ${colors[verdict]}`} />
   );
 }
