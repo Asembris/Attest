@@ -433,29 +433,35 @@ invariants worth not rediscovering:
   labels encode, so agreement shows the labels *follow from* the policy — not that the policy
   is *right*. A wrong rule is applied wrongly by both and they agree. That is a design
   argument and it lives in policy.py.
-- **THE JUDGE IS NOT DETERMINISTIC, AND THAT IS THE HEADLINE MEASUREMENT.** Six runs, identical
-  code, identical prompt, temperature=0: agreement 95%-97.5%, and the DISPUTED SET MOVES every
-  time — {class-15}, {class-03, class-15}, {class-03, class-13}, {class-03}, {}, {}. **Every
-  case it ever disputed it also agreed with on another run.** So no disagreement survives
-  repetition, the residual 5% is JUDGE NOISE rather than a finding about the labels, and **one
-  run's dispute list is a fact about which sample got written to disk.** The labeler therefore
-  runs k times (default 3) and separates "disputed in EVERY run" (real) from "disputed in SOME
-  runs" (noise) — from a single run those look identical. It also reports judge
-  self-consistency, which is a number about the JUDGE, not about the benchmark.
+- **THE JUDGE IS NOT DETERMINISTIC, AND THAT IS THE HEADLINE MEASUREMENT.** Two calibration
+  runs are committed, both 39/40 (97.5%) at temperature=0, and the disputed case is DIFFERENT
+  between them: the before-policy run disputed `class-15`; the after-policy run agreed on
+  `class-15` (the tie-break rule had been declared) and disputed `class-03` instead — and
+  `class-03` is a verdict the judge had AGREED with on the earlier run before flipping it. A
+  dispute is not a stable property of a label; it moves. **Do NOT re-inflate this into "the
+  dispute set reshuffles across N identical runs":** the two committed runs differ in prompt
+  (the tie-break rule was added between them), so they do not demonstrate instability under
+  identical conditions, and no six-run per-run receipts exist — that claim was RETRACTED
+  (Session 12). The labeler runs k times (default 3) and separates "disputed in EVERY run"
+  (real) from "disputed in SOME runs" (noise); it also reports judge self-consistency, a number
+  about the JUDGE, not the benchmark. Every displayed calibration figure must trace to a
+  committed receipt — `tests/test_calibration_consistency.py` fails otherwise, including on any
+  arithmetically impossible row (an agreement % that disagrees with its dispute count).
 - **This is the sharpest argument in the repo for the whole architecture.** A judge that
-  answers its own question differently at temperature=0 cannot BE ground truth; it can only
-  calibrate it. Attest's core answers identically every time — pass@5, 100%. Measured here, not
-  cited. (It also returned unparseable JSON twice, recovered by llm.py's retry-on-malformed, on
-  a narrow schema-constrained question.)
+  returns Supported on `class-03` in one run and Contradicted in the next, at temperature=0,
+  cannot BE ground truth; it can only calibrate it. Attest's core answers identically every
+  time — pass@5, 100%. Measured here, not cited.
 - **It found a real bug anyway, and that is worth more than the percentage**: `class-15`
   surfaced the undeclared tie-break (`COMPLETENESS_REACHES_COLUMNS`, above), a governance rule
-  that lived in an `if` inside a checker.
+  that lived in an `if` inside a checker. Declaring it is exactly why the after-policy run
+  AGREES on `class-15` — the one dispute that was signal, not noise.
 - **Disagreements are SURFACED, never silently resolved**, and the harness exits non-zero below
   90% MEAN agreement. **Do not "fix" a dispute by editing the label to match the model, and do
-  not tune the prompt until it agrees.** I declared the rule, re-ran, saw agreement FALL, and
-  nearly went back to the prompt to chase it — repetition showed the drop was noise. Tuning a
-  judge until it agrees with you is the benchmark author's characteristic failure, and running
-  it k times is what stops it.
+  not tune the prompt until it agrees.** After declaring the rule, both committed runs held at
+  97.5% — `class-15` agreed but `class-03` newly disputed — so declaring it did not "raise the
+  score", and chasing the new dispute would be the benchmark author's characteristic failure.
+  Running it k times is what stops that; the one time declaring a rule was the right response to
+  a dispute, it was because the rule was genuinely missing, not to chase agreement.
 - **The labeler needs a request TIMEOUT and per-run persistence, and now has both.** The OpenAI
   SDK defaults to a 10-minute timeout with retries, so ONE wedged socket stalls a 40-case run
   for half an hour and looks exactly like a slow one — and with results written only at the
