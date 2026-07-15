@@ -842,6 +842,12 @@ legitimate-looking audit result, and the bad URN would never be seen.
 
 ## Commit convention — follow strictly
 
+**Git flow: all session work commits directly to `main`.** That is the established workflow —
+the author reviews the diff on `main` and pushes. Do NOT create feature or session branches, do
+NOT open a fast-forward-only sidetrack "to be safe", unless the author explicitly asks for one.
+The default "branch off the default branch first" habit is wrong for this repo; every session's
+history is linear on `main`, and a stray branch is churn the author then has to unwind.
+
 Conventional Commits with a scope, then tight bullets. **Use the accurate type** — don't force
 everything into `feat:`.
 
