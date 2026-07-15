@@ -112,7 +112,7 @@ from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
 
-from attest import faithfulness, replay, trajectory
+from attest import faithfulness, polarity, replay, trajectory
 from attest.checkers import (
     check_classification,
     check_freshness,
@@ -470,13 +470,19 @@ class Pipeline:
     def _guard(self, state: AuditState) -> AuditState:
         """The last thing between the model and the reader. Deterministic, and final.
 
-        explain() already runs the faithfulness guard internally and falls back to the
-        template on rejection, so in the normal case this re-check passes trivially. It is
-        a node anyway, and it re-checks the text that is ACTUALLY about to ship, because
-        "the explanation was guarded" must be a property of the pipeline rather than a
-        promise made by one function. If explain() were ever refactored into shipping an
-        unchecked draft, this is what catches it — and trajectory.py asserts that this node
-        ran on every explanation in the report.
+        explain() already runs both guards internally and falls back to the template on
+        rejection, so in the normal case this re-check passes trivially. It is a node anyway,
+        and it re-checks the text that is ACTUALLY about to ship, because "the explanation was
+        guarded" must be a property of the pipeline rather than a promise made by one
+        function. If explain() were ever refactored into shipping an unchecked draft, this is
+        what catches it — and trajectory.py asserts that this node ran on every explanation in
+        the report.
+
+        Two guards run here, not one. **Faithfulness** proves no fabricated fact reached the
+        reader; **polarity** proves the prose did not assert a direction the verdict never
+        produced — the fluent lie ("the catalog supports the claim" beside a Contradicted
+        verdict) that names no false fact and so sails through faithfulness clean. Either
+        failing degrades the shipped text to the deterministic template.
         """
         ledger = self._ledger(state)
         i = state["cursor"]
@@ -488,23 +494,26 @@ class Pipeline:
             GUARD, StepKind.DETERMINISTIC, claim_index=i, llm=ledger.llm
         ) as s:
             verified = faithfulness.check(written.text, result)
-            if not verified.ok:
+            polar = polarity.check(written.text, result)
+            if not verified.ok or not polar.ok:
                 # Should be unreachable via explain(). If it happens, the prose does not
                 # ship: we degrade to something true rather than something plausible.
+                why = "; ".join(filter(None, [verified.summary, polar.summary]))
                 log.error(
-                    "an explanation reached the guard unfaithful — falling back: %s",
-                    verified.summary,
+                    "an explanation reached the guard unshippable — falling back: %s", why
                 )
                 fallback = template(result)
                 ledger.explanation = Explanation(
                     text=fallback,
                     source="template",
                     faithfulness=faithfulness.check(fallback, result),
+                    polarity=polarity.check(fallback, result),
                     conflicts=written.conflicts,
-                    rejected=(*written.rejected, f"guard: {verified.summary}"),
+                    rejected=(*written.rejected, f"guard: {why}"),
                 )
             s.outputs = {
                 "faithful": verified.ok,
+                "polarity_ok": polar.ok,
                 "shipped": ledger.explanation.source,
             }
         return {}
