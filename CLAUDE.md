@@ -69,17 +69,37 @@ Built, and the invariants worth not rediscovering:
   source text**. The model may quote a URN, never mint one. A hallucinated URN would otherwise
   reach a checker and come back Insufficient-Coverage — an invented entity reported as an
   under-documented one.
-- [faithfulness.py](src/attest/faithfulness.py): every factual token in an explanation must
-  appear in the evidence. Matching is by **contiguous word sequence** (so `PII` does not match
-  inside `NonPII`, and `customer_email` cannot be assembled from `customer_profile` + `email`).
-  Capitalized words are a factual class and the guard **fails closed**. Derived numbers are
-  rejected even when correct.
-- [explain.py](src/attest/explain.py): rejection falls back to a **deterministic template** built
-  from the checker's reason and evidence. A failed explanation degrades to something *true*,
-  never to something plausible. The template must itself pass the guard — keep its scaffolding
-  lowercase, or it trips the capitalized-word rule.
+- [faithfulness.py](src/attest/faithfulness.py) proves **lexical provenance, not semantic
+  faithfulness, and the name over-claimed until Session 13 said so.** Every factual token in an
+  explanation must appear in the evidence — matching by **contiguous word sequence** (so `PII`
+  does not match inside `NonPII`, and `customer_email` cannot be assembled from
+  `customer_profile` + `email`), capitalized words are a factual class, the guard **fails
+  closed**, derived numbers are rejected even when correct. What it CANNOT catch, and never
+  could, is a fluent lie told in ordinary prose that names no false fact — "the catalog supports
+  the claim" beside a Contradicted verdict passes every token check. That hole was reproduced on
+  the real path; it is closed by polarity.py, not here.
+- [polarity.py](src/attest/polarity.py) (Session 13) closes the fluent-lie hole. **The
+  deterministic reason is the authoritative explanation; model prose may assert only the
+  DIRECTION the verdict reached** — Supported affirms, Contradicted denies, Insufficient-Coverage
+  is silent. Prose that affirms where the verdict denies (or the reverse, or claims silence over
+  a definite verdict) is rejected and the template ships. It reads PROSE, not identifiers (a tag
+  named `Verified` inside a URN is faithfulness.py's charge, not a relational verb), handles
+  negation ("does not support" is a denial) and the "neither confirmed nor denied" SILENT idiom
+  the checkers actually use. It is a *presentation* guard: the polarity that ships comes from the
+  verdict, always. Not a better token filter — a lexical filter cannot prove entailment, so it
+  stops the model asserting a direction at all, rather than trying to prove the one it asserted.
+- [explain.py](src/attest/explain.py): three gates decide whether model prose ships —
+  crosscheck, faithfulness, polarity — and any one failing falls back to a **deterministic
+  template** built from the checker's reason and evidence. A failed explanation degrades to
+  something *true*, never to something plausible. The template must itself pass the guards — keep
+  its scaffolding lowercase (capitalized-word rule), and it leads with the verdict word so it is
+  polarity-safe by construction.
 - [crosscheck.py](src/attest/crosscheck.py): the model reports the verdict it reads and the
-  fields it cited. Disagreement never changes the verdict; it is surfaced as a `Conflict`.
+  fields it cited. Disagreement never changes the verdict; it is surfaced as a `Conflict`. Note
+  its limits, which is WHY polarity.py exists: it only compares the model's self-reported
+  `implied_verdict` and cited fields — a model that reports the RIGHT verdict and cites nothing,
+  then writes prose asserting the opposite, sails through it. crosscheck catches a dishonest
+  self-report; polarity catches a dishonest sentence.
 
 **2b. The pipeline (Session 3) audits itself, and that is not decoration.**
 [graph.py](src/attest/graph.py) is a LangGraph state machine: sanitize → decompose → per
@@ -97,6 +117,15 @@ report. The invariants worth not rediscovering:
   This turns "the deterministic core is sacred" from a README claim into a property of the
   run. **The expected path is declared in trajectory.py, NOT read off the graph's edges** —
   derive it from the graph and it agrees by construction and asserts nothing.
+- **A trajectory violation is a HARD GATE, not an alarm (Session 13).** It used to be logged
+  and the report stored, served, and approvable anyway — so the strongest claims the system
+  makes were enforced only by whoever happened to read the log. Now a violating run is
+  `RunStatus.FLAGGED` ([report.py](src/attest/report.py)), set in `graph._report`, which
+  overrides both COMPLETE and AWAITING_REVIEW and makes the run **un-approvable**:
+  `service.approve` refuses it (`TrajectoryViolation` → HTTP 409) before any rehydrate,
+  resume, or write-back. A report the pipeline could not vouch for cannot reach the catalog.
+  `tests/test_api.py` tears out the guard node, confirms the run is flagged, and confirms the
+  approval is refused with nothing written.
 - **Every rule has a test that BREAKS it**, and four of them sabotage the *real* pipeline
   (guard torn out, checker spending tokens, correction proposed unverified, router
   miswired). Every other test stays green through all four — that is the point. A
@@ -594,8 +623,9 @@ src/attest/
                        written only when a human says so. No fabricated confidence field.
   llm.py               The only module that calls a model.
   decompose.py         Agent prose -> typed claims. A URN must be quoted, never minted.
-  explain.py           Verdict + evidence -> prose. Falls back to a deterministic template.
-  faithfulness.py      The guard. Every factual token must appear in the evidence.
+  explain.py           Verdict + evidence -> prose. Three gates; falls back to the template.
+  faithfulness.py      Lexical provenance. Every factual token must appear in the evidence.
+  polarity.py          The prose may assert only the direction the verdict reached.
   crosscheck.py        Model/checker disagreement -> a Conflict, never a changed verdict.
   sanitize.py          Untrusted agent text in, instruction-like spans stripped out.
   graph.py             The LangGraph pipeline. Routing, the loop, the human checkpoint.
@@ -655,8 +685,9 @@ just preflight # lint + test + live — required before pushing semantic-layer c
 
 **Run `just preflight` (lint + test + live) before any push that touches the semantic
 layer.** That means any change to `llm.py`, `decompose.py`, `explain.py`,
-`faithfulness.py`, `crosscheck.py`, `sanitize.py`, `revise.py`, **or any prompt string or
-JSON schema in them**. `just check` is not enough for those files, and this is not a nicety:
+`faithfulness.py`, `polarity.py`, `crosscheck.py`, `sanitize.py`, `revise.py`, **or any
+prompt string or JSON schema in them**. `just check` is not enough for those files, and this
+is not a nicety:
 
 - **`just check` (offline, free) proves the guard still catches hallucinations.** It runs
   against a scripted fake that lies on demand — `Sarah Jennings`, an invented `ssn` column,
