@@ -37,3 +37,7 @@ seed/*.json
 # Benchmark scratch. The RESULTS are committed — they are the receipts the README quotes,
 # and a benchmark whose numbers nobody can see is not evidence.
 benchmark/results/_*.log
+
+# A working diagnostic (an external read-only audit's findings). Not a repo artifact — the
+# fixes it drove are in the code and history; the report itself is scratch.
+AUDIT.md
