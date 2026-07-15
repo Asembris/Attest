@@ -1,6 +1,6 @@
 {
   "mode": "core",
-  "k": 1,
+  "k": 5,
   "sabotaged": null,
   "n_cases": 40,
   "coverage": {
@@ -77,5 +77,11 @@
     "extraction_failures": 0,
     "mis_extracted_but_right": [],
     "errors": []
+  },
+  "consistency": {
+    "k": 5,
+    "pass_at_k": 1.0,
+    "unstable": [],
+    "verdict_path_leaks": []
   }
 }
