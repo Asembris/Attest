@@ -150,10 +150,22 @@ lint:
 # it on would bury every real diff under a whole-tree reformat. Run it deliberately or
 # not at all.
 
+# Assert the OFFLINE tier COLLECTS with zero import errors -- fast, no execution, no server.
+#
+# Collection errors are a blind spot: they are IMPORT failures, not test failures, so they
+# slip past a dev whose live artifacts (seed/ground_truth.json, an installed sklearn) happen
+# to be present, and only surface on a bare runner. `--collect-only` exits non-zero on any
+# import error, so this makes "the offline tier imports cleanly with DataHub stopped and no
+# seed" a NAMED gate that fails in seconds, distinctly from a test failure. Run before the
+# full offline run in CI so a collection break is unmistakable and immediate.
+collect-check:
+    python -m pytest --collect-only -q -m 'not live and not integration'
+
 # Everything CI runs. Genuinely free, offline, no API key and no DataHub needed -- and since
 # Session 8 that claim is TRUE: the offline tier reads captured fixtures, so nothing here
 # skips for want of a catalog. This is what .github/workflows/ci.yml runs on every push.
-check: lint test-offline
+# `collect-check` first: a collection (import) error fails fast and by name, before the run.
+check: lint collect-check test-offline
 
 # What to run before pushing a change to the semantic layer. Three tiers, each blind to the
 # others' failure mode: `check` proves the guard still catches hallucinations (offline, on

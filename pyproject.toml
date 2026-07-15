@@ -29,11 +29,20 @@ dependencies = [
 # pytest-xdist parallelizes the OFFLINE suite across cores (`-n auto`, wired into `just
 # test`/`just check`). The live suite stays serial -- it writes to a shared catalog, and
 # conftest.py refuses to run it under parallel workers. See tests/conftest.py.
-dev = ["pytest>=8", "pytest-xdist>=3.6", "ruff>=0.9"]
+#
+# `dev` pulls in `bench` because the OFFLINE tier imports it: tests/test_benchmark.py imports
+# benchmark.run_eval, which imports sklearn.metrics. That test is `not live and not
+# integration`, so it is part of the CI gate -- and CI installs `.[dev]` (`just setup`). If
+# sklearn is only in `bench`, CI collection dies with ModuleNotFoundError while every test
+# passes on a machine that happens to have it: the "green on my machine" trap this repo keeps
+# hitting. Depending on `attest[bench]` keeps sklearn OUT of the runtime `dependencies` (the
+# service still does not ship it) while guaranteeing the tier that imports it can install it.
+dev = ["pytest>=8", "pytest-xdist>=3.6", "ruff>=0.9", "attest[bench]"]
 # The benchmark's metrics. sklearn, not a hand-rolled count: the arithmetic of a metric is
 # exactly where a quiet off-by-one produces a plausible number that is wrong, and a
 # benchmark's own arithmetic is the last thing that should be bespoke. NOT a runtime
-# dependency -- nothing in src/attest imports it, and the service does not ship it.
+# dependency -- nothing in src/attest imports it, and the service does not ship it. Pulled
+# into `dev` above because the offline test tier (test_benchmark.py) imports it.
 bench = ["scikit-learn>=1.5"]
 
 [build-system]
