@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { GitBranch, ShieldAlert, ShieldCheck, ExternalLink, XCircle } from 'lucide-react';
+import { GitBranch, ShieldAlert, ShieldCheck, ExternalLink, XCircle, Check } from 'lucide-react';
 import type { ClaimRecord, CorrectionOutcome, WriteBackView } from '../api/types';
 
 // Phase 4: the correction loop's outcome AND the real human checkpoint. `outcome` is one of
@@ -109,26 +109,37 @@ export default function CorrectionPanel({
             <div className="text-xs text-ink-300 mb-3 italic">
               A human decides before anything is written back. Approving writes the verdict to DataHub.
             </div>
+            {/* The selected choice fills SOLID and shifts its label; the unpicked one dims.
+                Both stay clickable so the decision is reversible before Submit — clicking the
+                other option moves the filled state with it. */}
             <div className="flex items-center gap-3">
               <button
                 onClick={() => onDecide(true)}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                aria-pressed={decision === true}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-all ${
                   decision === true
-                    ? 'bg-supported/25 text-supported border-supported/50'
-                    : 'bg-supported/10 text-supported border-supported/30 hover:bg-supported/20'
+                    ? 'bg-supported text-ink-950 border-supported shadow-sm shadow-supported/30'
+                    : decision === false
+                      ? 'bg-supported/5 text-supported/50 border-supported/15 opacity-70 hover:opacity-100 hover:bg-supported/15'
+                      : 'bg-supported/10 text-supported border-supported/30 hover:bg-supported/20'
                 }`}
               >
-                <ShieldCheck size={14} /> Approve write-back
+                {decision === true ? <Check size={15} strokeWidth={3} /> : <ShieldCheck size={14} />}
+                {decision === true ? 'Approved' : 'Approve write-back'}
               </button>
               <button
                 onClick={() => onDecide(false)}
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors ${
+                aria-pressed={decision === false}
+                className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-all ${
                   decision === false
-                    ? 'bg-ink-700 text-ink-100 border-ink-500'
-                    : 'bg-ink-700/50 text-ink-200 border-ink-600/40 hover:bg-ink-700'
+                    ? 'bg-ink-400 text-ink-950 border-ink-300 shadow-sm shadow-ink-900/40'
+                    : decision === true
+                      ? 'bg-ink-700/40 text-ink-400 border-ink-600/40 opacity-70 hover:opacity-100 hover:bg-ink-700'
+                      : 'bg-ink-700/50 text-ink-200 border-ink-600/40 hover:bg-ink-700'
                 }`}
               >
-                <ShieldAlert size={14} /> Reject
+                {decision === false ? <Check size={15} strokeWidth={3} /> : <ShieldAlert size={14} />}
+                {decision === false ? 'Rejected' : 'Reject'}
               </button>
             </div>
           </div>
