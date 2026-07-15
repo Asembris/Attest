@@ -16,9 +16,20 @@ setup:
 # --- the catalog -------------------------------------------------------------
 
 # Generate the seed metadata and ingest it into DataHub.
+#
+# The last step captures the offline test fixtures from the freshly seeded catalog, so the
+# fixtures and the catalog they describe are regenerated TOGETHER and cannot drift apart.
 seed:
     python seed/generate_seed.py
     datahub ingest -c ./seed/recipe.yml
+    just capture
+
+# Capture the offline snapshot fixtures from the live catalog (tests/fixtures/snapshots/).
+# Run automatically by `just seed`; run it by hand after any manual catalog change. The
+# fixtures are held honest by `test_fixture_drift.py` in the live tier -- capture writes,
+# the pin verifies.
+capture:
+    python seed/capture_snapshots.py
 
 # Prove DataHub's read/write path end to end (the Session 0 spike).
 probe:
@@ -50,13 +61,27 @@ serve:
 #
 # Debugging one test? `just test -n0 path::test` -- the last -n wins, so -n0 forces serial
 # (real tracebacks, working pdb, un-interleaved output).
+#
+# This runs the OFFLINE tier plus the INTEGRATION tier (test_client, live GMS wire format).
+# When DataHub is down the integration tier SKIPS -- loudly, announced in the summary, never
+# buried -- and the offline tier runs in full. For a run that needs nothing but Python, use
+# `just test-offline` (what CI runs).
 test *ARGS:
     python -m pytest -n auto {{ARGS}}
 
-# The semantic layer against a REAL model. Costs money; needs OPENAI_API_KEY.
-# The rest of the suite runs offline against a scripted fake and is free.
+# The TRULY-OFFLINE tier: checkers, benchmark, coverage, semantic guard, graph, store. Reads
+# captured fixtures, never the network -- no DataHub, no API key, and it never skips. This is
+# the CI gate, and the honest one: a green here is a green about the whole tier, not half of
+# it. `not integration` drops the live-GMS wire-format tests; `not live` drops the real model.
+test-offline *ARGS:
+    python -m pytest -n auto -m 'not live and not integration' {{ARGS}}
+
+# The LIVE tier, by marker: the semantic layer against a REAL model (test_live) AND the
+# anti-drift pin that re-fetches every seeded URN and holds the offline fixtures honest
+# (test_fixture_drift). Costs money; needs OPENAI_API_KEY and a live catalog. Serial: the
+# live suite writes to shared datasets, and conftest refuses it under -n.
 live:
-    python -m pytest tests/test_live.py -m live -v
+    python -m pytest -m live -v
 
 # Just the coverage matrix: can every claim type still reach every verdict?
 matrix:
@@ -101,10 +126,14 @@ lint:
 # it on would bury every real diff under a whole-tree reformat. Run it deliberately or
 # not at all.
 
-# Everything CI would run. Free, offline, no API key needed.
-check: lint test
+# Everything CI runs. Genuinely free, offline, no API key and no DataHub needed -- and since
+# Session 8 that claim is TRUE: the offline tier reads captured fixtures, so nothing here
+# skips for want of a catalog. This is what .github/workflows/ci.yml runs on every push.
+check: lint test-offline
 
-# What to run before pushing a change to the semantic layer. `check` proves the guard
-# still catches hallucinations; `live` proves it still lets the truth through. Neither
-# half is sufficient on its own -- see the cadence rule in CLAUDE.md.
+# What to run before pushing a change to the semantic layer. Three tiers, each blind to the
+# others' failure mode: `check` proves the guard still catches hallucinations (offline, on
+# fixtures); `test` adds the integration tier (live GMS wire format); `live` proves the guard
+# still lets the truth through AND re-pins the fixtures against the real catalog. Neither the
+# offline half nor the live half is sufficient alone -- see the cadence rule in CLAUDE.md.
 preflight: lint test live

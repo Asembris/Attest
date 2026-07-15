@@ -74,6 +74,7 @@ import argparse
 import json
 import statistics
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -234,17 +235,28 @@ class Catalog:
     wall clock — the seed writes relative timestamps, so a wall-clock `now` would make the
     freshness labels rot with age and report "the checker regressed" when the truth is "the
     catalog is old". Same argument as tests/conftest.py.
+
+    The snapshot source is INJECTABLE (Session 8). `just bench` leaves it None and reads the
+    live catalog, as the measured numbers were taken. The offline test tier injects a
+    fixture-backed loader, so the vacuity check — the one guarantee that must fire in CI
+    without a server — runs against captured snapshots instead of skipping. The injection
+    keeps `benchmark/` decoupled from `tests/`: the loader is passed in, never imported here.
     """
 
-    def __init__(self) -> None:
-        self.client = DataHubClient()
-        self.cache = SnapshotCache(self.client)
-        reference = self.cache.fetch_dataset(DOCUMENTED).last_modified
+    def __init__(
+        self, snapshot_source: Callable[[str], DatasetSnapshot] | None = None
+    ) -> None:
+        if snapshot_source is None:
+            self.client = DataHubClient()
+            self.cache = SnapshotCache(self.client)
+            snapshot_source = self.cache.fetch_dataset
+        self._snapshot = snapshot_source
+        reference = self._snapshot(DOCUMENTED).last_modified
         assert reference is not None, "the reference dataset must carry a timestamp"
         self.now: datetime = reference + timedelta(hours=1)
 
     def snapshot(self, urn: str) -> DatasetSnapshot:
-        return self.cache.fetch_dataset(urn)
+        return self._snapshot(urn)
 
 
 def run_core(catalog: Catalog) -> list[Prediction]:

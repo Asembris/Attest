@@ -599,29 +599,41 @@ benchmark/             The golden benchmark. A standalone, citable artifact.
   labeler.py           Nemotron as an independent second labeler. NEVER in the verdict path.
   README.md            The dataset, usable by someone who has never seen this code.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
-tests/                 Live-catalog pytest suite. Skips (does not pass) if DataHub is down.
-                       test_graph/test_trajectory run fully offline: control flow is not a
-                       statement about DataHub's wire format. `-n auto` parallelizes it
-                       (Session 7); the live suite is refused under parallel by conftest.
+tests/                 Two-tier suite (Session 8). The OFFLINE tier reads captured fixtures,
+                       never the network: it runs anywhere, never skips, gates CI. The
+                       INTEGRATION tier (test_client, marked `integration`) and the LIVE tier
+                       (test_live + the pin, marked `live`) need the real server and skip
+                       LOUDLY when it is down. `-n auto` parallelizes the offline tier; the
+                       live suite is refused under parallel by conftest.
+  _snapshots.py        Fixture naming + load/dump helpers. Shared by the `snapshot` fixture
+                       (reads) and seed/capture_snapshots.py (writes) so they cannot disagree.
+  fixtures/snapshots/  Serialized DatasetSnapshots, one per seeded dataset. Captured from live
+                       GMS; held equal to it by test_fixture_drift.py in the live tier.
+  test_fixture_drift.py  THE ANTI-DRIFT PIN. Re-fetches every seeded URN and asserts it equals
+                       the captured fixture. The fixtures are exactly as honest as this test.
+seed/
+  capture_snapshots.py Capture the offline fixtures from the live catalog. Run by `just seed`.
 ```
 
 ## Commands
 
 ```
 just setup     # install package + dev deps
-just seed      # generate seed metadata and ingest it
+just seed      # generate seed metadata, ingest it, and CAPTURE the offline fixtures (last step)
+just capture   # regenerate tests/fixtures/snapshots/ from the live catalog (run by `just seed`)
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
 just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub owns 8080/9002
-just test      # the suite ACROSS CORES (-n auto). Live catalog, semantic layer offline. Free.
+just test      # offline tier + integration tier, ACROSS CORES (-n auto). Integration skips LOUD.
+just test-offline    # the TRULY-OFFLINE tier. No DataHub, no key, never skips. What CI runs.
 just matrix    # just the 12-cell coverage assertion
 just resume    # durable resume + per-run token billing (the two Session 5 properties)
 just bench     # the golden benchmark vs the DETERMINISTIC CORE, pass@5. Free.
 just bench-full      # ...vs the whole pipeline, real model. ~1.5 cents.
 just bench-sabotage  # THE VACUITY CHECK. Non-zero exit if breaking a checker moves nothing.
 just bench-calibrate # cross-family labels (Nemotron). Needs NVIDIA_API_KEY.
-just check     # lint + test — what CI runs
-just live      # the semantic layer against a REAL model. Costs money.
+just check     # lint + test-offline — hermetic, what CI runs. Genuinely offline (Session 8).
+just live      # the LIVE tier by marker (-m live): real model AND the anti-drift pin. Costs money.
 just preflight # lint + test + live — required before pushing semantic-layer changes
 ```
 
@@ -684,14 +696,78 @@ suite is refused under parallel, structurally.**
   first. Learned by watching it not fire. `just live` (no `-n`) is serial and never trips it.
 - **`just test -n0 …` forces serial** for debugging — the last `-n` wins, so `-n0` disables
   distribution and you get real tracebacks, working pdb, and un-interleaved output.
-- **CAVEAT the parallel work surfaced, worth knowing: the "offline" suite is not offline.**
-  ~126 of the 263 tests READ the live catalog (they spend no tokens, but they need DataHub
-  up). When DataHub is down they SKIP — `137 passed, 126 skipped` — and that reads as GREEN.
-  This is pre-existing (true serially too) and deliberate (`tests/` "skips, does not pass, if
-  DataHub is down"), but it is the same shape as the `just check` blind spot: a green tick
-  that is a statement about a smaller program. **If a green run looks suspiciously fast,
-  check the skip count, not just the pass count.** `just live` and `just preflight` are what
-  actually exercise the catalog-write path.
+- **CAVEAT the parallel work surfaced — RESOLVED in Session 8, see §9.** The "offline" suite
+  was not offline: ~126 of the 263 tests READ the live catalog and SKIPPED when DataHub was
+  down, so the suite read GREEN (`137 passed, 126 skipped`) with half of it never run — the
+  same shape as the `just check` blind spot, a green tick about a smaller program, sitting in
+  the test suite of the tool built to catch exactly that. Session 8 split the suite in two and
+  moved the catalog-reading tests onto captured fixtures, so they no longer skip. The caveat
+  is kept here as the problem statement; §9 is the fix.
+
+**9. Two-tier test architecture (Session 8). An honest split: the offline tier is truly
+offline and gates CI; the integration tier is live and skips LOUDLY. The fixtures are
+exactly as honest as the anti-drift pin, which ships in the same session.**
+
+- **The capture boundary is the `DatasetSnapshot`, NOT the GraphQL response, and that choice
+  is the whole design.** A fixture of a raw GraphQL response freezes GMS's wire format: it
+  drifts on every DataHub version bump and a stale one still parses and still passes — a green
+  tick about a shape the server no longer sends. So `seed/capture_snapshots.py` serializes
+  Attest's own normalized read model (round-trip verified lossless across `term_parents`,
+  nested `fields`, `last_modified`) to `tests/fixtures/snapshots/*.json`, one per seeded
+  dataset. The `snapshot` fixture loads those instead of fetching. The ~120 catalog-reading
+  tests — checkers, benchmark, coverage, explain, faithfulness, pii-signals — stop hitting
+  the network; together with the tests that were already fake-only (graph, store, api,
+  cache, …) the offline tier is 258 tests that run on a bare runner, never skip, and gate CI.
+  *Verified: with the containers stopped, 258 passed, 0 skipped.*
+- **The offline tier does NOT exercise `DatasetSnapshot.from_graphql`, and that is stated so
+  nobody assumes otherwise.** The fixtures are `DatasetSnapshot`s already; loading one skips
+  the parse. Parsing the wire format is `test_client.py`'s job, and it is LIVE (the
+  integration tier) — including the structured-property fabrication landmine, which only a
+  real GMS reproduces. Offline coverage of parsing would require a fake that cannot fail the
+  way the real parse fails — the "structurally invisible to a fake" rule from Session 5 all
+  over again.
+- **The fixtures are exactly as honest as `test_fixture_drift.py`, and it is non-negotiable.**
+  That pin (live-marked) re-fetches every seeded URN from real GMS and asserts, per URN, that
+  the captured snapshot equals the freshly normalized one. Change the seed, or take a GMS bump
+  that reshapes the normalized model, and it fails loudly with the exact URN and the recapture
+  instruction — but **only when the live tier is actually run**. This tier does not escape the
+  cadence rule; it inherits it. Fixtures without the pin are the drift trap, which is why the
+  pin shipped in the same session, not deferred. *Verified: hand-corrupt one fixture and the
+  pin fails by name; restore it and it passes.*
+- **Capture is COUPLED to seeding, not left to memory.** `just capture` regenerates the
+  fixtures; `just seed` runs it as its last step, so the fixtures and the catalog they
+  describe are regenerated together and cannot drift apart between reseeds. The dataset list
+  is `ground_truth.json`'s `datasets` — the same manifest the seed wrote and the pin reads —
+  so all three (seed, capture, pin) range over exactly the same set with nothing kept in sync
+  by hand.
+- **The integration-tier skip is LOUD, by the same cadence logic.** The tests that genuinely
+  need live GMS are `@pytest.mark.integration` (`test_client.py`) and `@pytest.mark.live`
+  (`test_live.py`, plus the pin). They are allowed to skip when the server is down — but
+  `conftest.pytest_terminal_summary` prints a red separator naming how many integration tests
+  did not run and what coverage was lost, never a line buried in the skip count. A
+  suspiciously fast run must say why; this is where it says it. The offline tier never
+  contributes to that count, because it never skips.
+- **`benchmark.run_eval.Catalog` takes an INJECTED snapshot source, and the vacuity check is
+  why.** `test_breaking_a_checker_collapses_the_benchmark` — the guarantee that the benchmark
+  *can fail* — used to build a live client inside `Catalog()`, so in a CI-without-DataHub run
+  it silently skipped exactly where it mattered most, leaving the benchmark's own can-it-fail
+  proof unrun. Now the test injects the fixture loader (`Catalog(snapshot_source=...)`), so
+  the vacuity check runs offline and gates CI. The injection keeps `benchmark/` decoupled from
+  `tests/`: the loader is passed in, never imported there. `just bench` leaves the source None
+  and reads the live catalog, as the measured numbers were taken.
+- **The CI gate (`.github/workflows/ci.yml`) exists ONLY because the offline tier is now
+  truly offline.** It runs `just check` (lint + `not live and not integration`) on every push
+  — no DataHub, no key. It is the "not a toy" signal, and it is honest: a green here is a
+  green about the whole offline tier, not half of it skipping. If an "offline" test ever
+  reaches for the network it FAILS in CI rather than skipping — which is the point of the
+  gate. *Verified: with the containers stopped, the offline tier passes in full — 258 passed,
+  0 skipped.*
+- **The command map moved: `just check` is now hermetic.** `check` = `lint test-offline`
+  (`not live and not integration`), genuinely free and offline — the justfile's old claim to
+  that effect finally being true. `just test` still runs offline + integration (integration
+  skips loudly if DataHub is down). `just live` runs the live tier by MARKER now (`-m live`),
+  not by path, so it picks up both `test_live` and the pin. `just preflight` = `lint test
+  live` covers all three tiers.
 
 ## Known deferred items — document, don't fix
 

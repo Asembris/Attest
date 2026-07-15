@@ -1,0 +1,54 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.product.device_telemetry,PROD)",
+  "name": "device_telemetry",
+  "platform": "snowflake",
+  "description": "Per-device app telemetry. Never manually classified; an automated scanner found personal data in it and recorded the finding as a property.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:dana.wu"
+  ],
+  "tags": [
+    "urn:li:tag:Tier2"
+  ],
+  "terms": null,
+  "fields": [
+    {
+      "path": "device_id",
+      "native_type": "VARCHAR(64)",
+      "data_type": "STRING",
+      "description": "Device installation key.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "ip_address",
+      "native_type": "VARCHAR(45)",
+      "data_type": "STRING",
+      "description": "Last seen IP address.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "app_version",
+      "native_type": "VARCHAR(16)",
+      "data_type": "STRING",
+      "description": "Client build.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "seen_at",
+      "native_type": "TIMESTAMP_NTZ",
+      "data_type": "TIME",
+      "description": "Last heartbeat.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Contradicted",
+    "hasPII": "true"
+  },
+  "term_parents": {}
+}

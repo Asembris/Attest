@@ -3,6 +3,13 @@
 A groundedness auditor that reads an empty response and calls it Insufficient-Coverage
 is broken in the specific way that is hardest to notice — every verdict still has the
 right shape.
+
+**This is the INTEGRATION tier, and it is live on purpose.** It exercises GMS's wire
+format and `DatasetSnapshot.from_graphql` against a real server — the parsing the offline
+tier deliberately does NOT cover, plus the structured-property fabrication landmine that
+only a real GMS reproduces. It is allowed to skip when DataHub is down (loudly — see
+`conftest.pytest_terminal_summary`), because there is nothing to fake here without faking
+the very thing under test.
 """
 
 from __future__ import annotations
@@ -11,6 +18,8 @@ import pytest
 
 from attest.datahub import DataHubClient, EntityNotFoundError
 from conftest import DOCUMENTED, NO_SCHEMA, NO_TIMESTAMP, UNREVIEWED
+
+pytestmark = pytest.mark.integration
 
 GHOST = "urn:li:dataset:(urn:li:dataPlatform:snowflake,no.such.table,PROD)"
 

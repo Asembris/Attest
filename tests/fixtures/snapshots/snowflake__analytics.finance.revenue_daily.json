@@ -1,0 +1,51 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+  "name": "revenue_daily",
+  "platform": "snowflake",
+  "description": "Daily gross revenue by region. Rebuilt nightly — or it was.",
+  "last_modified": "2025-05-22T18:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:bob.martinez"
+  ],
+  "tags": [
+    "urn:li:tag:Tier1"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:Revenue"
+  ],
+  "fields": [
+    {
+      "path": "revenue_date",
+      "native_type": "DATE",
+      "data_type": "TIME",
+      "description": "The day being reported.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "region",
+      "native_type": "VARCHAR(64)",
+      "data_type": "STRING",
+      "description": "Sales region.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "gross_revenue",
+      "native_type": "NUMBER(14,2)",
+      "data_type": "NUMBER",
+      "description": "Gross revenue in USD.",
+      "tags": [],
+      "terms": [
+        "urn:li:glossaryTerm:Revenue"
+      ]
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Contradicted"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:Revenue": []
+  }
+}

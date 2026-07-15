@@ -1,0 +1,24 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD)",
+  "name": "external_report",
+  "platform": "postgres",
+  "description": "A vendor-delivered report registered for lineage. The columns live in the vendor's system; no schema has ever been ingested.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:bob.martinez"
+  ],
+  "tags": [
+    "urn:li:tag:Tier2"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:Revenue"
+  ],
+  "fields": null,
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Insufficient-Coverage"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:Revenue": []
+  }
+}

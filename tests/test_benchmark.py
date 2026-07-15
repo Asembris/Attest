@@ -26,6 +26,7 @@ import pytest
 from benchmark.cases import CASES, DOCUMENTED, VERDICTS, coverage, validate
 from benchmark.run_eval import NO_CLAIM, Prediction, build_claim, score
 
+from _snapshots import load_snapshot
 from attest.checkers import check
 
 # --- the dataset -------------------------------------------------------------
@@ -95,7 +96,12 @@ def test_breaking_a_checker_collapses_the_benchmark(snapshot, now, monkeypatch):
     from attest import checkers, graph
     from attest.claims import ClaimType
 
-    baseline = score(run_eval.run_core(run_eval.Catalog()))
+    # Fixture-backed, so the vacuity check runs in the OFFLINE tier and gates CI — this is
+    # the specific catalog-dependence Session 8 removed. Without the injected loader, Catalog
+    # builds a live client and this test silently skips exactly where it must not: in a
+    # CI-without-DataHub run, leaving the benchmark's own can-it-fail guarantee unproven.
+    catalog = run_eval.Catalog(snapshot_source=load_snapshot)
+    baseline = score(run_eval.run_core(catalog))
     assert baseline.accuracy == 1.0, "the benchmark must be green BEFORE it is broken"
 
     # Record the healthy dispatch BEFORE breaking it, so monkeypatch restores it at
@@ -108,7 +114,7 @@ def test_breaking_a_checker_collapses_the_benchmark(snapshot, now, monkeypatch):
     monkeypatch.setitem(graph._CHECK, node, graph._CHECK[node])
 
     run_eval.sabotage("classification")
-    broken = score(run_eval.run_core(run_eval.Catalog()))
+    broken = score(run_eval.run_core(catalog))
 
     assert broken.accuracy < 0.75, (
         f"a checker that affirms EVERYTHING scored {broken.accuracy:.1%}. The benchmark "
@@ -130,7 +136,7 @@ def test_the_benchmark_now_is_the_catalogs_now_and_not_the_wall_clock(snapshot):
     """
     from benchmark.run_eval import Catalog
 
-    catalog = Catalog()
+    catalog = Catalog(snapshot_source=load_snapshot)
     reference = snapshot(DOCUMENTED).last_modified
     assert catalog.now == reference + timedelta(hours=1)
 

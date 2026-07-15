@@ -57,6 +57,10 @@ testpaths = ["tests"]
 # literals in every assertion.
 pythonpath = ["tests"]
 # Live tests hit the real OpenAI API and cost money, so they are deselected by default.
-# `just live` runs them. Everything else is offline and free.
+# `just live` runs them. The default selection still includes the INTEGRATION tier (live
+# GMS, no model cost); `just check`/CI narrows further to `not live and not integration`.
 addopts = "-q --strict-markers -m 'not live'"
-markers = ["live: calls the real OpenAI API. Costs money. Run with `just live`."]
+markers = [
+    "live: real OpenAI model AND/OR the anti-drift pin against live GMS. Costs money / needs a catalog. Run with `just live`.",
+    "integration: needs a live DataHub server (wire format, structured-property fabrication). No model cost, but not offline. Skips LOUDLY when DataHub is down.",
+]

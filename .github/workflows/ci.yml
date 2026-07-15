@@ -1,0 +1,38 @@
+# CI: the truly-offline tier, on every push. No DataHub, no OpenAI key.
+#
+# This gate exists ONLY because Session 8 made the offline tier truly offline: the checkers,
+# the benchmark, the coverage matrix and — the load-bearing one — the vacuity check
+# (test_breaking_a_checker_collapses_the_benchmark) all read captured fixtures instead of a
+# live catalog, so they run on a bare runner and never skip. Before that split, half of them
+# would have skipped here and the gate would have been green about a smaller program.
+#
+# It runs `just check` verbatim, so CI runs exactly what a developer runs locally — lint plus
+# the offline tier. The integration tier (live GMS) and the live tier (real model) are NOT
+# run here: they need servers and a paid key, and the cadence rule keeps them on `just live`
+# / `just preflight` before a push to the semantic layer.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: extractions/setup-just@v2
+
+      - name: Install package and dev dependencies
+        run: just setup
+
+      # lint + the truly-offline test tier (`-m 'not live and not integration'`), across
+      # cores. No network: if any "offline" test reaches for DataHub, it fails here rather
+      # than skipping — which is the whole point of the gate.
+      - name: Lint and run the offline tier
+        run: just check

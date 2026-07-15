@@ -1,0 +1,69 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.payment_methods,PROD)",
+  "name": "payment_methods",
+  "platform": "postgres",
+  "description": "Stored payment instruments. Card numbers are held by the payment processor; only the last four digits are landed here.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:dana.wu"
+  ],
+  "tags": [
+    "urn:li:tag:PII",
+    "urn:li:tag:Sensitive",
+    "urn:li:tag:Tier1"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:CustomerIdentifier"
+  ],
+  "fields": [
+    {
+      "path": "payment_method_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "Primary key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "user_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "FK to users.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:CustomerIdentifier"
+      ]
+    },
+    {
+      "path": "card_last4",
+      "native_type": "char(4)",
+      "data_type": "STRING",
+      "description": "Last four digits only. Not a card number.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "billing_zip",
+      "native_type": "varchar(16)",
+      "data_type": "STRING",
+      "description": "Billing postal code.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Contradicted"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:CustomerIdentifier": []
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+  "name": "legacy_accounts",
+  "platform": "postgres",
+  "description": null,
+  "last_modified": "2025-05-22T18:58:37.116000Z",
+  "owners": null,
+  "tags": [
+    "urn:li:tag:Deprecated"
+  ],
+  "terms": null,
+  "fields": [
+    {
+      "path": "account_id",
+      "native_type": "varchar(64)",
+      "data_type": "STRING",
+      "description": null,
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "email",
+      "native_type": "varchar(255)",
+      "data_type": "STRING",
+      "description": null,
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "closed_at",
+      "native_type": "timestamptz",
+      "data_type": "TIME",
+      "description": null,
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Insufficient-Coverage"
+  },
+  "term_parents": {}
+}
