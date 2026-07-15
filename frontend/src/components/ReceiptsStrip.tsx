@@ -88,8 +88,13 @@ export default function ReceiptsStrip({
         <Metric icon={Coins} label="Cost" value={cost} delay={0.2} />
         <Metric icon={Zap} label="Model" value={model} delay={0.25} />
 
-        <div className="ml-auto flex items-center gap-2 text-xs text-ink-400">
-          <span className="font-mono-nums">DataHub {datahub}</span>
+        <div className="ml-auto flex items-center gap-2 text-xs">
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              datahub === 'reachable' || datahub === 'up' ? 'bg-supported' : 'bg-insufficient'
+            }`}
+          />
+          <span className="font-mono-nums text-ink-400">DataHub {datahub}</span>
         </div>
       </div>
     </motion.div>
