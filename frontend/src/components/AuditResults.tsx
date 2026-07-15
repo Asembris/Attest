@@ -5,6 +5,7 @@ import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from
 import { verdictCounts, proposals as findProposals } from '../api/types';
 import ReceiptsStrip from './ReceiptsStrip';
 import ClaimCard from './ClaimCard';
+import AuditInternals from './AuditInternals';
 
 export default function AuditResults({
   record,
@@ -200,6 +201,9 @@ export default function AuditResults({
             </div>
           </div>
         )}
+
+        {/* The auditor's evidence trail — reachable, but not front-and-center. */}
+        <AuditInternals record={record} />
 
         <div className="pt-8 pb-12 text-center">
           <button onClick={onBack} className="btn-ghost text-sm">
