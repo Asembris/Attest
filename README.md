@@ -44,10 +44,15 @@ bill each other.
 
 **Session 6: the golden benchmark.** 40 hand-labeled claims, precision/recall/F1 per
 verdict, a confusion matrix, pass@k, a vacuity check that fails CI if the metrics stop
-measuring anything, and cross-family label calibration against a non-GPT model. 262
-offline tests, 5 live.
+measuring anything, and cross-family label calibration against a non-GPT model.
 
-Not built yet: the web UI, continuous monitoring, multi-tenancy, auth.
+**Sessions 7–11: hardening, a two-tier suite, and a UI.** The offline test tier moved onto
+captured fixtures — it reads no network, never skips, and gates CI — while live and
+integration tiers skip *loudly* when the catalog or a key is absent; the offline tier runs
+across cores. A React demo UI ships and is served, pre-built, from the same process as the
+API (`just demo`).
+
+Not built yet: continuous monitoring, multi-tenancy, auth.
 
 ## Receipts
 
@@ -377,7 +382,8 @@ src/attest/            Attest's own code. Talks to DataHub over raw GraphQL (htt
   writeback.py         Approved verdict -> DataHub structured properties. Queryable.
 seed/                  Seed catalog generator + ingestion recipe.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
-tests/                 Live-catalog pytest suite. The semantic layer runs offline.
+tests/                 Two-tier suite: an offline tier on captured fixtures (gates CI, never
+                       skips) plus live/integration tiers that skip loudly when GMS is down.
 ```
 
 ## Where the model boundary is drawn
@@ -799,13 +805,14 @@ just setup     # install the package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path (Session 0 spike)
 just serve     # run the API on :8003. Docs at /docs.  (8080/9002 belong to DataHub)
-just test      # the suite, across cores (-n auto). Live catalog, semantic layer offline. Free.
-just live      # the semantic layer + one full pipeline run against a REAL model.
+just test      # offline tier (fixtures) + integration tier (live GMS), across cores (-n auto).
+               # The integration tier skips loudly when DataHub is down. Free.
+just live      # the live tier: the semantic layer vs a REAL model + the anti-drift fixture pin.
                # Costs money — about $0.001. Prints the receipts quoted above.
 just matrix    # just the 12-cell coverage assertion
 just resume    # durable resume + per-run token billing, on their own. Free.
 just lint
-just check     # lint + test — what CI runs
+just check     # lint + the truly-offline tier — hermetic, what CI runs. No DataHub, no key.
 just preflight # lint + test + live. Required before pushing a prompt change.
 ```
 
@@ -829,15 +836,16 @@ Metadata auth is disabled locally, so no token is needed.
 ## Seed the catalog
 
 ```powershell
-just seed     # generate_seed.py, then `datahub ingest -c ./seed/recipe.yml`
+just seed     # generate_seed.py, `datahub ingest -c ./seed/recipe.yml`, then capture fixtures
 just probe    # proves READ / READ / WRITE / READ-BACK
-just test     # 113 tests: live catalog + the semantic layer (offline, free)
-just live     # 2 more, against a real gpt-4o-mini. Needs OPENAI_API_KEY.
+just test     # the offline tier (captured fixtures) + the integration tier (live GMS)
+just live     # the live tier: a real gpt-4o-mini + the anti-drift pin. Needs OPENAI_API_KEY.
 ```
 
 Expect `failures: []` and 90 records from ingest, and `ALL FOUR OPERATIONS PASSED` from
-the probe. The suite skips itself with a pointer to this section if DataHub isn't up —
-it will not silently pass against an empty catalog.
+the probe. The offline tier reads captured fixtures and never skips; the integration and
+live tiers skip *loudly*, with a pointer to this section, when the catalog or key is absent.
+None of them silently passes against an empty catalog.
 
 ### The suite is deterministic across machines and dates
 
