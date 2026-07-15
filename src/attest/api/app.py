@@ -28,9 +28,11 @@ from __future__ import annotations
 import logging
 import sqlite3
 from functools import lru_cache
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from attest import __version__
@@ -157,3 +159,19 @@ def approve(
             for w in writebacks
         ),
     )
+
+
+# The frontend, static-mounted at the root so the whole demo is one origin and one process
+# on :8003. This mount is registered LAST and at "/", so it is the fallback: the explicit
+# API routes above (and FastAPI's own /docs, /openapi.json) are matched first, and only paths
+# no route claims fall through to the static files. `html=True` serves index.html for the
+# app's own client-side routes.
+#
+# It is mounted ONLY if the build exists. A bare checkout or a test import has no
+# frontend/dist, and the API must come up regardless — the UI is a client of this service,
+# not a dependency of it. Build it with `just ui`.
+_FRONTEND_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+if _FRONTEND_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_FRONTEND_DIST), html=True), name="frontend")
+else:  # pragma: no cover - depends on whether the UI has been built
+    log.info("frontend not built (%s absent); serving API only", _FRONTEND_DIST)
