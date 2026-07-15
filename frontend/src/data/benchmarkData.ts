@@ -1,12 +1,14 @@
-// The benchmark page's numbers, sourced VERBATIM from the committed receipts:
-//   benchmark/results/core.json, full.json           — the metrics and confusion matrix
-//   benchmark/results/calibration*.json + README.md   — the 6-run cross-family calibration
+// The benchmark page's numbers. Every figure here traces to a committed receipt:
+//   benchmark/results/core.json, full.json   — the metrics, confusion matrix, pass@k
+//   benchmark/results/calibration*.json       — the two committed cross-family runs
 //
-// Do not "improve" these by hand. The benchmark's own suite holds them (run_eval.py, and the
-// vacuity check that proves a broken checker moves the number — benchmark/README.md), so a
-// figure edited here to look better is a figure that no longer matches what the code measures.
-// Everything the fabricated mock claimed — 300 claims, 3 engineers, a GPT-4 "AI judge"
-// accuracy baseline, temperature 0.7 — is gone, because none of it was ever measured.
+// Do not "improve" these by hand. tests/test_calibration_consistency.py asserts every
+// calibration row is arithmetically consistent and matches a committed receipt, and the
+// benchmark's own suite (run_eval.py, plus the vacuity check that proves a broken checker
+// moves the number — benchmark/README.md) holds the rest. A figure edited here to look better
+// is a figure that no longer matches what the code measures. Everything the fabricated mock
+// once claimed — 300 claims, 3 engineers, a GPT-4 "AI judge" baseline, temperature 0.7 — is
+// gone, because none of it was ever measured.
 
 export const benchmarkMeta = {
   nCases: 40,
@@ -52,29 +54,31 @@ export const confusion: { actual: string; predicted: number[] }[] = [
 ];
 
 // The cross-family calibration. Nemotron (Llama family — deliberately NOT the pipeline's GPT
-// family) re-labels the 40 cases from the same declared policy. Six runs, identical code and
-// prompt, temperature=0. The dispute set RESHUFFLES every run and no disagreement survives
-// repetition — which is the sharpest possible argument for the deterministic core: a judge
-// that answers its own question differently at temperature 0 cannot BE ground truth, only
-// calibrate it. (benchmark/README.md)
+// family) re-labels the 40 cases from the same declared policy. TWO runs are committed, both
+// 39/40 (97.5%); every value here traces to a committed receipt:
+//   benchmark/results/calibration-before-policy-declared.json  — disputed class-15
+//   benchmark/results/calibration.json (post-policy)           — disputed class-03
+// The disputed case differs between runs: declaring the governance tie-break resolved class-15
+// (signal), and an unrelated prompt change flipped Nemotron's verdict on class-03 (noise). A
+// judge that answers its own question differently at temperature 0 cannot BE ground truth —
+// only calibrate it, which is why Attest's verdicts come from code. (benchmark/README.md)
 export const calibrationMeta = {
   labeler: 'nvidia/llama-3.3-nemotron-super-49b-v1.5',
   family: 'Llama (NVIDIA Nemotron)',
   temperature: 0,
-  runs: 6,
+  runs: 2,
 };
 
 export interface CalibrationRun {
-  run: number;
+  condition: string;
   agreement: number;
+  agreed: number;
+  nCases: number;
   disputed: string[];
+  nature: 'signal' | 'noise';
 }
 
 export const calibrationRuns: CalibrationRun[] = [
-  { run: 1, agreement: 0.975, disputed: ['class-15'] },
-  { run: 2, agreement: 0.95, disputed: ['class-03', 'class-15'] },
-  { run: 3, agreement: 0.95, disputed: ['class-03', 'class-13'] },
-  { run: 4, agreement: 0.975, disputed: ['class-03'] },
-  { run: 5, agreement: 0.975, disputed: [] },
-  { run: 6, agreement: 0.95, disputed: [] },
+  { condition: 'before policy tie-break declared', agreement: 0.975, agreed: 39, nCases: 40, disputed: ['class-15'], nature: 'signal' },
+  { condition: 'after policy tie-break declared', agreement: 0.975, agreed: 39, nCases: 40, disputed: ['class-03'], nature: 'noise' },
 ];
