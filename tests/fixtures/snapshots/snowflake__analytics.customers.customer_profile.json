@@ -1,0 +1,88 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+  "name": "customer_profile",
+  "platform": "snowflake",
+  "description": "One row per customer. The canonical customer record; everything downstream joins to this.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:alice.chen"
+  ],
+  "tags": [
+    "urn:li:tag:PII",
+    "urn:li:tag:Tier1",
+    "urn:li:tag:Verified"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:EmailAddress",
+    "urn:li:glossaryTerm:PersonName",
+    "urn:li:glossaryTerm:CustomerIdentifier"
+  ],
+  "fields": [
+    {
+      "path": "customer_id",
+      "native_type": "VARCHAR(36)",
+      "data_type": "STRING",
+      "description": "Surrogate key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:CustomerIdentifier"
+      ]
+    },
+    {
+      "path": "email",
+      "native_type": "VARCHAR(255)",
+      "data_type": "STRING",
+      "description": "Primary contact email.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:EmailAddress"
+      ]
+    },
+    {
+      "path": "full_name",
+      "native_type": "VARCHAR(200)",
+      "data_type": "STRING",
+      "description": "Customer's full name.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:PersonName"
+      ]
+    },
+    {
+      "path": "signup_ts",
+      "native_type": "TIMESTAMP_NTZ",
+      "data_type": "TIME",
+      "description": "When the customer signed up.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "is_active",
+      "native_type": "BOOLEAN",
+      "data_type": "BOOLEAN",
+      "description": "Whether the account is active.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Supported",
+    "hasPII": "true"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:EmailAddress": [
+      "urn:li:glossaryNode:PII"
+    ],
+    "urn:li:glossaryTerm:PersonName": [
+      "urn:li:glossaryNode:PII"
+    ],
+    "urn:li:glossaryTerm:CustomerIdentifier": []
+  }
+}

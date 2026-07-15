@@ -1,0 +1,63 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD)",
+  "name": "support_tickets",
+  "platform": "postgres",
+  "description": "Customer support tickets. One row per ticket.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:carol.davis"
+  ],
+  "tags": [
+    "urn:li:tag:Tier2"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:CustomerIdentifier"
+  ],
+  "fields": [
+    {
+      "path": "ticket_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "Primary key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "user_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "FK to users.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:CustomerIdentifier"
+      ]
+    },
+    {
+      "path": "subject",
+      "native_type": "text",
+      "data_type": "STRING",
+      "description": "Ticket subject line.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "opened_at",
+      "native_type": "timestamptz",
+      "data_type": "TIME",
+      "description": "When the ticket was opened.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Supported"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:CustomerIdentifier": []
+  }
+}

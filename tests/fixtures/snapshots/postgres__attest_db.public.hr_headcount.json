@@ -1,0 +1,64 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD)",
+  "name": "hr_headcount",
+  "platform": "postgres",
+  "description": "Headcount and compensation by employee. Classified with tags only — the HR domain never adopted the glossary.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:dana.wu"
+  ],
+  "tags": [
+    "urn:li:tag:PII",
+    "urn:li:tag:Sensitive",
+    "urn:li:tag:Tier1",
+    "urn:li:tag:Verified"
+  ],
+  "terms": null,
+  "fields": [
+    {
+      "path": "employee_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "Primary key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "home_address",
+      "native_type": "text",
+      "data_type": "STRING",
+      "description": "Residential address.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "salary_usd",
+      "native_type": "numeric(12,2)",
+      "data_type": "NUMBER",
+      "description": "Annual salary.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "department",
+      "native_type": "varchar(64)",
+      "data_type": "STRING",
+      "description": "Cost centre.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Contradicted"
+  },
+  "term_parents": {}
+}

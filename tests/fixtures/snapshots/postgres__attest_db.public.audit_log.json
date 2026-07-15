@@ -1,0 +1,57 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD)",
+  "name": "audit_log",
+  "platform": "postgres",
+  "description": "Append-only record of privileged actions. Nobody ever classified the table itself; one column was tagged when it was added.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:dana.wu"
+  ],
+  "tags": [
+    "urn:li:tag:Tier2"
+  ],
+  "terms": null,
+  "fields": [
+    {
+      "path": "entry_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "Primary key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "actor_email",
+      "native_type": "varchar(255)",
+      "data_type": "STRING",
+      "description": "Who performed the action.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "action",
+      "native_type": "varchar(64)",
+      "data_type": "STRING",
+      "description": "What they did.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "occurred_at",
+      "native_type": "timestamptz",
+      "data_type": "TIME",
+      "description": "When they did it.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Contradicted"
+  },
+  "term_parents": {}
+}

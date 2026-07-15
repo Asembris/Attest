@@ -1,0 +1,69 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+  "name": "marketing_leads",
+  "platform": "postgres",
+  "description": "Inbound leads from the website. Classified with the glossary only — the marketing domain adopted terms and never applied tags.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:carol.davis"
+  ],
+  "tags": [
+    "urn:li:tag:Tier2"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:EmailAddress",
+    "urn:li:glossaryTerm:PersonName"
+  ],
+  "fields": [
+    {
+      "path": "lead_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "Primary key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "work_email",
+      "native_type": "varchar(255)",
+      "data_type": "STRING",
+      "description": "Lead's work address.",
+      "tags": [],
+      "terms": [
+        "urn:li:glossaryTerm:EmailAddress"
+      ]
+    },
+    {
+      "path": "contact_name",
+      "native_type": "varchar(200)",
+      "data_type": "STRING",
+      "description": "Lead's full name.",
+      "tags": [],
+      "terms": [
+        "urn:li:glossaryTerm:PersonName"
+      ]
+    },
+    {
+      "path": "source_campaign",
+      "native_type": "varchar(64)",
+      "data_type": "STRING",
+      "description": "Attribution campaign.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Contradicted"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:EmailAddress": [
+      "urn:li:glossaryNode:PII"
+    ],
+    "urn:li:glossaryTerm:PersonName": [
+      "urn:li:glossaryNode:PII"
+    ]
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD)",
+  "name": "users",
+  "platform": "postgres",
+  "description": "Application user accounts. Source of truth for auth.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:dana.wu"
+  ],
+  "tags": [
+    "urn:li:tag:PII",
+    "urn:li:tag:Tier1"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:EmailAddress",
+    "urn:li:glossaryTerm:PersonName"
+  ],
+  "fields": [
+    {
+      "path": "user_id",
+      "native_type": "uuid",
+      "data_type": "STRING",
+      "description": "Primary key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "email",
+      "native_type": "varchar(255)",
+      "data_type": "STRING",
+      "description": "Login email. Unique.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:EmailAddress"
+      ]
+    },
+    {
+      "path": "first_name",
+      "native_type": "varchar(100)",
+      "data_type": "STRING",
+      "description": "Given name.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:PersonName"
+      ]
+    },
+    {
+      "path": "last_name",
+      "native_type": "varchar(100)",
+      "data_type": "STRING",
+      "description": "Family name.",
+      "tags": [
+        "urn:li:tag:PII"
+      ],
+      "terms": [
+        "urn:li:glossaryTerm:PersonName"
+      ]
+    },
+    {
+      "path": "created_at",
+      "native_type": "timestamptz",
+      "data_type": "TIME",
+      "description": "Account creation time.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Supported",
+    "hasPII": "true"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:EmailAddress": [
+      "urn:li:glossaryNode:PII"
+    ],
+    "urn:li:glossaryTerm:PersonName": [
+      "urn:li:glossaryNode:PII"
+    ]
+  }
+}

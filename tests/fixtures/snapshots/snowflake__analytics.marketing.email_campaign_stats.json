@@ -1,0 +1,67 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+  "name": "email_campaign_stats",
+  "platform": "snowflake",
+  "description": "Per-recipient campaign engagement. Recipients are joined on a salted hash; the raw address is never landed here.",
+  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "owners": [
+    "urn:li:corpuser:carol.davis"
+  ],
+  "tags": [
+    "urn:li:tag:NonPII",
+    "urn:li:tag:Tier2",
+    "urn:li:tag:Verified"
+  ],
+  "terms": [
+    "urn:li:glossaryTerm:CustomerIdentifier",
+    "urn:li:glossaryTerm:EmailAddress"
+  ],
+  "fields": [
+    {
+      "path": "campaign_id",
+      "native_type": "VARCHAR(36)",
+      "data_type": "STRING",
+      "description": "Campaign key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "recipient_email_hash",
+      "native_type": "VARCHAR(64)",
+      "data_type": "STRING",
+      "description": "SHA-256 of the lowercased address, salted. Not reversible; reviewed and classified as non-personal.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "opened",
+      "native_type": "BOOLEAN",
+      "data_type": "BOOLEAN",
+      "description": "Whether the email was opened.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "clicked",
+      "native_type": "BOOLEAN",
+      "data_type": "BOOLEAN",
+      "description": "Whether any link was clicked.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {
+    "seeded_by": "attest/seed/generate_seed.py",
+    "exercises_verdict": "Contradicted"
+  },
+  "term_parents": {
+    "urn:li:glossaryTerm:CustomerIdentifier": [],
+    "urn:li:glossaryTerm:EmailAddress": [
+      "urn:li:glossaryNode:PII"
+    ]
+  }
+}
