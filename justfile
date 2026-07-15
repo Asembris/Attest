@@ -57,8 +57,14 @@ ui:
     $env:NODE_USE_SYSTEM_CA="1"; cd frontend; npm install; if ($?) { npm run build }
     @Write-Host "frontend built -> frontend/dist. Run 'just serve' and open http://localhost:8003"
 
-# The whole demo, one command: build the UI, then serve it and the API from one process.
-demo: ui serve
+# The whole demo, one command, ONE process. Build the UI into frontend/dist, then serve the
+# SPA and the API from a single uvicorn on :8003 (the build is static-mounted under FastAPI,
+# app.py). This is the demo ARTIFACT — no Vite dev server on :5173, no second process, no
+# --reload supervisor: a judge runs `just demo` and opens http://localhost:8003 for the whole
+# thing. (Use `just serve` for API-only dev with reload; `just ui` then `just serve` to iterate.)
+demo: ui
+    @Write-Host "Attest demo -> open http://localhost:8003  (UI + API, one process)"
+    python -m uvicorn attest.api.app:app --port {{env("ATTEST_API_PORT", "8003")}}
 
 # --- verification ------------------------------------------------------------
 

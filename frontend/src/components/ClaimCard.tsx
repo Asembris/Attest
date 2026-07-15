@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ChevronDown, Database, Sparkles, FileText } from 'lucide-react';
+import { ChevronDown, Database, Sparkles, FileText, ExternalLink } from 'lucide-react';
 import type { ClaimRecord, WriteBackView } from '../api/types';
+import { datahubDatasetUrl } from '../api/types';
 import VerdictBadge from './VerdictBadge';
 import EvidencePanel from './EvidencePanel';
 import CorrectionPanel from './CorrectionPanel';
@@ -92,8 +93,18 @@ export default function ClaimCard({
               </div>
 
               {/* Cited evidence */}
-              <div className="flex items-center gap-1.5 text-label-sm mb-1">
-                <Database size={11} /> Evidence
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5 text-label-sm">
+                  <Database size={11} /> Evidence
+                </div>
+                <a
+                  href={datahubDatasetUrl(claim.target_urn)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1 text-xs text-accent-400 hover:text-accent transition-colors font-medium"
+                >
+                  View in DataHub <ExternalLink size={11} />
+                </a>
               </div>
               <EvidencePanel evidence={claim.evidence} claimType={claim.claim_type} />
 
