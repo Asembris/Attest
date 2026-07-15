@@ -80,7 +80,7 @@ def audited(*replies: str, max_retries: int = 2) -> AuditRecord:
         max_retries=max_retries,
     )
     report = p.run(f"{SF} is owned by someone.", thread_id="run-1")
-    return from_report(report, run_id="run-1", source_agent="analyst-bot")
+    return from_report(report, run_id="run-1", source_agent="analyst-bot", created_at=NOW)
 
 
 # --- the round trip ----------------------------------------------------------
