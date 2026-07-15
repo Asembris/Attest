@@ -81,6 +81,17 @@ class NotResumable(ServiceError):
     """The run is not parked at a checkpoint — nothing here is waiting on a human."""
 
 
+class TrajectoryViolation(ServiceError):
+    """The run violated its own architecture and is therefore un-approvable.
+
+    A trajectory invariant failed (trajectory.py) — a checker may have called a model, an
+    explanation may have skipped the guard, a correction may have been proposed without
+    re-verification. The report is not trustworthy evidence, so nothing it proposes may reach
+    the catalog. This is the hard gate the flag exists to enforce: a detected violation must
+    be UN-shippable, not merely logged.
+    """
+
+
 class AuditService:
     def __init__(
         self,
@@ -119,15 +130,16 @@ class AuditService:
         )
         self.store.save(record)
 
-        if report.status is RunStatus.COMPLETE:
-            # Nothing is waiting on a human, so nothing needs the typed ledger any more.
-            # Left alone, these accumulate for the life of the process — a service is a
-            # long-lived process, which a one-shot CLI was not.
+        if report.status is not RunStatus.AWAITING_REVIEW:
+            # Nothing is waiting on a human, so nothing needs the typed ledger any more —
+            # and this now covers FLAGGED runs too, which are terminal (un-approvable) and so
+            # keep no pause worth holding. Left alone, ledgers accumulate for the life of the
+            # process — a service is a long-lived process, which a one-shot CLI was not.
             self.pipeline.forget(run_id)
 
         if not report.trajectory.ok:
             log.error(
-                "run %s violated its own architecture: %s",
+                "run %s violated its own architecture and is FLAGGED (un-approvable): %s",
                 run_id,
                 report.trajectory.summary,
             )
@@ -157,6 +169,19 @@ class AuditService:
         stored = self.store.load(run_id)
         if stored is None:
             raise RunNotFound(f"no such audit run: {run_id}")
+        if stored.status is RunStatus.FLAGGED or not stored.receipts.trajectory_ok:
+            # THE HARD GATE. A run that violated its own architecture cannot be approved and
+            # nothing it proposes may reach the catalog — the write-back path is closed to it
+            # here, before any rehydrate or resume. A trajectory violation used to be logged
+            # and the report stored, served, and approvable anyway; that made the strongest
+            # claim in the system (NO_LLM_IN_THE_VERDICT_PATH, and the correction invariants)
+            # enforceable only by whoever happened to read the log. Now it blocks the sign-off.
+            raise TrajectoryViolation(
+                f"run {run_id} is flagged: it violated its own architecture and cannot be "
+                f"approved. {stored.receipts.trajectory_summary}. A report whose trajectory "
+                f"failed is not trustworthy evidence, and a correction it proposes must not "
+                f"reach the catalog."
+            )
         if stored.status is not RunStatus.AWAITING_REVIEW:
             raise NotResumable(
                 f"run {run_id} is {stored.status.value}: it has no proposals awaiting a "
@@ -177,6 +202,16 @@ class AuditService:
             )
 
         report = self.pipeline.resume(run_id, decisions)
+
+        if not report.trajectory.ok:
+            # The stored report was clean but the resumed one is not. The graph is
+            # deterministic, so this is not expected — but the write-back path runs AFTER
+            # resume, so this is the last point before the catalog is touched, and the gate
+            # holds here too. Nothing has been written; the run stays parked and flagged.
+            raise TrajectoryViolation(
+                f"run {run_id} violated its own architecture on resume and cannot be "
+                f"approved: {report.trajectory.summary}."
+            )
 
         settled = record_module.from_report(
             report,

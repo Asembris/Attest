@@ -783,8 +783,13 @@ class Pipeline:
         )
         if not verified.ok:
             # Loud, because a trajectory violation means the pipeline did not do what this
-            # report says it did — which makes the report itself untrustworthy.
+            # report says it did — which makes the report itself untrustworthy. And it is a
+            # HARD GATE, not just an alarm (Session 13): the run is FLAGGED, which overrides
+            # both COMPLETE and AWAITING_REVIEW and makes it un-approvable. A report that
+            # violated an invariant must not be signable off, however parked its graph is —
+            # the write-back path is closed to it in api/service.approve.
             log.error("TRAJECTORY VIOLATION: %s", verified.summary)
+            status = RunStatus.FLAGGED
 
         return AuditReport(
             source_text=ledger.source_text,
