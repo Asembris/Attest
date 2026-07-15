@@ -1,16 +1,23 @@
 import { motion } from 'framer-motion';
-import { ArrowLeft, BarChart3, ShieldCheck } from 'lucide-react';
-import { claims, auditReceipt } from '../data/mockData';
+import { ArrowLeft, BarChart3, ShieldCheck, AlertTriangle } from 'lucide-react';
+import type { AuditRecord, HealthResponse } from '../api/types';
+import { verdictCounts } from '../api/types';
 import ReceiptsStrip from './ReceiptsStrip';
 import ClaimCard from './ClaimCard';
 
 export default function AuditResults({
+  record,
+  health,
   onBack,
   onShowBenchmark,
 }: {
+  record: AuditRecord;
+  health: HealthResponse | null;
   onBack: () => void;
   onShowBenchmark: () => void;
 }) {
+  const counts = verdictCounts(record);
+
   return (
     <div className="min-h-screen bg-ink-950">
       {/* Header */}
@@ -41,16 +48,21 @@ export default function AuditResults({
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <h1 className="font-serif text-headline font-light text-ink-50">
-            Audit Complete
-          </h1>
+          <h1 className="font-serif text-headline font-light text-ink-50">Audit Complete</h1>
           <p className="mt-2 text-ink-300 text-sm">
-            {auditReceipt.totalClaims} claims verified against your data catalog. Expand any claim to review evidence.
+            {record.claims.length} claim{record.claims.length === 1 ? '' : 's'} verified against the
+            DataHub catalog. Expand any claim to review the cited evidence.
           </p>
         </motion.div>
 
         {/* Receipts strip */}
-        <ReceiptsStrip receipt={auditReceipt} />
+        <ReceiptsStrip
+          receipts={record.receipts}
+          status={record.status}
+          model={health?.model ?? '—'}
+          datahub={health ? health.datahub : '—'}
+          claimCount={record.claims.length}
+        />
 
         {/* Summary breakdown */}
         <motion.div
@@ -61,24 +73,48 @@ export default function AuditResults({
         >
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-supported" />
-            <span className="font-mono-nums text-ink-200">{auditReceipt.supported} Supported</span>
+            <span className="font-mono-nums text-ink-200">{counts.Supported} Supported</span>
           </span>
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-contradicted" />
-            <span className="font-mono-nums text-ink-200">{auditReceipt.contradicted} Contradicted</span>
+            <span className="font-mono-nums text-ink-200">{counts.Contradicted} Contradicted</span>
           </span>
           <span className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-insufficient" />
-            <span className="font-mono-nums text-ink-200">{auditReceipt.insufficient} Insufficient</span>
+            <span className="font-mono-nums text-ink-200">
+              {counts['Insufficient-Coverage']} Insufficient
+            </span>
           </span>
         </motion.div>
 
         {/* Claim cards */}
         <div className="space-y-3 pt-2">
-          {claims.map((claim, i) => (
-            <ClaimCard key={claim.id} claim={claim} index={i} />
+          {record.claims.map((claim, i) => (
+            <ClaimCard key={claim.index} claim={claim} index={i} />
           ))}
         </div>
+
+        {/* Claims that could not be checked at all — NOT verdicts, surfaced not swallowed. */}
+        {record.errors.length > 0 && (
+          <div className="surface-card p-5 border-contradicted/20">
+            <div className="flex items-center gap-2 mb-2 text-sm text-contradicted">
+              <AlertTriangle size={14} /> {record.errors.length} claim
+              {record.errors.length === 1 ? '' : 's'} could not be checked
+            </div>
+            <p className="text-xs text-ink-400 mb-3">
+              The question was malformed (e.g. the entity does not exist). This is not a verdict —
+              the catalog neither agrees nor is silent.
+            </p>
+            <div className="space-y-2">
+              {record.errors.map((e) => (
+                <div key={e.index} className="text-xs">
+                  <span className="font-mono-nums text-ink-300 break-words">{e.target_urn}</span>
+                  <span className="text-ink-400"> — {e.error}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="pt-8 pb-12 text-center">
           <button onClick={onBack} className="btn-ghost text-sm">

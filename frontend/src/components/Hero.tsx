@@ -1,6 +1,6 @@
 import { useState, Suspense, lazy } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, BarChart3, ShieldCheck } from 'lucide-react';
+import { ArrowRight, BarChart3, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { sampleAgentOutput } from '../data/mockData';
 
 const HeroLattice = lazy(() => import('./HeroLattice'));
@@ -8,9 +8,11 @@ const HeroLattice = lazy(() => import('./HeroLattice'));
 export default function Hero({
   onRunAudit,
   onShowBenchmark,
+  error,
 }: {
-  onRunAudit: () => void;
+  onRunAudit: (text: string) => void;
   onShowBenchmark: () => void;
+  error?: string | null;
 }) {
   const [text, setText] = useState(sampleAgentOutput);
   const [reducedMotion] = useState(
@@ -36,10 +38,7 @@ export default function Hero({
           <ShieldCheck size={20} className="text-supported" strokeWidth={2.5} />
           <span className="font-serif text-lg font-medium tracking-tight">Attest</span>
         </div>
-        <button
-          onClick={onShowBenchmark}
-          className="btn-ghost text-sm"
-        >
+        <button onClick={onShowBenchmark} className="btn-ghost text-sm">
           <BarChart3 size={15} />
           Evidence &amp; Benchmark
         </button>
@@ -92,10 +91,10 @@ export default function Hero({
             />
             <div className="flex items-center justify-between px-3 pb-3">
               <span className="text-xs text-ink-400 px-2">
-                Claims are checked against your live data catalog.
+                Claims are checked against your live DataHub catalog.
               </span>
               <button
-                onClick={onRunAudit}
+                onClick={() => onRunAudit(text)}
                 disabled={!text.trim()}
                 className="btn-primary group disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -106,14 +105,16 @@ export default function Hero({
           </div>
         </motion.div>
 
-        <motion.p
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.7, delay: 0.7 }}
-          className="mt-6 text-xs text-ink-400"
-        >
-          No data leaves your browser — this demo runs on realistic mock catalog data.
-        </motion.p>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            className="mt-6 flex items-center gap-2 text-sm text-contradicted max-w-2xl"
+          >
+            <AlertTriangle size={15} />
+            {error}
+          </motion.div>
+        )}
       </div>
     </div>
   );
