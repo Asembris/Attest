@@ -122,6 +122,39 @@ def test_a_model_that_disagrees_with_the_verdict_is_overruled_and_surfaced(snaps
     assert result.verdict is Verdict.CONTRADICTED
 
 
+def test_the_reproduced_fluent_lie_cannot_ship(snapshot):
+    """THE COUNTEREXAMPLE, from the external audit. This exact draft shipped as source=model.
+
+    A Contradicted verdict, prose that says "the catalog supports the claim", an HONEST
+    self-reported implied_verdict (Contradicted, so crosscheck sees no disagreement), and no
+    cited fields (so no uncited-field conflict). Every token in the prose is ordinary, so the
+    faithfulness guard passes it clean — and it is the exact opposite of its own verdict.
+
+    Before Session 13 this returned source="model", guard_ok=True, conflicts=(). The polarity
+    guard is what makes it impossible now: it degrades to the deterministic template, which
+    states the true direction. If this test goes green with the polarity check removed, the
+    hole is back.
+    """
+    result = contradicted(snapshot)
+    chat = FakeChat(
+        replies=[
+            explanation_reply("the catalog supports the claim", "Contradicted", []),
+            explanation_reply("the catalog supports the claim", "Contradicted", []),
+        ]
+    )
+
+    written = explain(result, llm=LLM(client=chat))
+
+    assert written.is_fallback, "an explanation asserting the opposite of its verdict shipped"
+    assert written.source == "template"
+    assert written.text == template(result)
+    assert written.conflicts == (), "the model was honest about its verdict; polarity caught it"
+    assert written.polarity is not None and written.polarity.ok, (
+        "the template that shipped must itself be polarity-safe"
+    )
+    assert any("affirm" in r and "deny" in r for r in written.rejected), written.rejected
+
+
 def test_a_field_the_checker_never_read_is_a_conflict(snapshot):
     """"I concluded this from X" — where X is not among the fields the checker looked at."""
     result = contradicted(snapshot)

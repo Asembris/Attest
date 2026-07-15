@@ -60,6 +60,7 @@ from attest.explain import explain
 from attest.faithfulness import check as check_faithfulness
 from attest.graph import Pipeline
 from attest.llm import LLM
+from attest.polarity import check as check_polarity
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
 from attest.store import AuditStore
 from attest.trajectory import RECHECK, REVISE, Rule
@@ -133,6 +134,14 @@ def test_explanations_are_faithful_and_the_verdict_is_never_moved(snapshot, now)
             f"{written.faithfulness.summary}"
         )
         assert check_faithfulness(written.text, result).ok
+
+        # And it never asserts a direction the verdict did not reach (Session 13): a live
+        # explanation that says "supports" beside a Contradicted verdict is the fluent lie
+        # this guard exists to stop, and what ships must be free of it.
+        assert check_polarity(written.text, result).ok, (
+            f"shipped an explanation whose direction contradicts its verdict for "
+            f"{claim.raw_text}: {check_polarity(written.text, result).summary}"
+        )
 
         # The deterministic verdict is untouched by anything the model said.
         assert result.verdict is expected, f"the checker moved on {claim.raw_text}"
