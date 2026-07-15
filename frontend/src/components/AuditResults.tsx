@@ -30,7 +30,14 @@ export default function AuditResults({
   const reviewMode = record.status === 'awaiting-review' && proposals.length > 0;
 
   const [decisions, setDecisions] = useState<Record<number, boolean>>({});
-  const allDecided = proposals.every((p) => decisions[p.index] !== undefined);
+  // The review gate counts ONLY decidable proposals — corrections that re-verified clean
+  // and are still PENDING (findProposals). A non-decidable outcome (stood-firm, refused,
+  // exhausted) and every Supported / Insufficient-Coverage claim has no Approve/Reject
+  // control at all, so it must never count toward the total; otherwise Submit would wait on
+  // a decision that can never be made. `decided` is measured over `proposals`, not over the
+  // whole `decisions` map, so the count can never outrun what is actually approvable.
+  const decided = proposals.filter((p) => decisions[p.index] !== undefined).length;
+  const allDecided = decided === proposals.length;
 
   function submit() {
     const payload: DecisionRequest[] = proposals.map((p) => ({
@@ -132,7 +139,7 @@ export default function AuditResults({
                 {approving ? 'Submitting…' : 'Submit decisions'}
               </button>
               <span className="text-xs text-ink-400">
-                {Object.keys(decisions).length}/{proposals.length} decided
+                {decided}/{proposals.length} decided
               </span>
             </div>
             {approveError && (
