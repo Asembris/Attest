@@ -754,10 +754,16 @@ def dataset_mcps(ds: Dataset) -> list[MetadataChangeProposalWrapper]:
                     else None
                 ),
                 customProperties={
-                    "seeded_by": "attest/seed/generate_seed.py",
-                    "exercises_verdict": ds.exercises,
-                    # Absent unless a classifier scanned this table. Absence is silence,
-                    # not a clean bill — see PII_SIGNALS in attest/checkers/policy.py.
+                    # Only real catalog signals live here — no seed scaffolding. `seeded_by`
+                    # and `exercises_verdict` (the answer-key verdict a dataset is built to
+                    # exercise) were dropped: the answer key sitting on the audited entity
+                    # made independent verification read as circular, and a `seeded_by` of
+                    # this script announced the whole catalog as synthetic. Neither was read
+                    # by any checker; the coverage verdict already lives in ground_truth.json.
+                    #
+                    # `hasPII` stays — it is load-bearing (PII_SIGNALS #3 in policy.py, the
+                    # property-only witness is device_telemetry). Absent unless a classifier
+                    # scanned this table; absence is silence, not a clean bill.
                     **(
                         {HAS_PII_PROPERTY: "true" if ds.has_pii else "false"}
                         if ds.has_pii is not None

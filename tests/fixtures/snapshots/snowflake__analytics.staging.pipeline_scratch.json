@@ -39,9 +39,6 @@
       "terms": []
     }
   ],
-  "custom_properties": {
-    "seeded_by": "attest/seed/generate_seed.py",
-    "exercises_verdict": "Insufficient-Coverage"
-  },
+  "custom_properties": {},
   "term_parents": {}
 }

@@ -3,7 +3,7 @@
   "name": "marketing_leads",
   "platform": "postgres",
   "description": "Inbound leads from the website. Classified with the glossary only — the marketing domain adopted terms and never applied tags.",
-  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "last_modified": "2026-07-15T14:20:41.353000Z",
   "owners": [
     "urn:li:corpuser:carol.davis"
   ],
@@ -54,10 +54,7 @@
       "terms": []
     }
   ],
-  "custom_properties": {
-    "seeded_by": "attest/seed/generate_seed.py",
-    "exercises_verdict": "Contradicted"
-  },
+  "custom_properties": {},
   "term_parents": {
     "urn:li:glossaryTerm:EmailAddress": [
       "urn:li:glossaryNode:PII"

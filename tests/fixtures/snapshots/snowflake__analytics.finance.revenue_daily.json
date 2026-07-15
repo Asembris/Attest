@@ -3,7 +3,7 @@
   "name": "revenue_daily",
   "platform": "snowflake",
   "description": "Daily gross revenue by region. Rebuilt nightly — or it was.",
-  "last_modified": "2025-05-22T18:58:37.116000Z",
+  "last_modified": "2025-05-24T20:20:41.353000Z",
   "owners": [
     "urn:li:corpuser:bob.martinez"
   ],
@@ -41,10 +41,7 @@
       ]
     }
   ],
-  "custom_properties": {
-    "seeded_by": "attest/seed/generate_seed.py",
-    "exercises_verdict": "Contradicted"
-  },
+  "custom_properties": {},
   "term_parents": {
     "urn:li:glossaryTerm:Revenue": []
   }

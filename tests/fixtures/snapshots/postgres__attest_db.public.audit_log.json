@@ -3,7 +3,7 @@
   "name": "audit_log",
   "platform": "postgres",
   "description": "Append-only record of privileged actions. Nobody ever classified the table itself; one column was tagged when it was added.",
-  "last_modified": "2026-07-13T12:58:37.116000Z",
+  "last_modified": "2026-07-15T14:20:41.353000Z",
   "owners": [
     "urn:li:corpuser:dana.wu"
   ],
@@ -49,9 +49,6 @@
       "terms": []
     }
   ],
-  "custom_properties": {
-    "seeded_by": "attest/seed/generate_seed.py",
-    "exercises_verdict": "Contradicted"
-  },
+  "custom_properties": {},
   "term_parents": {}
 }
