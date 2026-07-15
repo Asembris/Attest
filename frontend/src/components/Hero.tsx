@@ -1,7 +1,8 @@
-import { useState, Suspense, lazy } from 'react';
+import { useState, useRef, Suspense, lazy } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight, BarChart3, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { sampleAgentOutput } from '../data/mockData';
+import UrnPicker from './UrnPicker';
 
 const HeroLattice = lazy(() => import('./HeroLattice'));
 
@@ -15,9 +16,28 @@ export default function Hero({
   error?: string | null;
 }) {
   const [text, setText] = useState(sampleAgentOutput);
+  const taRef = useRef<HTMLTextAreaElement>(null);
   const [reducedMotion] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
+
+  // Insert a picked seeded URN at the textarea cursor (append if it is not focused), then
+  // restore the caret just after the inserted URN so the user can keep composing.
+  function insertUrn(urn: string) {
+    const ta = taRef.current;
+    if (!ta) {
+      setText((t) => (t ? `${t} ${urn}` : urn));
+      return;
+    }
+    const start = ta.selectionStart ?? text.length;
+    const end = ta.selectionEnd ?? text.length;
+    setText(text.slice(0, start) + urn + text.slice(end));
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = start + urn.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  }
 
   return (
     <div className="relative min-h-screen flex flex-col overflow-hidden">
@@ -80,9 +100,13 @@ export default function Hero({
           <div className="surface-card p-1.5 backdrop-blur-sm bg-ink-850/80">
             <div className="flex items-center justify-between px-4 py-2.5 border-b border-ink-700/40">
               <span className="text-label-sm">Paste AI Agent Output</span>
-              <span className="text-xs text-ink-400 font-mono-nums">{text.length} chars</span>
+              <div className="flex items-center gap-4">
+                <UrnPicker onPick={insertUrn} />
+                <span className="text-xs text-ink-400 font-mono-nums">{text.length} chars</span>
+              </div>
             </div>
             <textarea
+              ref={taRef}
               value={text}
               onChange={(e) => setText(e.target.value)}
               rows={7}

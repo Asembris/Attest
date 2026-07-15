@@ -214,3 +214,9 @@ export function verdictCounts(record: AuditRecord): Record<Verdict, number> {
 export function corpuserId(urn: string): string {
   return urn.split(':').pop() ?? urn;
 }
+
+/** The DataHub UI page for a dataset URN — the live catalog behind the audit, on :9002 in
+ *  the demo. The URN is URL-encoded whole; DataHub decodes it on the dataset route. */
+export function datahubDatasetUrl(urn: string): string {
+  return `http://localhost:9002/dataset/${encodeURIComponent(urn)}`;
+}
