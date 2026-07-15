@@ -39,6 +39,16 @@ export default function AuditResults({
   const decided = proposals.filter((p) => decisions[p.index] !== undefined).length;
   const allDecided = decided === proposals.length;
 
+  // Bug 2: the DataHub indicator reflects THIS run's actual catalog reachability, not the
+  // mount-time health probe (which is fetched once and sticks — a transient warm-up failure
+  // would report a false outage for the whole session). A ClaimRecord exists only for an
+  // entity that resolved: the graph drops an unresolvable URN into `errors`, never into
+  // `claims`. So any verdict at all is proof the catalog was reached during the run. A
+  // genuine per-URN failure is not hidden — it still surfaces below as a claim that could
+  // not be checked.
+  const catalogReached = record.claims.length > 0;
+  const datahubStatus = catalogReached ? 'reachable' : health?.datahub ?? '—';
+
   function submit() {
     const payload: DecisionRequest[] = proposals.map((p) => ({
       claim_index: p.index,
@@ -86,7 +96,7 @@ export default function AuditResults({
           receipts={record.receipts}
           status={record.status}
           model={health?.model ?? '—'}
-          datahub={health ? health.datahub : '—'}
+          datahub={datahubStatus}
           claimCount={record.claims.length}
         />
 
