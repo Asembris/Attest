@@ -26,7 +26,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.9"]
+# pytest-xdist parallelizes the OFFLINE suite across cores (`-n auto`, wired into `just
+# test`/`just check`). The live suite stays serial -- it writes to a shared catalog, and
+# conftest.py refuses to run it under parallel workers. See tests/conftest.py.
+dev = ["pytest>=8", "pytest-xdist>=3.6", "ruff>=0.9"]
 # The benchmark's metrics. sklearn, not a hand-rolled count: the arithmetic of a metric is
 # exactly where a quiet off-by-one produces a plausible number that is wrong, and a
 # benchmark's own arithmetic is the last thing that should be bespoke. NOT a runtime

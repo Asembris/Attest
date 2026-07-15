@@ -796,7 +796,7 @@ just setup     # install the package + dev deps
 just seed      # generate seed metadata and ingest it
 just probe     # prove DataHub's read/write path (Session 0 spike)
 just serve     # run the API on :8003. Docs at /docs.  (8080/9002 belong to DataHub)
-just test      # the suite: live catalog, semantic layer offline. Free.
+just test      # the suite, across cores (-n auto). Live catalog, semantic layer offline. Free.
 just live      # the semantic layer + one full pipeline run against a REAL model.
                # Costs money — about $0.001. Prints the receipts quoted above.
 just matrix    # just the 12-cell coverage assertion
