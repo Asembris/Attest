@@ -206,9 +206,9 @@ function DeterminismContrast() {
           transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
           className="font-serif text-2xl lg:text-3xl font-light text-ink-50 leading-snug text-balance"
         >
-          Asked to re-label the same {benchmarkMeta.nCases} claims six times, an independent model
-          family <span className="text-contradicted">disputed a different set each run</span>.
-          Attest's core returned the{' '}
+          Across two runs re-labeling the same {benchmarkMeta.nCases} claims, an independent model
+          family <span className="text-contradicted">disputed a different case each time — and flipped
+          a verdict at temperature 0</span>. Attest's core returned the{' '}
           <span className="text-supported">same {perVerdict.reduce((s, v) => s + v.support, 0)} verdicts every time</span>.
         </motion.blockquote>
       </div>
@@ -248,18 +248,21 @@ function DeterminismContrast() {
           <div className="space-y-1.5">
             {calibrationRuns.map((r, i) => (
               <motion.div
-                key={r.run}
+                key={r.condition}
                 initial={{ opacity: 0, x: 10 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.3 + i * 0.08 }}
                 className="flex items-center gap-3 p-2.5 rounded-lg bg-ink-800/60 border border-ink-700/40"
               >
-                <span className="text-label-sm w-10">Run {r.run}</span>
+                <span className="text-label-sm w-12">{i === 0 ? 'pre' : 'post'}</span>
                 <span className="font-mono-nums text-xs text-ink-400 w-14">{pct(r.agreement)}</span>
-                <span
-                  className={`font-mono-nums text-sm ${r.disputed.length === 0 ? 'text-supported' : 'text-contradicted'}`}
-                >
+                <span className="font-mono-nums text-sm text-contradicted">
                   {disputedLabel(r.disputed)}
+                </span>
+                <span
+                  className={`text-label-sm ml-auto ${r.nature === 'signal' ? 'text-supported' : 'text-ink-400'}`}
+                >
+                  {r.nature}
                 </span>
               </motion.div>
             ))}
@@ -268,14 +271,14 @@ function DeterminismContrast() {
       </div>
 
       <p className="mt-6 text-xs text-ink-400 leading-relaxed max-w-prose">
-        Identical code, identical prompt, temperature 0. The judge's dispute set reshuffles every
-        run — {'{class-15}'} → {'{class-03, class-15}'} → {'{class-03, class-13}'} → {'{class-03}'} →
-        ∅ → ∅ — and <span className="text-ink-200">every case it ever disputed, it also agreed with in
-        another run</span>. No disagreement survives repetition, so the residual 5% is judge noise,
-        not a finding about the labels. Attest's checkers are date math and set membership; they
-        return the same verdict every time, which is why the core's pass@{headline.passAtKCore.k} is
-        100%. A judge that answers its own question differently cannot <em>be</em> ground truth — it
-        can only calibrate it.
+        Two committed runs, temperature 0. The disputed case is different each run — {'{class-15}'}{' '}
+        before a missing governance rule was declared, {'{class-03}'} after — and{' '}
+        <span className="text-ink-200">class-03 was a verdict the judge had agreed with on the earlier
+        run before flipping it</span>. One dispute was signal (a real policy gap, now declared), one
+        was noise (an unstable flip); neither was a stable disagreement about a label. Attest's
+        checkers are date math and set membership; they return the same verdict every time, which is
+        why the core's pass@{headline.passAtKCore.k} is 100%. A judge that answers its own question
+        differently cannot <em>be</em> ground truth — it can only calibrate it.
       </p>
     </div>
   );

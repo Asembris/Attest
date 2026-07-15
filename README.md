@@ -61,7 +61,7 @@ audited 3 claims in 14.3s (4392 tokens, $0.001006)
 | Receipt | Measured | Where |
 | --- | --- | --- |
 | **Attest's verdict on the same claim, asked 5 times** | **5 / 5 identical** (pass@5 = 100%) | [benchmark](benchmark/README.md) |
-| **An LLM judge's verdict on the same claim, asked 6 times** | **unstable — a different answer set every run** | [benchmark](benchmark/README.md#cross-family-calibration-not-letting-gpt-grade-gpts-homework) |
+| **An LLM judge's verdict on the same claim, across two runs** | **unstable — flips a verdict at temperature 0** | [benchmark](benchmark/README.md#cross-family-calibration-not-letting-gpt-grade-gpts-homework) |
 | Groundedness accuracy, 40 hand-labeled claims | **100%**, macro-F1 **1.000** | [`just bench`](benchmark/run_eval.py) |
 | Cost per audited claim | **$0.000264** | [cost.py](src/attest/cost.py) |
 | Explanations model-authored, not template fallback | **40 / 40** | [`just bench-full`](benchmark/run_eval.py) |
@@ -76,12 +76,14 @@ audited 3 claims in 14.3s (4392 tokens, $0.001006)
 one**, and by accident.
 
 Attest's own benchmark harness employs a second model (Nemotron, a Llama-family model) as an
-independent labeler, to keep GPT from grading GPT's homework. It was run **six times** —
-identical code, identical prompt, `temperature=0` — and it disagreed with a **different set of
-cases every single time**: `{class-15}`, then `{class-03, class-15}`, then `{class-03,
-class-13}`, then `{class-03}`, then none, then none. Every case it ever disputed, it also
-*agreed* with on another run. It twice returned unparseable JSON on a narrow,
-schema-constrained question and needed a retry to recover.
+independent labeler, to keep GPT from grading GPT's homework. Across the **two committed
+calibration runs** it agrees with the hand labels on **39 of 40 cases (97.5%) each time** — and
+it disputes a *different* case each time. In the run before a missing governance rule was
+written into the prompt it disputed `class-15`; in the run after, `class-15` agreed and it
+disputed `class-03` instead — **flipping its own earlier verdict on `class-03`** at
+`temperature=0`, with only an unrelated rule changed between the runs. One dispute was signal (a
+real policy gap, now declared) and one was noise (an unstable flip); neither was a stable
+disagreement about a label.
 
 Asked the same question, the same LLM gives different answers. **Attest's core, asked the same
 question five times, gives the same answer five times.**
@@ -293,10 +295,11 @@ Claude-v1 by ~25%; [Zheng et al. 2023](https://arxiv.org/abs/2306.05685)), and v
 GPT-labeled ground truth with a GPT judge would inflate the number by construction. It never
 touches the verdict path.
 
-**Agreement: 95–97.5% across six runs — and no disagreement survives repetition.** Every case
-Nemotron ever disputed, it also *agreed* with on another run, with identical code, an identical
-prompt and `temperature=0`. So the residual 5% is **judge noise, not a finding about the
-labels**, and any single run's dispute list is a fact about which sample got written to disk.
+**Agreement: 97.5% (39/40) on each of the two committed runs — and the one disputed case is
+different each time.** The before-policy run disputed `class-15`; the after-policy run agreed on
+`class-15` (a missing governance rule had been declared) and disputed `class-03` instead,
+flipping its own earlier verdict at `temperature=0`. One dispute was signal and one was noise;
+neither was a stable disagreement about a label, which is the point.
 
 **That is the sharpest argument in this repository for why Attest's verdicts come from code.**
 A judge that answers its own question differently at temperature=0 cannot be a source of ground
