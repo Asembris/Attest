@@ -191,7 +191,7 @@ class DataHubClient:
         """
         if isinstance(value, bool):
             raise TypeError("DataHub structured properties have no boolean type")
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             return {"numberValue": float(value)}
         return {"stringValue": str(value)}
 

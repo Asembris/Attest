@@ -37,7 +37,13 @@ dependencies = [
 # passes on a machine that happens to have it: the "green on my machine" trap this repo keeps
 # hitting. Depending on `attest[bench]` keeps sklearn OUT of the runtime `dependencies` (the
 # service still does not ship it) while guaranteeing the tier that imports it can install it.
-dev = ["pytest>=8", "pytest-xdist>=3.6", "ruff>=0.9", "attest[bench]"]
+# ruff is PINNED exact, not floored. The lint gate is part of CI (`just check`), and ruff's
+# rule set moves between releases -- a rule can be added, deprecated, or removed (UP038, which
+# once flagged `isinstance(x, (int, float))`, was removed outright by 0.15). An unpinned floor
+# means the same tree lints clean on one machine and red on another with no code change: the
+# "green on my machine" trap this repo keeps hitting. Bump it deliberately, with `ruff check .`
+# clean, or not at all.
+dev = ["pytest>=8", "pytest-xdist>=3.6", "ruff==0.15.21", "attest[bench]"]
 # The benchmark's metrics. sklearn, not a hand-rolled count: the arithmetic of a metric is
 # exactly where a quiet off-by-one produces a plausible number that is wrong, and a
 # benchmark's own arithmetic is the last thing that should be bespoke. NOT a runtime
