@@ -23,6 +23,12 @@ venv/
 # DataHub CLI
 datapacks/
 
+# Frontend build + deps. The Vite bundle is built by `just ui` and static-mounted by the
+# API; both are regenerated, never committed. The vendored SOURCE under frontend/src is
+# committed — its build output is not.
+frontend/node_modules/
+frontend/dist/
+
 # Generated seed output — rebuild with: python seed/generate_seed.py
 # The generator is the source of truth, not its output. Both files carry
 # generation timestamps, so committing them is pure churn.

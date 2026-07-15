@@ -49,6 +49,17 @@ health:
 serve:
     python -m uvicorn attest.api.app:app --reload --port {{env("ATTEST_API_PORT", "8003")}}
 
+# Build the frontend into frontend/dist, which `serve` static-mounts at the root.
+#
+# NODE_USE_SYSTEM_CA=1 is the Node twin of the Python truststore fix (see CLAUDE.md): this
+# is a TLS-inspecting network and npm/Vite otherwise fail on an untrusted corporate CA.
+ui:
+    $env:NODE_USE_SYSTEM_CA="1"; cd frontend; npm install; if ($?) { npm run build }
+    @Write-Host "frontend built -> frontend/dist. Run 'just serve' and open http://localhost:8003"
+
+# The whole demo, one command: build the UI, then serve it and the API from one process.
+demo: ui serve
+
 # --- verification ------------------------------------------------------------
 
 # Run the suite against the live seeded catalog, ACROSS CORES.
