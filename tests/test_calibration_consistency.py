@@ -74,10 +74,11 @@ def test_committed_calibration_receipts_are_arithmetically_consistent():
         n = d["n_cases"]
         disputed = d["disputed"]
         assert d["agreed"] + len(disputed) == n, f"{path.name}: agreed + disputed != n_cases"
-        assert row_consistent(d["agreement"], len(disputed), n), f"{path.name}: agreement vs disputes"
+        assert row_consistent(d["agreement"], len(disputed), n), f"{path.name}: agreement mismatch"
         assert d["agreed"] == n - len(disputed), f"{path.name}: agreed != n - disputed"
         for dispute in disputed:
-            assert dispute["case"] in VALID_CASE_IDS, f"{path.name}: disputes unknown {dispute['case']}"
+            case_id = dispute["case"]
+            assert case_id in VALID_CASE_IDS, f"{path.name}: disputes unknown case {case_id}"
 
 
 def _receipt_signatures() -> set[tuple[float, tuple[str, ...]]]:
