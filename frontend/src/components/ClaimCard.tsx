@@ -1,13 +1,27 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronDown, Database, Sparkles, FileText } from 'lucide-react';
-import type { ClaimRecord } from '../api/types';
+import type { ClaimRecord, WriteBackView } from '../api/types';
 import VerdictBadge from './VerdictBadge';
 import EvidencePanel from './EvidencePanel';
 import CorrectionPanel from './CorrectionPanel';
 
-export default function ClaimCard({ claim, index }: { claim: ClaimRecord; index: number }) {
-  const [expanded, setExpanded] = useState(false);
+export default function ClaimCard({
+  claim,
+  index,
+  reviewable,
+  decision,
+  onDecide,
+  writeback,
+}: {
+  claim: ClaimRecord;
+  index: number;
+  reviewable: boolean;
+  decision: boolean | undefined;
+  onDecide: (accept: boolean) => void;
+  writeback: WriteBackView | null;
+}) {
+  const [expanded, setExpanded] = useState(reviewable);
   const modelAuthored = claim.explanation_source === 'model';
 
   return (
@@ -83,8 +97,14 @@ export default function ClaimCard({ claim, index }: { claim: ClaimRecord; index:
               </div>
               <EvidencePanel evidence={claim.evidence} claimType={claim.claim_type} />
 
-              {/* Correction loop outcome (read-only in Phase 2) */}
-              <CorrectionPanel claim={claim} />
+              {/* Correction loop outcome + the live human checkpoint */}
+              <CorrectionPanel
+                claim={claim}
+                reviewable={reviewable}
+                decision={decision}
+                onDecide={onDecide}
+                writeback={writeback}
+              />
             </div>
           </motion.div>
         )}

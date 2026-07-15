@@ -1,22 +1,45 @@
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, BarChart3, ShieldCheck, AlertTriangle } from 'lucide-react';
-import type { AuditRecord, HealthResponse } from '../api/types';
-import { verdictCounts } from '../api/types';
+import { ArrowLeft, BarChart3, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react';
+import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from '../api/types';
+import { verdictCounts, proposals as findProposals } from '../api/types';
 import ReceiptsStrip from './ReceiptsStrip';
 import ClaimCard from './ClaimCard';
 
 export default function AuditResults({
   record,
   health,
+  writebacks,
+  approving,
+  approveError,
+  onApprove,
   onBack,
   onShowBenchmark,
 }: {
   record: AuditRecord;
   health: HealthResponse | null;
+  writebacks: WriteBackView[] | null;
+  approving: boolean;
+  approveError: string | null;
+  onApprove: (decisions: DecisionRequest[]) => void;
   onBack: () => void;
   onShowBenchmark: () => void;
 }) {
   const counts = verdictCounts(record);
+  const proposals = findProposals(record);
+  const reviewMode = record.status === 'awaiting-review' && proposals.length > 0;
+
+  const [decisions, setDecisions] = useState<Record<number, boolean>>({});
+  const allDecided = proposals.every((p) => decisions[p.index] !== undefined);
+
+  function submit() {
+    const payload: DecisionRequest[] = proposals.map((p) => ({
+      claim_index: p.index,
+      accept: decisions[p.index],
+      reviewer: 'attest-ui',
+    }));
+    onApprove(payload);
+  }
 
   return (
     <div className="min-h-screen bg-ink-950">
@@ -43,11 +66,7 @@ export default function AuditResults({
 
       <div className="max-w-4xl mx-auto px-6 lg:px-8 py-8 space-y-6">
         {/* Headline */}
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-        >
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
           <h1 className="font-serif text-headline font-light text-ink-50">Audit Complete</h1>
           <p className="mt-2 text-ink-300 text-sm">
             {record.claims.length} claim{record.claims.length === 1 ? '' : 's'} verified against the
@@ -87,10 +106,59 @@ export default function AuditResults({
           </span>
         </motion.div>
 
+        {/* Review bar — the human checkpoint, only while the run is parked with proposals. */}
+        {reviewMode && (
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="surface-card p-5 border-insufficient/25 bg-insufficient/5"
+          >
+            <div className="flex items-center gap-2 text-sm text-insufficient mb-1">
+              <GitBranch size={15} />
+              <span className="font-medium">
+                {proposals.length} correction{proposals.length === 1 ? '' : 's'} awaiting your decision
+              </span>
+            </div>
+            <p className="text-xs text-ink-300 mb-4">
+              Decide each proposal below. Approving writes the verdict back to DataHub; nothing is
+              written until you submit. The run is parked at a durable checkpoint until then.
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={submit}
+                disabled={!allDecided || approving}
+                className="btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {approving ? 'Submitting…' : 'Submit decisions'}
+              </button>
+              <span className="text-xs text-ink-400">
+                {Object.keys(decisions).length}/{proposals.length} decided
+              </span>
+            </div>
+            {approveError && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-contradicted">
+                <AlertTriangle size={13} /> {approveError}
+              </div>
+            )}
+          </motion.div>
+        )}
+
         {/* Claim cards */}
         <div className="space-y-3 pt-2">
           {record.claims.map((claim, i) => (
-            <ClaimCard key={claim.index} claim={claim} index={i} />
+            <ClaimCard
+              key={claim.index}
+              claim={claim}
+              index={i}
+              reviewable={
+                reviewMode &&
+                claim.correction.outcome === 'corrected' &&
+                claim.correction.review === 'pending'
+              }
+              decision={decisions[claim.index]}
+              onDecide={(accept) => setDecisions((d) => ({ ...d, [claim.index]: accept }))}
+              writeback={writebacks?.find((w) => w.target_urn === claim.target_urn) ?? null}
+            />
           ))}
         </div>
 
