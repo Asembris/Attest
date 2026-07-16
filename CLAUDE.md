@@ -602,14 +602,25 @@ invariants worth not rediscovering:
   *And it fails LOUD-then-silent.* A repair that logs success and does nothing is worse than
   one that crashes: the operator reads the log, believes the network was fixed, and hunts
   for the bug somewhere else entirely.
-- **Node/npm/Vite is the SAME TLS trap as Python, one runtime over.** This is a
-  TLS-inspecting network: the corporate CA is not in Node's bundled root store, so
-  `npm install` and `vite build` fail on a certificate/SSL error exactly as the OpenAI SDK,
-  DataHub quickstart, and `curl` did. **The fix is `NODE_USE_SYSTEM_CA=1`** — the Node twin
-  of the Python `truststore` injection, same root cause (corporate CA absent from the tool's
-  default bundle), different runtime. `just ui` sets it; set it in the shell session before
-  any manual npm/node command (`$env:NODE_USE_SYSTEM_CA="1"`). Node 18+; harmless when the CA
-  is already trusted, so it is set unconditionally rather than only on failure.
+- **EVERY RUNTIME NEEDS ITS OWN SYSTEM-CA OPT-IN ON THIS NETWORK. Three so far, and the
+  third cost a spike's first ten minutes.** This is a TLS-inspecting network: the corporate
+  CA is in the OS trust store and in **no** language runtime's bundled root store. Each
+  runtime ships its own CA bundle and consults the OS one only when told, so each one fails
+  independently, at first network contact, with a certificate error that looks like an
+  outage. The fix is always the same shape — *tell this runtime to use the OS store* — and
+  it is spelled differently every time:
+
+  | Runtime | Opt-in | Where |
+  | --- | --- | --- |
+  | Python | `truststore.inject_into_ssl()` | `llm.py`; the OpenAI SDK, `httpx`, `curl` |
+  | Node | `NODE_USE_SYSTEM_CA=1` | `just ui`; `npm install`, `vite build` |
+  | uv / uvx (Rust) | `--native-tls` | `just spike-mcp`; any `uvx` tool fetch |
+
+  All three are harmless when the CA is already trusted, so set them unconditionally rather
+  than only on failure. **Assume the next runtime you add is a fourth**: reach for its
+  system-CA flag before debugging its "network outage". Note `uvx --native-tls` fails at
+  *package download*, before the tool runs at all — so it reads as "PyPI is down", not as a
+  TLS problem.
 - **Never write YAML with PowerShell's `Out-File`.** It emits a UTF-8 BOM that breaks the YAML
   parser. Use `[IO.File]::WriteAllText` or Python.
 - **Ingestion recipes must use relative `./` paths.** Absolute Windows paths hit a
@@ -617,6 +628,49 @@ invariants worth not rediscovering:
   (`Did not find a registered class for d`).
 - **Attest's own code talks to DataHub via direct GraphQL over `httpx`, not the
   `acryl-datahub` SDK.** The CLI/SDK is for *ingestion only*.
+- **THE CATALOG READ IS GRAPHQL AND NOT MCP. Decided in Session 17, with evidence — do not
+  reopen it as a checkbox.** Challenge 1 names the DataHub MCP Server as the way agents get
+  catalog context, so the gap was real and the adapter was scoped: `cache.Reader` is one
+  method (`fetch_dataset(urn) -> DatasetSnapshot`) and the checkers never see the transport.
+  The spike ([spikes/mcp_reader_probe.py](spikes/mcp_reader_probe.py), `just spike-mcp`)
+  measured the named path against `mcp-server-datahub` 0.6.0 on the pinned Core and it
+  **cannot carry a verdict**. The write-up is [docs/mcp-evaluation.md](docs/mcp-evaluation.md)
+  and it is a submission asset, not an apology.
+
+  **The server RUNS against Core** — `is_oss=True`, every call answered. Compatibility was
+  never the wall. The wall is that its read tools are built to feed a language model, and
+  each optimisation for that purpose destroys something a checker needs: a Dataset's
+  `lastModified` is requested by **no tool** (freshness has no input); field tags/terms are
+  flattened to **display names** (`urn:li:tag:PII` -> `"PII"`), so a column's term cannot
+  reach the glossary hierarchy that makes it a signal; `type` is **commented out** of the
+  server's own fragment; and `clean_gql_response` strips nulls and empties. None of it is
+  configurable.
+
+  **MEASURED: 130 mismatches over 16 datasets, and 4 of 5 TRUE claims change verdict —
+  including `customer_profile.email is PII` reading back CONTRADICTED.** That last one is the
+  finding, and it is Attest's own thesis biting Attest: the tag arrives as `"PII"`, so the
+  column reads unlabelled; the table is `Verified`; `COMPLETENESS_REACHES_COLUMNS` (§6) then
+  turns an unlabelled column of a reviewed table into a **denial**. So the rule this leaves
+  behind: **a transport that is lossy for an LLM is not merely lossy for a checker, it is
+  INVERTING** — and our own completeness rule is what weaponizes the loss. Every guard in
+  this repo (faithfulness, polarity, crosscheck, trajectory) fails closed on the MODEL's
+  output; **nothing defends the catalog READ**, because the read was never a place where
+  meaning could be lost.
+
+  `just spike-mcp` **exits non-zero by design** and is the tripwire: if it ever goes green
+  the finding has expired and the decision is worth reopening. Same discipline as
+  `test_fixture_drift.py` — an assertion that only ever passes is a green light wired to
+  nothing. Three defects are drafted for upstream in [docs/upstream/](docs/upstream/).
+
+  **Do NOT "close the gap" by adding MCP as a demonstrated-but-non-verdict context path.**
+  It was considered and refused: running the inverting transport purely to say we touched it
+  is the hollow checkbox integration the finding argues against, and a second read of the
+  same catalog re-opens the §2c consistency boundary (one run, one frozen snapshot).
+- **The MCP server posts usage telemetry to Mixpanel on startup** (`/mp/engage`, `/mp/track`),
+  before it is asked to do anything. It only surfaced here because the TLS interception made
+  it fail loudly in the logs; on a normal network it is silent. `DATAHUB_TELEMETRY_ENABLED=false`
+  turns it off, and `spikes/mcp_reader_probe.py` sets it: a probe that measures the catalog
+  should not also report to a third party that it ran.
 - **NEVER put a typed object in LangGraph's checkpointed state. Do not "clean this up".**
   `AuditState` holds **primitives only** (cursor, retry count, decisions) and the typed
   audit record lives in a `_Ledger` keyed by thread id, *beside* the graph. This looks like
@@ -688,6 +742,9 @@ benchmark/             The golden benchmark. A standalone, citable artifact.
   labeler.py           Nemotron as an independent second labeler. NEVER in the verdict path.
   README.md            The dataset, usable by someone who has never seen this code.
 spikes/                Throwaway proofs. datahub_probe.py proves the read/write path.
+  mcp_reader_probe.py  The Session 17 evaluation of the NAMED integration path. MCP vs
+                       GraphQL, every seeded dataset, then the same gap as verdicts. The
+                       receipt behind docs/mcp-evaluation.md. Exits non-zero by design.
 tests/                 Two-tier suite (Session 8). The OFFLINE tier reads captured fixtures,
                        never the network: it runs anywhere, never skips, gates CI. The
                        INTEGRATION tier (test_client, marked `integration`) and the LIVE tier
@@ -711,6 +768,9 @@ just setup     # install package + dev deps
 just seed      # generate seed metadata, ingest it, and CAPTURE the offline fixtures (last step)
 just capture   # regenerate tests/fixtures/snapshots/ from the live catalog (run by `just seed`)
 just spike-claims    # prove ONE dataset holds TWO queryable claim artifacts (Session 15)
+just spike-mcp # can the MCP server serve a faithful DatasetSnapshot? NO. Exits non-zero BY
+               # DESIGN: it is the receipt for the GraphQL read, and the tripwire if that
+               # ever changes. Needs `pip install mcp` + uvx. See docs/mcp-evaluation.md.
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
 just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub owns 8080/9002

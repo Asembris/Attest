@@ -55,19 +55,25 @@ checker needs**:
      so `FieldSnapshot.data_type` is unreachable. MEASURED: None on every column of
      every dataset.
 
-  4. ABSENT AND EMPTY ARE COLLAPSED. `clean_gql_response` recursively drops `None`
-     values, `[]` and `{}` — the single distinction the third verdict rests on. So
-     "the catalog has no properties aspect" and "the aspect exists and is empty" arrive
-     identically. MEASURED: `custom_properties` is `{}` via GraphQL and `None` via MCP
-     on 12/16 datasets.
+  4. ABSENT AND EMPTY ARE COLLAPSED. `clean_gql_response` recursively drops `None`,
+     `[]` and `{}`, so "the catalog has no properties aspect" and "the aspect exists and
+     holds nothing" arrive identically. MEASURED: `custom_properties` is `{}` via GraphQL
+     (the aspect is there and empty) and `None` via MCP (absent) on 12/16 datasets.
 
-     Its sharpest form is `term_parents`: `urn:li:glossaryTerm:CustomerIdentifier` has
-     NO parent nodes — it is deliberately outside the PII node (see policy.PII_SIGNALS,
-     and CLAUDE.md §6: "EmailAddress is a PII signal because it is filed under the PII
-     node; CustomerIdentifier is deliberately outside it"). Its `parentNodes.nodes` is
-     `[]`, so the empty-array strip deletes the term from `term_parents` entirely. The
-     evidence that a term is deliberately NOT PII is exactly the evidence that gets
-     dropped, because "not PII" is encoded as emptiness.
+     STATED PRECISELY, because the flattering version of this finding is wrong and was
+     written here first: this does NOT flip a verdict, and snapshot.py says why in its
+     own docstring — "Both yield Insufficient-Coverage: an unowned table is unowned
+     either way." What it destroys is EVIDENCE FIDELITY, which is the entire reason
+     snapshot.py preserves the distinction: a checker reporting what it saw can no
+     longer say whether the catalog was silent or merely empty, and it is the only layer
+     that still knew. A latent correctness risk for any consumer whose rules do turn on
+     it; a measured loss of evidence for this one.
+
+     Note the near-miss, since it is the reason to distrust a tidy story: `count` is a
+     scalar, so `parentNodes: {count: 0, nodes: []}` survives as `{count: 0}` — a term
+     with no parents is still legible. The one `term_parents` mismatch in the run is NOT
+     this rule; it is finding 2 (customer_contact's CustomerIdentifier is a COLUMN-level
+     term, and column terms arrive as display names, so no URN and no hierarchy).
 
   5. SCHEMAS ARE TRUNCATED TO A TOKEN BUDGET (`ENTITY_SCHEMA_TOKEN_BUDGET`, default
      16000, and a separate `TOOL_RESPONSE_TOKEN_LIMIT` of 80000). It does not fire on
