@@ -35,6 +35,12 @@ capture:
 probe:
     python spikes/datahub_probe.py
 
+# Prove ONE dataset can hold TWO independent, queryable claim artifacts (the Session 15
+# spike). Writes to the seeded catalog and cleans up after itself; exits non-zero if any
+# invariant fails. This is what docs/design/claim-artifact.md is designed against.
+spike-claims:
+    python spikes/claim_artifact_probe.py
+
 # Is the catalog actually up? Checks the pinned version, not just the port.
 health:
     @(Invoke-RestMethod http://localhost:8080/config).versions.'acryldata/datahub'.version
