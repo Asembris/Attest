@@ -651,10 +651,12 @@ src/attest/
     snapshot.py        Normalized read model. Preserves "absent" vs "empty".
     cache.py           ONE RUN's view of the catalog. A consistency boundary, not a cache.
   api/
-    app.py             FastAPI. Four endpoints. The checkpoint does not soften here.
-    service.py         Run, persist, approve, write back. Audits run CONCURRENTLY: the
-                       lock is gone because the shared token ledger it guarded is gone.
+    app.py             FastAPI. The checkpoint does not soften here. /claims reads DATAHUB.
+    service.py         Run, persist, approve, write back, retrieve. Audits run CONCURRENTLY:
+                       the lock is gone because the shared token ledger it guarded is gone.
     schemas.py         Wire types in and out.
+  retrieval.py         Claim artifacts, back OUT of the catalog. The three-state read (an
+                       absent verdict is not one fact) and the declared push-down report.
   record.py            AuditRecord: the persisted projection of a report. Loses nothing —
                        and since Session 5 a resumed run is REBUILT from it, so what it
                        drops, a restarted run would report differently.
@@ -712,6 +714,7 @@ just spike-claims    # prove ONE dataset holds TWO queryable claim artifacts (Se
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
 just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub owns 8080/9002
+just demo      # build the UI and serve it WITH the API from one process on :8003
 just test      # offline tier + integration tier, ACROSS CORES (-n auto). Integration skips LOUD.
 just test-offline    # the TRULY-OFFLINE tier. No DataHub, no key, never skips. What CI runs.
 just matrix    # just the 12-cell coverage assertion
@@ -976,6 +979,111 @@ the gate.
   the unrevisable `ssn` claim. Nothing calls `write_claim_artifact` directly. **Two of those
   three verdicts were unreachable before this.**
 
+**11. THE RETRIEVAL PATH (Session 16). The other half of the thesis, and the read path had
+to start obeying Attest's own rule about absence.**
+
+Session 15 proved Attest *writes* results back. Challenge 1's thesis has two halves —
+*"writes results back **so the next person or agent inherits the knowledge**"* — and an
+artifact nobody can query inherits nothing. [retrieval.py](src/attest/retrieval.py) is the
+second half: `GET /claims`, `GET /claims/{claim_urn}`, reading **DataHub**, never the store.
+
+- **THE THREE-STATE READ IS THE LOAD-BEARING PART, and there are FOUR states because an
+  absent verdict is not one fact.** The catalog can be silent about a claim's verdict for
+  three completely different reasons, and they are **indistinguishable from DataHub alone**:
+
+  | State | What it means | Response |
+  | --- | --- | --- |
+  | `complete` | the catalog holds the verdict | read it |
+  | `pending-lag` | the write **landed**; the index has not caught up | wait ~2s. **Nothing to repair** |
+  | `incomplete` | the write **failed** at a step; no verdict is coming | `POST /audit/{id}/writeback` |
+  | `unknown` | no verdict, and Attest's record cannot say if one was attempted | **not a diagnosis** |
+
+- **The rule, non-negotiable: NEVER render `incomplete` from DataHub's silence alone.**
+  Attest exists to say absence is not an answer — an untagged table does not mean "PII-free",
+  it means nobody looked. A read path that saw no verdict and concluded "half-written" would
+  be committing this project's cardinal sin in its own output, which is precisely the mistake
+  §10a caught in the *write* path. **`unknown` is NOT `incomplete`** and that distinction is
+  the same argument one level down: no evidence of a write is not evidence of a failed write.
+- **Two questions, two systems, and neither answers the other's.** DataHub: *what does the
+  catalog HOLD?* The store: *what did Attest DO?* `read_state()` is four lines and consults
+  both — the catalog is asked FIRST and wins (a verdict that is present is present, whatever
+  our bookkeeping says; a write recorded as failed may have landed on a call that timed out).
+  Only when the catalog is silent does the store's answer decide. **Remove either side and
+  the state collapses into a guess.**
+- **MEASURED, before any of it was designed** (5 trials, pinned Core v1.5.0.6): a verdict
+  becomes readable a **median 2.1s (max 3.2s)** after the report is accepted; the report
+  itself is refused by the un-caught-up index for a **median 5.3s (max 7.0s)**, which the
+  client already retries past *inside* the write. So **`pending-lag` is the NORMAL state for
+  the first seconds after every approval** — a reader that called it broken would be wrong
+  loudly, on the happy path, several times a day.
+- **The UI auto-polls, BOUNDED (5 checks / 10s), and enters the poll only for `pending-lag`.**
+  A claim whose write FAILED will never grow a verdict however long anyone waits — polling one
+  would be a spinner over a permanent state. Past the cap it **stops and hands to a human**:
+  from there you cannot tell a slow index from a real problem, and a spinner that never gives
+  up is a UI asserting "this is fine" about a state it has no evidence for. **`pending-lag`
+  and `incomplete` must never share a control** — a retry on a two-second wait invites a human
+  to "fix" nothing.
+- **THE BOUNDARY, NAMED: a second agent reading DataHub ALONE cannot tell `pending-lag` from
+  `incomplete`.** Both are `runEvents.total = 0` with no `attest.verdict`; the separation
+  comes from Attest's record, which by definition they do not have. What makes that tolerable
+  rather than a hole: it **self-resolves in ~2s**, it is confined to the write's own tail
+  (every verdict that landed reads back unambiguously forever), and **the thesis question does
+  not touch it** — *"show me what the next agent inherits"* is `dataset.assertions(urn)`, one
+  server-side query, complete answer. What a second agent cannot do is diagnose Attest's
+  half-finished write, which is Attest's problem to report and not a fact the catalog owes
+  anyone. `ClaimReader(client, store=None)` is that reader, in code, and the live test uses it.
+- **Every response reports WHERE each predicate was applied, and that is part of the answer.**
+  *"Retrievable from DataHub"* is TRUE; *"fully queryable in DataHub"* is FALSE. The two
+  server-side entry points are **disjoint**: `dataset.assertions` scopes and filters nothing;
+  `searchAcrossEntities` filters `customType` + `tags` and scopes to nothing. `reviewer` and
+  `since` can **never** be pushed down — an assertion indexes nothing else. So: **DataHub does
+  the scoping; Attest does most of the filtering**, and the API says so on every call rather
+  than letting a reader believe the catalog answered what Attest answered.
+- **`PUSHES_DOWN` is DECLARED, not read off the query builder** — the trajectory.py rule
+  again: derive it from the code that builds the query and it agrees by construction and
+  asserts nothing. `test_the_push_down_report_cannot_lie` holds it to what actually went over
+  the wire, **in both directions**, and has its own vacuity check. And `_matches_locally` is
+  **driven by** the report, so a wrong report produces wrong *results* rather than a quiet lie
+  beside a right answer.
+- **The stale-tag asymmetry, surfaced rather than hidden.** The tag is written LAST and is a
+  derived index, never the verdict. A claim whose `tag` step failed has a correct verdict and
+  is **missing from every tag-filtered search**, while a dataset-scoped read finds it. Same
+  question, two answers, depending on an entry point the caller did not choose — so the
+  verdict-filtered response carries the caveat in its `note`.
+- **The store had to grow structure, because a `str()` cannot be parsed back.**
+  `approvals.writeback` was `str(WriteResult)` — a *rendering*. Telling index-lag from a
+  half-written claim needs the *fact*, so `approvals.writeback_ok` / `.writeback_step` were
+  added beside it, and `claims.claim_urn` (derived by `writeback.claim_urn`, never minted) is
+  the join key. This is Session 5's lesson at a new column. **An older database is refused at
+  open: `rm attest.db attest-checkpoints.db` and re-run.**
+- **Fixed on the way, and both were live and silent:**
+  - `_refuse_an_incompatible_database` checked `claims.rejected` (Session 5) **and nothing
+    else**, so every Session 5–14 database was declared compatible and died on the first
+    INSERT *inside a running service*. CLAUDE.md said Session 15's change was refused at open;
+    it was not — the schema moved and the guard did not move with it. Now table-driven over
+    every column (`_REQUIRED_COLUMNS`): **add a row whenever the schema gains a column.**
+  - `ensure_definitions` **skipped any property that already existed**, so a definition
+    written once was frozen forever. **Measured: `attest.verdict`'s live description in
+    DataHub was the string `"test"`** — a placeholder, on Attest's most-read surface, while
+    writeback.py carried three careful sentences and Session 15 rewrote them to stop the badge
+    overstating its coverage. The code was right, the catalog never heard, every test was
+    green. Definitions are now reconciled (`client.update_structured_property`), idempotently.
+  - **The frontend's approve flow had been dead since Session 15**: it sent `{claim_index,
+    accept}` and the backend forbids extras → **422 on every approve**. And the review bar
+    counted `proposals` while Option A parks on every claim's **publication**, so a four-claim
+    run submitted one decision, re-parked, and could never complete while the UI called it
+    settled. `PublicationPanel` is the publish/withhold act that had no control at all.
+- **The badge descriptions now state what the badge CANNOT do.** Both halves of the old text
+  were false: not *"any claim an agent made"* (only **published** verdicts reach the catalog),
+  and not *"the most recent one"* (claims published together share a run timestamp, so "last"
+  is arbitrary among them). **The badge describes ONE claim and cannot say which** — that was
+  the whole problem statement of the claim artifact, and the badge is the thing that still has
+  it. A field that overstates its coverage is this project's characteristic bug.
+- **MEASURED, live** (`test_live.py::test_a_published_verdict_is_RETRIEVABLE_from_the_catalog_
+  by_a_reader_with_no_store`): publish through `POST /audit` + `/approve`, then read back
+  through `GET /claims` **and** through `ClaimReader(client, store=None)` — every claim,
+  verdict, reviewer and history out of DataHub alone.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
@@ -984,7 +1092,9 @@ the gate.
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
 | **A step's `inputs` / `outputs` across a restart** | Not persisted, so a *replayed* step carries them empty. **The boundary is ASSERTED, not just documented:** `test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs` strips the summaries out of a real run's trace and demands the record, the receipts, the summary and the trajectory verdict are all unmoved. | They are a log convenience, and nothing a reader sees may read them. If something ever does, a resumed run starts reporting something an unrestarted one does not — silently, only after a restart, with every other test green, because every other test runs in one process and never replays. That is the TLS bug's shape exactly, which is why this one is nailed down rather than trusted. Two sabotages prove the assertion bites (a receipt reading `outputs['cached']`; a trajectory rule reading `outputs['resolved']`), and the fixture uses two claims over one dataset **so the summaries are truthy** — a one-claim run leaves them falsy and would pass a sabotage it was written to catch. |
-| **Store migrations** | None. A database older than Session 15 is refused at open, by name. **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
+| **Store migrations** | None. A database older than Session 16 is refused at open, by name — and since Session 16 the guard checks EVERY column, not just the first one it was written for (`_REQUIRED_COLUMNS`; add a row whenever the schema gains a column). **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
+| **A write-back result is matched to a claim by TARGET URN in the UI** | Two claims about one dataset both display the last write's result. The backend has this right — its decision log is keyed by claim INDEX, precisely because keying by URN attributed a write to the wrong decision — but `WriteBackView` carries `claim_urn` and no claim index. | The UI cannot derive the artifact URN: it is a sha256 over the claim's canonical JSON, and re-implementing that identity rule in TypeScript would be a worse bug than the one it fixes (two implementations of an identity that must never disagree). The fix is a claim index on the wire type, which is the write path's shape to change. |
+| **No reconciler for a stale verdict tag** | A crash between `report` and `tag` leaves a correct verdict that a tag-filtered search cannot find. It is recorded (`writeback_step`), visible (`GET /claims` says so in its `note`), and repairable in one call — but nothing detects it automatically. | A production deployment would want a periodic reconcile comparing each claim's latest run event against its verdict tag. This is a hackathon build, and it says so rather than shipping a sweeper nobody exercises. |
 
 **Durable resume is now BUILT** (Session 5). A run parked at the human checkpoint survives
 the death of its process: the paused graph comes back from `SqliteSaver`, the typed ledger
