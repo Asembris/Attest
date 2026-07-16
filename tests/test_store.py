@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from attest import writeback
 from attest.claims import Verdict
 from attest.datahub import DatasetSnapshot
 from attest.graph import Pipeline
@@ -173,6 +174,154 @@ def test_a_pre_session_5_database_is_refused_at_open_and_not_at_the_first_write(
 
     with pytest.raises(StoreError, match="pre-Session-5"):
         AuditStore(path)
+
+
+def test_every_schema_change_is_refused_at_open_not_only_the_first_one(tmp_path):
+    """THE GUARD HAS TO KNOW ABOUT EVERY COLUMN, not just the one it was written for.
+
+    This is a real bug the Session 16 read path walked into. The check used to be a single
+    `if "rejected" in columns: return` — the Session 5 column — so EVERY database written
+    between Sessions 5 and 14 was declared compatible, opened cleanly, and then died on the
+    first INSERT with "table claims has no column named publication". CLAUDE.md stated that
+    Session 15's schema change was refused at open. It was not: the schema moved and the
+    guard did not move with it, and nothing failed until a service was already running.
+
+    Each row below is a database that is current as of one session and stale by the next.
+    A guard that only knows its first change is a green light wired to nothing, so each of
+    these must be refused BY NAME.
+    """
+    generations = {
+        # A Session 5 database: `rejected` landed, `publication` had not.
+        "5": "CREATE TABLE claims (run_id TEXT, rejected TEXT);"
+        "CREATE TABLE approvals (approval_id TEXT);",
+        # A Session 15 database: publication landed, the write-back structure had not.
+        "15": "CREATE TABLE claims (run_id TEXT, rejected TEXT, publication TEXT);"
+        "CREATE TABLE approvals (approval_id TEXT, publish INTEGER);",
+    }
+    for name, ddl in generations.items():
+        path = tmp_path / f"gen{name}.db"
+        old = sqlite3.connect(path)
+        old.executescript(ddl)
+        old.commit()
+        old.close()
+
+        with pytest.raises(StoreError, match="WHAT TO DO") as caught:
+            AuditStore(path)
+        # It must name the column it is missing. "Something is wrong with your database" is
+        # not an error message anyone can act on at 2am.
+        assert "missing claims." in str(caught.value) or "missing approvals." in str(
+            caught.value
+        ), f"the refusal for a Session {name} database does not name what is missing"
+
+
+def test_a_decision_logs_the_write_backs_STRUCTURE_and_not_only_its_rendering(store):
+    """`str(WriteResult)` cannot be parsed back, and the read path needs the fact.
+
+    The rendering is for a human reading the log. The structure is what tells the retrieval
+    path whether an absent verdict in DataHub is an index still catching up (the write
+    landed) or a claim that will never have one (the write failed) — and those are different
+    facts with different fixes. Recovering that by matching substrings against the sentence
+    would be Attest inferring the contents of its own audit trail.
+    """
+    store.save(audited(
+        claim_reply([ownership(ALICE)]),
+        explanation_reply("the catalog lists a different owner.", "Contradicted", []),
+        revision_reply(ownership(CAROL)),
+    ))
+
+    store.record_decision(
+        "run-1",
+        Decision(0, publish=True, reviewer="dana"),
+        writeback="failed at report: the catalog did not index it",
+        writeback_ok=False,
+        writeback_step="report",
+    )
+
+    logged = store.approvals("run-1")[0]
+    assert logged.writeback_ok is False
+    assert logged.writeback_step == "report", (
+        "the step that failed has to survive the round trip as a VALUE: 'report' left a "
+        "claim with no verdict, 'tag' left a verdict that is correct and merely not "
+        "findable. A reader cannot act on 'it failed'."
+    )
+
+
+def test_a_decision_that_published_nothing_is_not_a_decision_whose_write_FAILED(store):
+    """`writeback_ok = NULL` is 'nothing was written'. It is not `False`.
+
+    None-is-not-zero, at the decision log. A claim nobody published has no failed write to
+    repair, and a read path that saw False here would offer a retry for a claim whose
+    reviewer deliberately withheld it.
+    """
+    store.save(audited(
+        claim_reply([ownership(ALICE)]),
+        explanation_reply("the catalog lists a different owner.", "Contradicted", []),
+        revision_reply(ownership(CAROL)),
+    ))
+
+    store.record_decision("run-1", Decision(0, publish=False, reviewer="dana"))
+
+    logged = store.approvals("run-1")[0]
+    assert logged.writeback_ok is None, "'nothing was written' collapsed into 'it failed'"
+    assert logged.writeback_step is None
+
+
+def test_a_claims_artifact_urn_is_stored_and_is_the_one_the_write_back_uses(store):
+    """The join key between Attest's record and the catalog's, derived by ONE function.
+
+    If the store computed the artifact's URN differently from the write-back, the retrieval
+    path would look up claims at an address nothing was ever written to and report every one
+    of them as never-written — reading its own disagreement as the catalog's silence.
+    """
+    record = audited(
+        claim_reply([ownership(ALICE)]),
+        explanation_reply("the catalog lists a different owner.", "Contradicted", []),
+        revision_reply(ownership(CAROL)),
+    )
+    store.save(record)
+
+    states = store.write_states()
+    expected = writeback.claim_urn(record.claims[0].claim)
+    assert expected in states, "the store addresses a claim's artifact differently from the write-back"
+    assert states[expected].claim_urn.startswith("urn:li:assertion:attest-")
+
+
+def test_write_states_reports_the_LATEST_attempt_against_an_artifact(store):
+    """A claim artifact is content-addressed, so two runs write to ONE artifact.
+
+    The catalog holds one thing at that URN, so an older run's success does not describe the
+    state of a newer run's failed rewrite. Keyed by run, the read would report a repaired
+    claim as broken, or a broken one as fine, depending on which row it happened to see.
+    """
+    record = audited(
+        claim_reply([ownership(ALICE)]),
+        explanation_reply("the catalog lists a different owner.", "Contradicted", []),
+        revision_reply(ownership(CAROL)),
+    )
+    store.save(record)
+    urn = writeback.claim_urn(record.claims[0].claim)
+
+    store.record_decision(
+        "run-1",
+        Decision(0, publish=True, reviewer="dana"),
+        writeback="written",
+        writeback_ok=True,
+        decided_at=NOW,
+    )
+    store.record_decision(
+        "run-1",
+        Decision(0, publish=True, reviewer="sam"),
+        writeback="failed at tag: nope",
+        writeback_ok=False,
+        writeback_step="tag",
+        decided_at=NOW + timedelta(hours=1),
+    )
+
+    state = store.write_states([urn])[urn]
+    assert state.ok is False and state.failed_step == "tag", (
+        "the earlier success masked the later failure"
+    )
+    assert state.at == NOW + timedelta(hours=1)
 
 
 def test_an_unpriced_run_stores_a_null_cost_not_a_zero(store):

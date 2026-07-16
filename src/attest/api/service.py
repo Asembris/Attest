@@ -70,6 +70,31 @@ from attest.writeback import WriteResult
 log = logging.getLogger(__name__)
 
 
+def _write_columns(result: WriteResult | None) -> dict[str, object]:
+    """One write-back result, as the decision log's columns.
+
+    The log keeps the outcome TWICE and on purpose: `writeback` is the sentence a human
+    reads, and `writeback_ok`/`writeback_step` are the same fact as structure. Both are
+    produced HERE, from one `WriteResult`, so the rendering and the structure cannot come
+    to disagree about what happened — which is the failure a second call site would invite.
+
+    The structure is what the retrieval path reads, and it has to: telling "the index has
+    not caught up with a write that landed" from "the write never landed" is only possible
+    against Attest's own record of what it did, and a `str()` cannot be parsed back into
+    that record (store.py, and Session 5's lesson).
+
+    `None` — no write was attempted — is NOT `ok=False`. A claim nobody published is not a
+    claim whose write failed.
+    """
+    if result is None:
+        return {"writeback": "skipped", "writeback_ok": None, "writeback_step": None}
+    return {
+        "writeback": str(result),
+        "writeback_ok": result.ok,
+        "writeback_step": result.failed_step,
+    }
+
+
 class ServiceError(RuntimeError):
     """Something the caller asked for cannot be done. Carries an HTTP-ish reason."""
 
@@ -320,7 +345,7 @@ class AuditService:
             self.store.record_decision(
                 run_id,
                 decision,
-                writeback=str(result) if result is not None else "skipped",
+                **_write_columns(result),
             )
 
         self.store.save(settled)
@@ -392,7 +417,7 @@ class AuditService:
                     reviewer=claim.publication.reviewer,
                     note="write-back retry",
                 ),
-                writeback=str(result),
+                **_write_columns(result),
             )
         return tuple(results)
 

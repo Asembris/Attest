@@ -70,13 +70,14 @@ import json
 import sqlite3
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from attest import writeback
 from attest.record import (
     AttemptView,
     AuditRecord,
@@ -152,6 +153,13 @@ CREATE TABLE IF NOT EXISTS claims (
     -- See report.PublicationStatus.
     publication         TEXT NOT NULL DEFAULT 'pending',
     published_by        TEXT NOT NULL DEFAULT '',
+    -- The claim artifact's URN in DataHub: the JOIN KEY between Attest's record of what it
+    -- did and the catalog's record of what it holds (Session 16). DERIVED from claim_json,
+    -- never minted — writeback.claim_urn, content-addressed — and stored because the
+    -- retrieval path filters BY it, which the schema's own rule says makes it a column and
+    -- not a blob. Not unique: the SAME claim audited twice lands on ONE artifact from two
+    -- runs, which is exactly what the content-addressing is for.
+    claim_urn           TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (run_id, claim_index)
 );
 
@@ -219,15 +227,27 @@ CREATE TABLE IF NOT EXISTS approvals (
     reviewer      TEXT NOT NULL DEFAULT '',
     note          TEXT NOT NULL DEFAULT '',
     decided_at    TEXT NOT NULL,
-    -- What happened when the accepted verdict was written back to DataHub: 'written',
-    -- 'skipped', or the failure. An approval whose write-back failed is not a silent
-    -- success, and the row says which it was.
-    writeback     TEXT NOT NULL DEFAULT 'skipped'
+    -- What happened when the accepted verdict was written back to DataHub, RENDERED for a
+    -- human reading the log: 'written to <urn>', 'skipped', or 'failed at <step>: <why>'.
+    -- An approval whose write-back failed is not a silent success, and the row says so.
+    writeback     TEXT NOT NULL DEFAULT 'skipped',
+    -- ...and the same fact as STRUCTURE, because `writeback` above is a RENDERING and a
+    -- rendering cannot be parsed back (Session 5's lesson, at a new column). The retrieval
+    -- path has to distinguish "DataHub's index has not caught up with a write that landed"
+    -- from "the write never landed", and those differ ONLY by what Attest's own record says
+    -- it did. Recovering that from a substring match on the sentence above would be Attest
+    -- inferring its own audit trail. See retrieval.ReadState.
+    --   writeback_ok = NULL  no write was attempted (the decision published nothing)
+    --   writeback_ok = 1     all three writes landed
+    --   writeback_ok = 0     writeback_step names which one did not
+    writeback_ok   INTEGER,
+    writeback_step TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_claims_verdict ON claims (verdict, claim_type);
 CREATE INDEX IF NOT EXISTS idx_claims_publication ON claims (publication);
 CREATE INDEX IF NOT EXISTS idx_claims_urn ON claims (target_urn);
+CREATE INDEX IF NOT EXISTS idx_claims_claim_urn ON claims (claim_urn);
 CREATE INDEX IF NOT EXISTS idx_runs_created ON runs (created_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_run ON approvals (run_id, claim_index);
 """
@@ -246,7 +266,42 @@ class Approval:
     reviewer: str
     note: str
     decided_at: datetime
+    # The write-back, RENDERED — for a human reading the log.
     writeback: str = "skipped"
+    # ...and the same write-back as STRUCTURE, for code. None means nothing was written.
+    # Kept beside the rendering rather than parsed out of it: see the schema's comment.
+    writeback_ok: bool | None = None
+    writeback_step: str | None = None
+
+
+@dataclass(frozen=True)
+class WriteState:
+    """What ATTEST'S OWN RECORD says happened when a claim's verdict went to the catalog.
+
+    Half of the three-state read (retrieval.py), and the half DataHub cannot supply. The
+    catalog answers *what does the catalog hold*; this answers *what did Attest do* — and
+    an absent verdict means completely different things depending on this answer:
+
+        ok=True   the write landed, so an absent verdict is the INDEX still catching up
+        ok=False  the write failed at `failed_step`, so the verdict is never coming
+        ok=None   nothing was written, and this record cannot say why one is absent
+
+    Reading DataHub's silence as `ok=False` — the shape a reader falls into when it has
+    only the catalog — is Attest committing its own cardinal sin in its own read path.
+    """
+
+    claim_urn: str
+    run_id: str
+    claim_index: int
+    target_urn: str
+    verdict: str
+    published: bool
+    reviewer: str
+    ok: bool | None = None
+    failed_step: str | None = None
+    # When the latest write-back attempt was recorded. None if there has never been one.
+    # A "lag" that is days old is not lag, and a reader is entitled to work that out.
+    at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -267,6 +322,58 @@ class StoreError(RuntimeError):
     """This database cannot hold what Attest now records. Said plainly, at open time."""
 
 
+# Every column a CURRENT record needs that an older database does not have, OLDEST FIRST,
+# each with the session that introduced it and what it holds.
+#
+# It is a TABLE rather than one hand-written `if` because the `if` version was WRONG: it
+# checked `claims.rejected` (Session 5) and nothing else, so it returned "compatible" for
+# every database written between Sessions 5 and 14 — which then died on the first INSERT
+# with "table claims has no column named publication", from inside a running service, on
+# exactly the path the check exists to protect. CLAUDE.md said Session 15's schema change
+# was refused at open; it was not, because the guard was never extended when the schema
+# moved under it. A guard that only knows about the first change it was written for is a
+# green light wired to nothing.
+#
+# ADD A ROW HERE WHENEVER THE SCHEMA GAINS A COLUMN. That is the whole maintenance rule.
+_REQUIRED_COLUMNS: tuple[tuple[str, str, str, str], ...] = (
+    (
+        "claims",
+        "rejected",
+        "5",
+        "the guard's rejected drafts, its faithfulness violations, the models a step "
+        "called, and structured conflicts",
+    ),
+    (
+        "claims",
+        "publication",
+        "15",
+        "whether a human cleared each verdict for the catalog, separately from whether "
+        "they accepted a correction",
+    ),
+    (
+        "approvals",
+        "publish",
+        "15",
+        "the two halves of a decision — publish, and accept-correction — which used to be "
+        "one flag",
+    ),
+    (
+        "claims",
+        "claim_urn",
+        "16",
+        "the claim artifact's URN in DataHub: the join key between what Attest did and "
+        "what the catalog holds",
+    ),
+    (
+        "approvals",
+        "writeback_ok",
+        "16",
+        "whether each catalog write LANDED, and at which step it did not, as structure "
+        "rather than as a rendered sentence",
+    ),
+)
+
+
 class AuditStore:
     """Attest's audit history. One connection, guarded — the API calls this from a pool."""
 
@@ -284,44 +391,56 @@ class AuditStore:
         self._db.commit()
 
     def _refuse_an_incompatible_database(self) -> None:
-        """A pre-Session-5 database is rejected here, not discovered mid-INSERT.
+        """An older database is rejected HERE, not discovered mid-INSERT.
 
         `CREATE TABLE IF NOT EXISTS` is a no-op against an existing table, so an older
         database would open cleanly, serve reads, and then fail on the first write with
-        "table claims has no column named rejected" — from inside a running service, on the
-        one path that matters. The columns cannot be back-filled either: three of them
-        changed from a rendered string to the structure that produced it, and reconstructing
-        the structure from the string means Attest inventing the contents of its own audit
-        trail. So it says so instead. See the module docstring.
+        "table claims has no column named ..." — from inside a running service, on the one
+        path that matters. The columns cannot be back-filled either: several changed from a
+        rendered string to the structure that produced it, and reconstructing the structure
+        from the string means Attest inventing the contents of its own audit trail. So it
+        says so instead. See the module docstring.
+
+        Every schema change is checked, not just the first one — see `_REQUIRED_COLUMNS`,
+        and the bug that table exists because of.
         """
-        existing = self._db.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'claims'"
-        ).fetchone()
-        if existing is None:
+        tables = {
+            row["name"]
+            for row in self._db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
+        if "claims" not in tables:
             return  # a new database. It gets the current schema below.
 
-        columns = {
-            row["name"] for row in self._db.execute("PRAGMA table_info(claims)").fetchall()
+        columns: dict[str, set[str]] = {
+            table: {
+                row["name"]
+                for row in self._db.execute(f"PRAGMA table_info({table})").fetchall()
+            }
+            for table in tables
         }
-        if "rejected" in columns:
-            return
 
-        raise StoreError(
-            f"{self.path} was written by a pre-Session-5 Attest and cannot hold what a run "
-            f"now records: the guard's rejected drafts, its faithfulness violations, the "
-            f"models a step called, and structured conflicts.\n"
-            f"\n"
-            f"  WHAT TO DO:  delete {self.path} (and attest-checkpoints.db) and re-run.\n"
-            f"\n"
-            f"THERE IS NO MIGRATION, and that is deliberate rather than unfinished. Three "
-            f"columns changed from a rendered string to the structure that produced it, and "
-            f"a string cannot be parsed back into the pair it came from. Reconstructing them "
-            f"would mean Attest inventing the contents of its own audit trail — the one "
-            f"thing it exists not to do. Deleting the file costs you the audit HISTORY of a "
-            f"development database; nothing in DataHub is touched, and the next run rebuilds "
-            f"the schema. A production deployment would need a real migration; this is a "
-            f"hackathon build and it says so rather than pretending otherwise."
-        )
+        for table, column, session, holds in _REQUIRED_COLUMNS:
+            # A table the old database never had is as missing as a column it never had.
+            if column in columns.get(table, set()):
+                continue
+            raise StoreError(
+                f"{self.path} was written by a pre-Session-{session} Attest and cannot hold "
+                f"what a run now records: {holds} (missing {table}.{column}).\n"
+                f"\n"
+                f"  WHAT TO DO:  delete {self.path} (and attest-checkpoints.db) and re-run.\n"
+                f"\n"
+                f"THERE IS NO MIGRATION, and that is deliberate rather than unfinished. "
+                f"Columns here changed from a rendered string to the structure that produced "
+                f"it, and a string cannot be parsed back into what it came from. "
+                f"Reconstructing them would mean Attest inventing the contents of its own "
+                f"audit trail — the one thing it exists not to do. Deleting the file costs "
+                f"you the audit HISTORY of a development database; nothing in DataHub is "
+                f"touched, and the next run rebuilds the schema. A production deployment "
+                f"would need a real migration; this is a hackathon build and it says so "
+                f"rather than pretending otherwise."
+            )
 
     def close(self) -> None:
         self._db.close()
@@ -391,8 +510,8 @@ class AuditStore:
                     "INSERT INTO claims (run_id, claim_index, claim_type, target_urn,"
                     " raw_text, claim_json, verdict, reason, explanation,"
                     " explanation_source, faithful, violations, conflicts, rejected,"
-                    " publication, published_by)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " publication, published_by, claim_urn)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         record.run_id,
                         claim.index,
@@ -412,6 +531,11 @@ class AuditStore:
                         json.dumps(list(claim.rejected)),
                         claim.publication.status.value,
                         claim.publication.reviewer,
+                        # DERIVED from the claim, by the same function the write-back uses,
+                        # so the store and the catalog cannot disagree about where a claim
+                        # lives. Computed for EVERY claim, published or not: a claim's
+                        # artifact URN is a fact about the claim, not about the decision.
+                        writeback.claim_urn(claim.claim),
                     ),
                 )
                 for seq, e in enumerate(claim.evidence):
@@ -479,9 +603,17 @@ class AuditStore:
         run_id: str,
         decision: Decision,
         writeback: str = "skipped",
+        writeback_ok: bool | None = None,
+        writeback_step: str | None = None,
         decided_at: datetime | None = None,
     ) -> Approval:
-        """Append one human decision. Never overwrites an earlier one on the same claim."""
+        """Append one human decision. Never overwrites an earlier one on the same claim.
+
+        `writeback` is the RENDERING a human reads in the log; `writeback_ok` and
+        `writeback_step` are the same fact as structure, for code. Both, because a rendering
+        cannot be parsed back and the retrieval path needs the fact rather than the sentence
+        — see the schema comment, and `WriteState`.
+        """
         approval = Approval(
             approval_id=str(uuid.uuid4()),
             run_id=run_id,
@@ -492,12 +624,15 @@ class AuditStore:
             note=decision.note,
             decided_at=decided_at or datetime.now(tz=UTC),
             writeback=writeback,
+            writeback_ok=writeback_ok,
+            writeback_step=writeback_step,
         )
         with self._write() as db:
             db.execute(
                 "INSERT INTO approvals (approval_id, run_id, claim_index, publish,"
-                " accept_correction, reviewer, note, decided_at, writeback)"
-                " VALUES (?,?,?,?,?,?,?,?,?)",
+                " accept_correction, reviewer, note, decided_at, writeback, writeback_ok,"
+                " writeback_step)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     approval.approval_id,
                     approval.run_id,
@@ -510,6 +645,8 @@ class AuditStore:
                     approval.note,
                     approval.decided_at.isoformat(),
                     approval.writeback,
+                    None if approval.writeback_ok is None else int(approval.writeback_ok),
+                    approval.writeback_step,
                 ),
             )
         return approval
@@ -653,9 +790,78 @@ class AuditStore:
                 note=r["note"],
                 decided_at=datetime.fromisoformat(r["decided_at"]),
                 writeback=r["writeback"],
+                writeback_ok=(
+                    None if r["writeback_ok"] is None else bool(r["writeback_ok"])
+                ),
+                writeback_step=r["writeback_step"],
             )
             for r in rows
         )
+
+    def write_states(
+        self, claim_urns: Sequence[str] | None = None
+    ) -> dict[str, WriteState]:
+        """What Attest did about each claim artifact, keyed by the artifact's URN.
+
+        The store's half of the three-state read (retrieval.py). DataHub says what the
+        catalog HOLDS; this says what Attest DID, and an absent verdict cannot be read
+        without both.
+
+        **Keyed by claim URN, and therefore NOT by run.** A claim artifact is
+        content-addressed, so the same claim audited twice is ONE artifact written by two
+        runs — that is the point of the addressing, not an edge case. The catalog holds one
+        thing at that URN, so this reports the LATEST attempt against it: an older run's
+        success does not describe the state of a newer run's failed rewrite.
+
+        `claim_urns=None` returns every claim this store knows about. Passing the URNs a
+        DataHub read actually returned keeps it to that page.
+        """
+        sql = (
+            "SELECT c.claim_urn, c.run_id, c.claim_index, c.target_urn, c.verdict,"
+            " c.publication, c.published_by, a.writeback_ok, a.writeback_step,"
+            " a.decided_at"
+            " FROM claims c"
+            " LEFT JOIN approvals a"
+            "   ON a.run_id = c.run_id AND a.claim_index = c.claim_index"
+            "   AND a.writeback_ok IS NOT NULL"
+            " WHERE c.claim_urn != ''"
+        )
+        args: list[Any] = []
+        if claim_urns is not None:
+            urns = list(claim_urns)
+            if not urns:
+                return {}
+            sql += f" AND c.claim_urn IN ({','.join('?' * len(urns))})"
+            args.extend(urns)
+        # Newest attempt first, so the first row seen per URN is the one that describes the
+        # artifact now. A claim with no write-back attempt at all still yields a row (LEFT
+        # JOIN, decided_at NULL) and sorts last — it is a real answer: "nothing was written".
+        sql += " ORDER BY a.decided_at IS NULL, a.decided_at DESC"
+
+        with self._lock:
+            rows = self._db.execute(sql, args).fetchall()
+
+        states: dict[str, WriteState] = {}
+        for r in rows:
+            if r["claim_urn"] in states:
+                continue
+            states[r["claim_urn"]] = WriteState(
+                claim_urn=r["claim_urn"],
+                run_id=r["run_id"],
+                claim_index=r["claim_index"],
+                target_urn=r["target_urn"],
+                verdict=r["verdict"],
+                published=r["publication"] == PublicationStatus.PUBLISHED.value,
+                reviewer=r["published_by"],
+                ok=None if r["writeback_ok"] is None else bool(r["writeback_ok"]),
+                failed_step=r["writeback_step"],
+                at=(
+                    datetime.fromisoformat(r["decided_at"])
+                    if r["decided_at"] is not None
+                    else None
+                ),
+            )
+        return states
 
     def find_claims(
         self,
