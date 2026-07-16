@@ -24,6 +24,7 @@ rejects nothing.
 from __future__ import annotations
 
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -41,6 +42,7 @@ from tests.conftest import (
     UNREVIEWED,
 )
 
+from attest import writeback
 from attest.api.app import app, get_service
 from attest.api.service import AuditService
 from attest.checkers import check
@@ -422,9 +424,10 @@ def test_the_service_end_to_end_against_the_real_catalog(client, now, tmp_path, 
             settled = approved.json()
 
             assert settled["audit"]["status"] == "complete"
-            assert settled["writebacks"] == [
-                {"target_urn": OWNED_BY_CAROL, "ok": True, "detail": ""}
-            ]
+            assert len(settled["writebacks"]) == 1
+            assert settled["writebacks"][0]["target_urn"] == OWNED_BY_CAROL
+            assert settled["writebacks"][0]["ok"] is True, settled["writebacks"][0]
+            assert settled["writebacks"][0]["failed_step"] is None
 
         # --- and the verdict is really on the dataset, in DataHub -------------
         written = {
@@ -451,4 +454,244 @@ def test_the_service_end_to_end_against_the_real_catalog(client, now, tmp_path, 
             f"datasets -> {r['catalog_fetches']} fetches ({saved} saved)"
         )
         print(f"  WROTE BACK: {VERDICT.qualified_name}=Contradicted on {OWNED_BY_CAROL}")
+        print()
+
+
+# --- the claim artifact, against the real catalog (Session 15) ----------------
+
+
+def _await_verdict(client, claim_urn: str, run_id: str | None = None, timeout_s: float = 40.0):
+    """Read a claim artifact back, waiting for THIS run's verdict to become readable.
+
+    DataHub serves run events through an eventually-consistent index, so a verdict that was
+    definitely written is not readable the instant the mutation returns. Polling keeps the
+    assertions about the FEATURE rather than about the lag: a bare sleep is a guess, and
+    reading once makes the test flake on a busy server and blame the write.
+
+    `run_id` is what makes this correct rather than merely patient, and it was learned by
+    watching this flake. A claim's URN is content-addressed, so re-running these tests
+    re-audits the SAME claim and appends to the SAME artifact — which is the feature working.
+    But it means the artifact already has a history from earlier runs, so "wait until it has
+    a verdict" is satisfied instantly by a STALE one, and the test then asserts against
+    another run's event. Waiting for this run's own verdict is the only honest read.
+    """
+    deadline = time.monotonic() + timeout_s
+    artifact = None
+    while time.monotonic() < deadline:
+        artifact = writeback.read_claim_artifact(client, claim_urn)
+        if artifact is not None and artifact.complete:
+            if run_id is None or artifact.history[0].audit_run == run_id:
+                return artifact
+        time.sleep(1)
+    return artifact
+
+
+@pytest.mark.live
+def test_two_claims_on_one_dataset_coexist_in_the_catalog(client, now, tmp_path, capsys):
+    """THE SHARP QUESTION, answered against real DataHub:
+
+        "Two claims about one dataset are approved. Show me what the next agent inherits
+         from DataHub alone."
+
+    Until Session 15 the honest answer was "an opaque run UUID". Verdicts were five
+    dataset-level structured properties, and structured properties are last-write-wins: two
+    claims about one dataset OVERWROTE each other, and the survivor was a verdict with no
+    subject. `attest.verdict = "Contradicted"` cannot say WHICH claim was contradicted.
+
+    This is the proof that it is no longer true, and it is deliberately not "the tests
+    pass": it drives the REAL service -- real model, real catalog, real database, real HTTP
+    -- approves two DIFFERENT claims about ONE dataset, and then reads the catalog back
+    with `dataset.assertions(urn)`, which is the query a second agent would run. No Attest
+    state is consulted in the read-back.
+
+    ONLY A LIVE RUN CAN PROVE THIS. The fake has no timeseries aspect, no search index, no
+    MCP validation and no notion of an undefined tag -- every mechanism this feature rides
+    on is server machinery a fake does not have (the Session 5 rule). The offline tier pins
+    the shape of the payload; it cannot pin that the write lands. Two real bugs were found
+    exactly here and nowhere else: the unbootstrapped verdict tag, and the fieldPath trap.
+
+    Two ownership claims naming two different owners are two DIFFERENT claims about one
+    dataset -- precisely the case that used to collapse to a single property.
+
+    NOTE: this WRITES to the local catalog -- two assertions on support_tickets. That is
+    the feature. `just seed` restores the catalog from scratch.
+    """
+    agent_output = (
+        f"The dataset {OWNED_BY_CAROL} is owned by {DANA}. "
+        f"I also see that {OWNED_BY_CAROL} is owned by {ALICE}."
+    )
+
+    service = AuditService(
+        pipeline=Pipeline(llm=LLM(), client=client, now=now),
+        store=AuditStore(tmp_path / "attest.db"),
+        client=client,
+    )
+    app.dependency_overrides[get_service] = lambda: service
+    try:
+        with TestClient(app) as http:
+            audit = http.post(
+                "/audit",
+                json={"agent_output": agent_output, "source_agent": "claim-artifact-test"},
+            ).json()
+            run_id = audit["run_id"]
+            assert audit["receipts"]["trajectory_ok"], audit["receipts"]["trajectory_summary"]
+
+            # Two claims, one dataset. Both wrong, both correctable, so both are on offer.
+            proposals = [
+                c for c in audit["claims"]
+                if c["correction"]["review"] == "pending"
+                and c["correction"]["outcome"] == "corrected"
+            ]
+            assert len(proposals) == 2, (
+                f"expected two approvable claims about {OWNED_BY_CAROL}, got "
+                f"{[(c['index'], c['claim_type'], c['verdict']) for c in audit['claims']]}"
+            )
+            assert {p["target_urn"] for p in proposals} == {OWNED_BY_CAROL}
+
+            settled = http.post(
+                f"/audit/{run_id}/approve",
+                json={"decisions": [
+                    {"claim_index": p["index"], "accept": True, "reviewer": "live-test"}
+                    for p in proposals
+                ]},
+            ).json()
+
+        writebacks = settled["writebacks"]
+        assert len(writebacks) == 2, writebacks
+        for w in writebacks:
+            assert w["ok"] is True, f"write-back failed at {w['failed_step']}: {w['detail']}"
+        claim_urns = {w["claim_urn"] for w in writebacks}
+        assert len(claim_urns) == 2, (
+            f"two claims collapsed onto one artifact: {claim_urns}. This is the overwrite "
+            "the whole feature exists to end."
+        )
+
+        # --- THE READ-BACK. DataHub alone. No Attest state consulted. ----------
+        #
+        # Wait for THIS run's verdict on each claim before reading the dataset, or the
+        # eventually-consistent index serves an earlier run's event and the assertions below
+        # test the wrong write. (These tests re-audit the same claims every run and append to
+        # the same artifacts — which is the feature, and is why the stale read is reachable.)
+        for urn in claim_urns:
+            assert _await_verdict(client, urn, run_id=run_id) is not None
+
+        artifacts = {
+            a.claim_urn: a for a in writeback.read_dataset_claims(client, OWNED_BY_CAROL)
+        }
+        for urn in claim_urns:
+            assert urn in artifacts, f"{urn} is not on the dataset in DataHub"
+            a = artifacts[urn]
+            assert a.target_urn == OWNED_BY_CAROL
+            assert a.claim_type == "ownership"
+            assert a.complete, "the artifact carries no verdict"
+            # The verdict is a STORED value, read verbatim -- never inferred from the native
+            # result type or from the succeeded/failed rollup, which cannot tell an
+            # Insufficient-Coverage claim from a half-written one.
+            assert a.verdict == "Contradicted"
+            assert a.history[0].audit_run == run_id
+            assert a.history[0].reviewer == "live-test"
+            # The claim carries what it ASSERTED, so the next agent knows what was claimed.
+            assert a.logic["asserted"]["owner_urn"].startswith("urn:li:corpuser:")
+
+        # Two claims, two different asserted owners, both preserved. Neither overwrote the
+        # other -- the invariant, stated as data rather than as a hope.
+        owners = {artifacts[u].logic["asserted"]["owner_urn"] for u in claim_urns}
+        assert owners == {DANA, ALICE}, f"the two claims collapsed: {owners}"
+    finally:
+        app.dependency_overrides.clear()
+
+    with capsys.disabled():
+        print(f"\n\n  {'=' * 74}")
+        print("  WHAT THE NEXT AGENT INHERITS FROM DATAHUB ALONE")
+        print(f"  dataset.assertions({OWNED_BY_CAROL.split(',')[1]})")
+        print(f"  {'=' * 74}")
+        for urn in sorted(claim_urns):
+            a = artifacts[urn]
+            print(f"\n  {a.claim_urn}")
+            print(f"    claim_type    : {a.claim_type}   grain: {a.grain}")
+            print(f"    asserted      : owner_urn={a.logic['asserted']['owner_urn']}")
+            print(f"    attest.verdict: {a.verdict}   (stored verbatim, not inferred)")
+            print(f"    reviewer      : {a.history[0].reviewer}")
+            print(f"    audit_run     : {a.history[0].audit_run}")
+            print(f"    history       : {len(a.history)} verdict(s)")
+        print("\n  TWO claims. ONE dataset. Neither overwrote the other.\n")
+
+
+@pytest.mark.live
+def test_the_third_verdict_reaches_the_catalog_as_its_literal_self(client, now, capsys):
+    """Insufficient-Coverage survives the round trip to real DataHub, legibly.
+
+    The third verdict is load-bearing (CLAUDE.md 3) and DataHub has no native result type
+    for it: `AssertionResultType` is INIT/SUCCESS/FAILURE/ERROR, and `result.error` -- where
+    `INSUFFICIENT_DATA` would have gone -- is accepted by the mutation and silently
+    discarded. So Insufficient-Coverage projects onto ERROR, which lands in NEITHER the
+    passed nor the failed rollup (correct: the catalog being silent is not a pass and not a
+    fail), and the verdict itself is carried verbatim in the run event's payload.
+
+    This asserts it comes back as the literal string, from the real server.
+
+    WHY THIS DOES NOT GO THROUGH `/approve`, and it is a real GAP rather than a shortcut:
+    only a claim that was CONTRADICTED and successfully CORRECTED is ever offered to a human
+    (`correction.awaits_human` is `outcome is CORRECTED and review is PENDING`), and
+    Insufficient-Coverage is never sent round the correction loop. So an IC claim -- and a
+    Supported one -- can never be approved, and therefore never reaches the catalog at all.
+    Measured live: an audit of two claims about one dataset offered exactly one of them for
+    approval. That gates the thesis, and it is reported at the Session A checkpoint rather
+    than papered over here. This test drives `write_claim_artifact` -- the same function the
+    approval path calls, with the same arguments -- to prove the CATALOG leg holds while the
+    publication gate is decided.
+    """
+    claim = {
+        "claim_type": "classification",
+        "target_urn": UNREVIEWED,
+        "raw_text": f"The dataset {UNREVIEWED} contains no PII.",
+        "labels": ["urn:li:tag:PII"],
+        "present": False,
+        "field_path": None,
+    }
+    # The verdict is the DETERMINISTIC checker's, not a literal: this has to be the real
+    # third verdict about a real under-documented dataset, or it proves nothing.
+    result = check(ClassificationClaim(**claim), client.fetch_dataset(UNREVIEWED))
+    assert result.verdict is Verdict.INSUFFICIENT_COVERAGE, (
+        f"{UNREVIEWED} is no longer silent about PII ({result.verdict}); this test needs a "
+        "dataset the catalog has not reviewed."
+    )
+
+    written = writeback.write_claim_artifact(
+        client,
+        claim=claim,
+        verdict=result.verdict.value,
+        run_id="live-third-verdict",
+        checked_at=now,
+        evidence="; ".join(f"{e.field}={e.value}" for e in result.evidence if e.value),
+        reviewer="live-test",
+    )
+    assert written.ok is True, f"failed at {written.failed_step}: {written.detail}"
+
+    # A VERDICT IS NOT READABLE THE INSTANT IT IS WRITTEN, and this is not the test being
+    # generous. `reportAssertionResult` returned true and the tag landed, yet the first read
+    # came back with `history=()` — the run event is served through an eventually-consistent
+    # index. Found here, on the first live run of this test.
+    #
+    # It is worth naming rather than sleeping past, because Session B's read path inherits
+    # it: a UI that approves a claim and immediately GETs it can legitimately see a claim
+    # with no verdict — which is exactly the shape of a HALF-WRITTEN artifact. Those are
+    # different facts and the read path must not report the lag as an incomplete write.
+    artifact = _await_verdict(client, written.claim_urn)
+    assert artifact is not None
+    assert artifact.complete is True, "the third verdict must be a VERDICT, not an absence"
+    assert artifact.verdict == "Insufficient-Coverage", (
+        f"the third verdict came back as {artifact.verdict!r}. It must survive as its "
+        "literal self -- a reader cannot recover it from a bucket."
+    )
+    assert artifact.history[0].native_type == "ERROR"
+    assert writeback.verdict_tag_urn("Insufficient-Coverage") in artifact.tags
+
+    with capsys.disabled():
+        print("\n\n  THIRD VERDICT, from real DataHub:")
+        print(f"    {artifact.claim_urn}")
+        print(f"    attest.verdict (stored) : {artifact.verdict!r}")
+        print(f"    result.type    (native) : {artifact.history[0].native_type}"
+              "   <- lossy projection; NOT what the verdict is read from")
+        print(f"    tag                     : {[t for t in artifact.tags if 'Attest-' in t]}")
         print()
