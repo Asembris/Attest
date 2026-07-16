@@ -381,6 +381,48 @@ def test_two_different_claims_on_one_dataset_coexist(catalog):
 # --- the failed step ----------------------------------------------------------
 
 
+def test_the_verdict_tags_are_bootstrapped_against_a_catalog_that_has_none(monkeypatch):
+    """Attest defines its own verdict tags. Found LIVE, and the fake could not have caught it.
+
+    The first real write-back failed at the tag step: "Failed to validate label with urn
+    urn:li:tag:Attest-Contradicted. Urn does not exist." `ensure_verdict_tags` existed and
+    was never called — DataHub refuses to apply a tag nobody defined, and the fake happily
+    invented one on demand, so the offline suite was green and the real catalog was not.
+    (The Session 5 rule again: a fake cannot fail the way the real thing fails.)
+
+    So the fake is taught to refuse an undefined tag, which is what the server does, and the
+    bootstrap is asserted rather than assumed.
+    """
+    catalog = FakeDataHub({SF: dataset(SF)})
+    defined: set[str] = set()
+    real_create = catalog.create_tag
+    real_add = catalog.add_tag
+
+    def strict_add(tag_urn: str, resource_urn: str) -> bool:
+        if tag_urn not in defined:
+            raise DataHubError(
+                f"Failed to validate label with urn {tag_urn}. Urn does not exist."
+            )
+        return real_add(tag_urn, resource_urn)
+
+    def track_create(tag_id: str, name: str, description: str = "") -> str:
+        urn = real_create(tag_id, name, description)
+        defined.add(urn)
+        return urn
+
+    monkeypatch.setattr(catalog, "add_tag", strict_add)
+    monkeypatch.setattr(catalog, "create_tag", track_create)
+
+    result = write(catalog, ownership_claim(), verdict="Contradicted")
+
+    assert result.ok is True, (
+        f"the write failed at {result.failed_step}: {result.detail}. Attest must define its "
+        "own verdict tags — the catalog will not invent them."
+    )
+    artifact = writeback.read_claim_artifact(catalog, result.claim_urn)
+    assert writeback.verdict_tag_urn("Contradicted") in artifact.tags
+
+
 def test_the_retry_completes_a_half_written_claim_without_duplicating_it(catalog, monkeypatch):
     """THE RECOVERY PATH, end to end: repair by repetition.
 

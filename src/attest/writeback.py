@@ -517,7 +517,23 @@ def _swap_verdict_tag(client: DataHubClient, assertion_urn: str, verdict: str) -
         except DataHubError:
             # Not applied in the first place. Removing what is not there is the state we want.
             continue
-    client.add_tag(verdict_tag_urn(verdict), assertion_urn)
+
+    try:
+        client.add_tag(verdict_tag_urn(verdict), assertion_urn)
+    except DataHubError:
+        # The verdict tags are not defined yet. Attest bootstraps its own write surface —
+        # a service that cannot write its results until someone runs a recipe by hand is not
+        # deployable — and it does it HERE, lazily, rather than on every write: `createTag`
+        # refuses an existing tag ("This Tag already exists!"), so an eager bootstrap would
+        # throw three caught errors per approval forever. This costs one extra call once, on
+        # the first write-back against a fresh catalog, and nothing afterwards.
+        #
+        # Found live: the first real write-back failed at exactly this step with "Failed to
+        # validate label with urn urn:li:tag:Attest-Contradicted. Urn does not exist." The
+        # claim and its verdict had already landed, which is the ordering working as designed
+        # — but a verdict search cannot find is half a feature.
+        ensure_verdict_tags(client)
+        client.add_tag(verdict_tag_urn(verdict), assertion_urn)
 
 
 def write_verdict(
