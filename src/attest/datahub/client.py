@@ -13,6 +13,7 @@ the failure mode this project exists to prevent.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import httpx
@@ -500,6 +501,87 @@ class DataHubClient:
         if not dataset:
             return []
         return list((dataset.get("assertions") or {}).get("assertions") or [])
+
+    SEARCH_ASSERTIONS = """
+    query searchAssertions($orFilters: [AndFilterInput!], $start: Int!, $count: Int!) {
+      searchAcrossEntities(
+        input: {
+          types: [ASSERTION]
+          query: "*"
+          start: $start
+          count: $count
+          orFilters: $orFilters
+        }
+      ) {
+        total
+        searchResults {
+          entity {
+            urn
+            ... on Assertion {
+              info {
+                description externalUrl
+                customAssertion { type entityUrn logic field { path } }
+              }
+              tags { tags { tag { urn } } }
+              runEvents(status: COMPLETE, limit: 50) {
+                total failed succeeded
+                runEvents {
+                  timestampMillis
+                  result { type externalUrl nativeResults { key value } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    def search_assertions(
+        self,
+        custom_types: Sequence[str] = (),
+        tags: Sequence[str] = (),
+        start: int = 0,
+        count: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Claim artifacts across the WHOLE catalog, filtered in the index.
+
+        The second of the two server-side entry points, and it is DISJOINT from the first:
+        this one FILTERS but cannot SCOPE, while `list_dataset_assertions` scopes but cannot
+        filter. They do not compose, so a caller who wants both gets one server-side and the
+        other applied by Attest — which `retrieval.py` reports rather than papers over.
+
+        Only `customType` and `tags` are indexed on an assertion (measured — `entityUrn`,
+        `asserteeUrn`, `datasetUrn`, `fieldPath`, `description` and five more all return
+        total=0 against a baseline that returns everything). So claim type travels in
+        `customType` and the latest verdict travels as a tag; there is no third filter to
+        add here, and a reviewer or a time window CANNOT be pushed down at all.
+
+        Both filters accept multiple values and OR within a field, AND across fields — so
+        "every Attest claim" is one query naming all four claim types, and "contradicted
+        ownership claims" is one query naming one of each.
+
+        The run events come back INLINE, so this is one round trip rather than a fan-out:
+        whatever Attest filters afterwards, it filters over a response it already has.
+        """
+        conditions: list[dict[str, Any]] = []
+        if custom_types:
+            conditions.append({"field": "customType", "values": list(custom_types)})
+        if tags:
+            conditions.append({"field": "tags", "values": list(tags)})
+        # No conditions is a legitimate ask ("every assertion") and `orFilters: []` is not
+        # how you say it -- an empty AND matches nothing. Omit the filter entirely.
+        or_filters = [{"and": conditions}] if conditions else None
+
+        result = self.execute(
+            self.SEARCH_ASSERTIONS,
+            {"orFilters": or_filters, "start": start, "count": count},
+        )["searchAcrossEntities"]
+        return [
+            r["entity"]
+            for r in (result.get("searchResults") or [])
+            if r.get("entity")
+        ]
 
     # --- tags ---------------------------------------------------------------
 

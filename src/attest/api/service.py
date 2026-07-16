@@ -64,6 +64,7 @@ from attest.datahub import DataHubClient, DataHubError
 from attest.graph import Pipeline
 from attest.record import AuditRecord
 from attest.report import Decision, RunStatus
+from attest.retrieval import ClaimPage, ClaimQuery, ClaimReader, RetrievedClaim
 from attest.store import AuditStore
 from attest.writeback import WriteResult
 
@@ -101,6 +102,16 @@ class ServiceError(RuntimeError):
 
 class RunNotFound(ServiceError):
     pass
+
+
+class ClaimNotFound(ServiceError):
+    """The catalog holds no claim artifact at that URN.
+
+    Distinct from a claim with no VERDICT, which is a claim that exists and reads as
+    `incomplete` or `pending-lag` (retrieval.ReadState). Nothing here, versus something here
+    whose verdict has not landed — folding them together would report a claim Attest never
+    wrote and a claim Attest half-wrote as the same fact.
+    """
 
 
 class NotResumable(ServiceError):
@@ -469,6 +480,33 @@ class AuditService:
         except DataHubError as exc:  # pragma: no cover - write_verdict already returns
             log.warning("dataset badge for %s not updated: %s", claim.target_urn, exc)
         return result
+
+    # --- retrieval ------------------------------------------------------------
+
+    def claims(self, query: ClaimQuery, limit: int = 50) -> ClaimPage:
+        """Claim artifacts, FROM THE CATALOG. The inheritance half of the thesis.
+
+        **This reads DataHub, not the store, and that is the entire point.** If it answered
+        from SQLite it would prove nothing about what a second agent inherits — it would
+        just be Attest showing you its own notes. The store is consulted for exactly one
+        thing: what Attest DID about a claim whose verdict the catalog is not showing, which
+        is the only way to tell an index still catching up from a write that never landed.
+        It can never add a claim, remove one, or change a verdict.
+
+        Needs no run, no approval and no pause: this is a read of published facts.
+        """
+        return ClaimReader(self.client, self.store).list(query, limit=limit)
+
+    def claim(self, claim_urn: str) -> RetrievedClaim:
+        """One claim artifact and its whole verdict history."""
+        found = ClaimReader(self.client, self.store).get(claim_urn)
+        if found is None:
+            raise ClaimNotFound(
+                f"the catalog holds no claim artifact at {claim_urn}. Attest may never have "
+                f"written one (a verdict reaches DataHub only when a human publishes it), "
+                f"or the URN may not be a claim artifact's."
+            )
+        return found
 
     # --- liveness -------------------------------------------------------------
 
