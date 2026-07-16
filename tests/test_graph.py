@@ -22,7 +22,7 @@ from attest.datahub import FieldSnapshot
 from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
-from attest.trajectory import CHECKER, GUARD, RECHECK, REVISE, Rule
+from attest.trajectory import CHECKER, CHECKPOINT, GUARD, RECHECK, REVISE, Rule
 from fakes import (
     FakeCatalog,
     FakeChat,
@@ -410,6 +410,11 @@ def test_an_unattended_proposal_stays_pending_rather_than_being_accepted():
     Not accepted. This is the accountability property, and it is the one a hurried
     refactor would break by defaulting to "approve all" — which would look identical in
     every other test.
+
+    And the run does not FINISH on a review that reviewed nothing (Session 14). PENDING is
+    a resting state, not a terminal one: the only edge out of the checkpoint is the one that
+    finds nothing pending, so a human who looked and settled nothing leaves the run exactly
+    where they found it — parked, and still decidable.
     """
     p, _ = pipeline(
         claim_reply([ownership_claim(owner=ALICE)]),
@@ -420,9 +425,19 @@ def test_an_unattended_proposal_stays_pending_rather_than_being_accepted():
 
     final = p.resume(parked.thread_id, decisions=[])  # a human who reviewed nothing
 
-    assert final.status is RunStatus.COMPLETE
+    assert final.status is RunStatus.AWAITING_REVIEW
     assert final.audits[0].correction.review is ReviewStatus.PENDING
     assert final.audits[0].correction.outcome is CorrectionOutcome.CORRECTED
+    assert p.is_parked(parked.thread_id), "the pause the proposal is waiting in is gone"
+
+    # The checkpoint node DID run — the human's turn was taken, and it settled nothing.
+    # That is the difference between a decision deferred and a decision skipped.
+    assert CHECKPOINT in [s.name for s in final.trace]
+
+    # And deciding it later still works, which is the whole point of staying parked.
+    settled = p.resume(parked.thread_id, [Decision(claim_index=0, accept=True)])
+    assert settled.status is RunStatus.COMPLETE
+    assert settled.audits[0].correction.review is ReviewStatus.ACCEPTED
 
 
 @pytest.mark.parametrize(

@@ -22,6 +22,7 @@ from attest.api.app import app, get_service
 from attest.api.service import AuditService
 from attest.graph import Pipeline
 from attest.llm import LLM
+from attest.report import RunStatus
 from attest.store import AuditStore
 from attest.writeback import AUDIT_RUN, CLAIM_TYPE, SOURCE_AGENT, VERDICT
 from fakes import (
@@ -63,6 +64,21 @@ CONTRADICTED = (
 SUPPORTED = (
     claim_reply([ownership(CAROL)]),
     explanation_reply(f"{CAROL} is listed as an owner.", "Supported", []),
+)
+
+# TWO contradicted claims about ONE dataset, each correctable: two proposals, so a caller
+# can decide one and leave the other. Both name SF deliberately — that is what makes a
+# decision log keyed by URN report the wrong write against the wrong decision. The script
+# is exact rather than padded: FakeChat repeats its LAST reply, so a short script would
+# feed a revision payload to the explain step and test something else entirely.
+TWO_CLAIMS = f"The dataset {SF} is owned by {ALICE}. {SF} is owned by {ALICE}."
+_CONTRADICTED_PROSE = explanation_reply("the catalog lists a different owner.", "Contradicted", [])
+TWO_PROPOSALS = (
+    claim_reply([ownership(ALICE), ownership(ALICE)]),
+    _CONTRADICTED_PROSE,
+    revision_reply(ownership(CAROL)),
+    _CONTRADICTED_PROSE,
+    revision_reply(ownership(CAROL)),
 )
 
 
@@ -307,18 +323,25 @@ def test_rejecting_a_correction_writes_nothing(client):
     assert approvals[0].writeback == "skipped"
 
 
-def test_approving_nothing_leaves_the_proposal_pending(client):
+def test_approving_nothing_leaves_the_proposal_pending_AND_still_decidable(client):
     """A person looked and settled nothing. That is a legitimate outcome, not an error.
 
     The resting state of an unreviewed correction is PENDING. Not accepted. This is the one
     an "approve all" default would break, and it would look identical in every other test.
+
+    And PENDING has to still MEAN something afterwards (Session 14). Until this session the
+    empty approval ran the graph on to the report, settled the run COMPLETE, and deleted its
+    checkpoint — so the proposal stayed pending exactly as promised and could never be
+    decided again, because a COMPLETE run is not resumable. The endpoint documented the
+    right behaviour and then terminated the run that behaviour was for. So the last two
+    assertions are the point: the run is still awaiting review, and the decision the caller
+    declined to make is still there to be made.
     """
     service = app.dependency_overrides[get_service]()
     run_id = client.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
 
     body = client.post(f"/audit/{run_id}/approve", json={"decisions": []}).json()
 
-    assert body["audit"]["status"] == "complete"
     assert body["audit"]["claims"][0]["correction"]["review"] == "pending"
     assert body["audit"]["claims"][0]["correction"]["outcome"] == "corrected"
     assert body["writebacks"] == []
@@ -326,6 +349,108 @@ def test_approving_nothing_leaves_the_proposal_pending(client):
 
     # And it is PENDING in the store too, not just in the response.
     assert service.store.load(run_id).claims[0].correction.review.value == "pending"
+
+    # THE FIX. A run holding an undecided proposal is not finished, and says so.
+    assert body["audit"]["status"] == "awaiting-review", (
+        "a run with an undecided proposal settled as COMPLETE: the proposal is now "
+        "permanently un-decidable, because a complete run cannot be resumed"
+    )
+    # And the promise is real, not just a status string: the decision can still be made.
+    second = client.post(
+        f"/audit/{run_id}/approve",
+        json={"decisions": [{"claim_index": 0, "accept": True}]},
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["audit"]["status"] == "complete"
+    assert second.json()["audit"]["claims"][0]["correction"]["review"] == "accepted"
+    assert service.client.written[SF][VERDICT.urn] == ["Contradicted"]
+
+
+def test_a_partial_approval_parks_the_run_again_and_a_second_call_finishes_it(tmp_path):
+    """THE PARTIAL CASE. Two proposals, one decided: the run is not over, and says so.
+
+    The API's promise is that a proposal you do not name stays PENDING. Before Session 14
+    the graph followed an unconditional edge from the checkpoint to the report, so the run
+    settled COMPLETE on the first approval however many proposals were left — and the
+    service then deleted its checkpoint. The undecided proposal was PENDING, un-decidable,
+    and looked exactly like a proposal awaiting a decision that could still be made.
+
+    So this asserts the whole round trip: decide one, the run stays awaiting review with the
+    other still on offer, decide it later, and the run finishes.
+    """
+    service, catalog = build(tmp_path, *TWO_PROPOSALS)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": TWO_CLAIMS}).json()["run_id"]
+
+        first = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "accept": True}]},
+        ).json()
+
+        # Claim 0 is settled and written. Claim 1 is untouched — and REACHABLE.
+        assert first["audit"]["claims"][0]["correction"]["review"] == "accepted"
+        assert first["audit"]["claims"][1]["correction"]["review"] == "pending"
+        assert first["audit"]["status"] == "awaiting-review", (
+            "a run with one proposal still undecided reported itself finished"
+        )
+        assert service.pipeline.is_parked(run_id), (
+            "the run kept no pause, so the undecided proposal can never be decided: the "
+            "checkpoint was deleted underneath it"
+        )
+        # And the store agrees — a reader coming back later is told the same thing.
+        assert service.store.load(run_id).status is RunStatus.AWAITING_REVIEW
+
+        second = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 1, "accept": False}]},
+        )
+
+    assert second.status_code == 200, second.text
+    body = second.json()
+    assert body["audit"]["status"] == "complete", "the last decision did not finish the run"
+    assert body["audit"]["claims"][0]["correction"]["review"] == "accepted"
+    assert body["audit"]["claims"][1]["correction"]["review"] == "rejected"
+    assert not service.pipeline.is_parked(run_id), "a settled run kept its paused graph"
+
+    # The first call's decision was not re-applied or re-written by the second.
+    assert body["writebacks"] == [], "a rejection reached the catalog"
+    assert list(catalog.written) == [SF]
+
+
+def test_a_second_call_does_not_re_write_a_claim_the_first_already_settled(tmp_path):
+    """A decision writes back what IT settled. Naming an already-settled claim writes nothing.
+
+    Re-deciding only became reachable when the run started parking again (above): before,
+    the second call was refused outright because the run was COMPLETE. The checkpoint node
+    ignores a proposal that is already reviewed — a correction is settled once — and the
+    write-back has to ignore it for the same reason, or "accept claim 0" replays a catalog
+    write every time someone posts it alongside the claim they actually meant to decide.
+    """
+    service, catalog = build(tmp_path, *TWO_PROPOSALS)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": TWO_CLAIMS}).json()["run_id"]
+        c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "accept": True}]},
+        )
+        catalog.written.clear()  # so a second write is unmistakable rather than idempotent
+
+        # Claim 0 named again, alongside the one this call is really for.
+        body = c.post(
+            f"/audit/{run_id}/approve",
+            json={
+                "decisions": [
+                    {"claim_index": 0, "accept": True},
+                    {"claim_index": 1, "accept": True},
+                ]
+            },
+        ).json()
+
+    assert body["audit"]["status"] == "complete"
+    # One write, for claim 1 — the only proposal this call actually settled.
+    assert [w["target_urn"] for w in body["writebacks"]] == [SF]
+    assert body["audit"]["claims"][0]["correction"]["review"] == "accepted"
+    assert body["audit"]["claims"][1]["correction"]["review"] == "accepted"
 
 
 def test_a_failed_write_back_is_reported_as_a_failure_not_a_success(tmp_path):

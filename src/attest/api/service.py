@@ -160,7 +160,11 @@ class AuditService:
 
         A proposal nobody named stays PENDING. Nothing here has an "approve all", and a run
         that reaches the end of this method with every proposal unreviewed has done exactly
-        what it should.
+        what it should — and, since Session 14, is still parked and can still be decided.
+        A run settles to COMPLETE only once every proposal has been ruled on; until then
+        this returns an AWAITING_REVIEW record and may simply be called again. That is why
+        an empty `decisions` list is legal rather than pointless: it is a person looking and
+        settling nothing, and it costs the run nothing.
 
         A run parked by a process that has since died is resumed, not shortcut: its ledger
         is rebuilt from the store and the graph runs on from the checkpoint it stopped at,
@@ -221,8 +225,17 @@ class AuditService:
         )
 
         # Write back ONLY what a human accepted, and only after they accepted it.
+        #
+        # `awaiting` is what was still on offer when THIS call arrived, read off the record
+        # as it stood BEFORE the resume. A run now parks again while any proposal is
+        # undecided, so a caller can reach a claim they already settled on an earlier call —
+        # and the checkpoint node rightly ignores them (a correction is settled once). The
+        # write-back must ignore them for the same reason: a decision writes back what IT
+        # settled, and re-naming a claim decided an hour ago decides nothing now.
+        awaiting = {c.index for c in stored.claims if c.correction.awaits_human}
+        accepted = {d.claim_index for d in decisions if d.accept} & awaiting
+
         results: list[WriteResult] = []
-        accepted = {d.claim_index for d in decisions if d.accept}
         for claim in settled.claims:
             if claim.index not in accepted:
                 continue
@@ -247,6 +260,10 @@ class AuditService:
             )
 
         self.store.save(settled)
+        # Only a run with nothing left pending is over. One with proposals still undecided
+        # parked again at the checkpoint (graph.py), and forgetting it would delete the
+        # pause those proposals are waiting in — which is precisely the bug this session
+        # closed, moved down a layer.
         if report.status is RunStatus.COMPLETE:
             self.pipeline.forget(run_id)
 
