@@ -52,8 +52,37 @@ health:
 # 8003 is pinned, not incidental: DataHub owns 8080 (GMS) and 9002 (UI) on this machine,
 # and a port clash surfaces as an audit that cannot reach the catalog — which reads like a
 # DataHub outage rather than a collision. Overridable with ATTEST_API_PORT.
+#
+# `--reload` RUNS TWO PROCESSES, and on Windows Ctrl-C does not reliably kill both. uvicorn's
+# reloader is a supervisor that spawns a CHILD worker, and the child is what holds the socket
+# — so Ctrl-C can leave it orphaned, still LISTENING, with its parent gone. The next `just
+# serve` then dies on
+#
+#     [WinError 10048] only one usage of each socket address is normally permitted
+#
+# which reads like the port is misconfigured rather than like your own last run never left.
+# `just port` says who has it and frees it. `just demo` does NOT use --reload (one process,
+# nothing to orphan), which is part of why it is the demo artifact.
 serve:
     python -m uvicorn attest.api.app:app --reload --port {{env("ATTEST_API_PORT", "8003")}}
+
+# Who is holding the API port, and kill it. For the --reload orphan described above.
+#
+# Kills the WHOLE tree, child first: stop the supervisor alone and its watcher can respawn
+# the worker straight back onto the port, which looks like the kill silently failed.
+port:
+    @$p = {{env("ATTEST_API_PORT", "8003")}}; \
+     $owners = (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue).OwningProcess; \
+     if (-not $owners) { Write-Host "port $p is free" } \
+     else { \
+       foreach ($id in ($owners | Select-Object -Unique)) { \
+         $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$id"; \
+         Write-Host "killing $id  $($proc.CommandLine)"; \
+         Get-CimInstance Win32_Process -Filter "ParentProcessId=$id" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; \
+         Stop-Process -Id $id -Force -ErrorAction SilentlyContinue; \
+       } \
+       Write-Host "port $p freed"; \
+     }
 
 # Build the frontend into frontend/dist, which `serve` static-mounts at the root.
 #
