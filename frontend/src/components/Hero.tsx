@@ -1,6 +1,6 @@
 import { useState, useRef, Suspense, lazy } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, BarChart3, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { ArrowRight, BarChart3, Library, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { sampleAgentOutput } from '../data/mockData';
 import UrnPicker from './UrnPicker';
 
@@ -9,10 +9,15 @@ const HeroLattice = lazy(() => import('./HeroLattice'));
 export default function Hero({
   onRunAudit,
   onShowBenchmark,
+  onShowClaims,
   error,
 }: {
   onRunAudit: (text: string) => void;
   onShowBenchmark: () => void;
+  // Reachable WITHOUT running an audit first, deliberately: the claims view reads the
+  // catalog, so it is exactly what a second party would open — and a second party has no
+  // audit of their own. Requiring a run first would quietly make the point unprovable.
+  onShowClaims: () => void;
   error?: string | null;
 }) {
   const [text, setText] = useState(sampleAgentOutput);
@@ -58,10 +63,16 @@ export default function Hero({
           <ShieldCheck size={20} className="text-supported" strokeWidth={2.5} />
           <span className="font-serif text-lg font-medium tracking-tight">Attest</span>
         </div>
-        <button onClick={onShowBenchmark} className="btn-ghost text-sm">
-          <BarChart3 size={15} />
-          Evidence &amp; Benchmark
-        </button>
+        <div className="flex items-center gap-1">
+          <button onClick={onShowClaims} className="btn-ghost text-sm">
+            <Library size={15} />
+            Published claims
+          </button>
+          <button onClick={onShowBenchmark} className="btn-ghost text-sm">
+            <BarChart3 size={15} />
+            Evidence &amp; Benchmark
+          </button>
+        </div>
       </nav>
 
       {/* Main content */}

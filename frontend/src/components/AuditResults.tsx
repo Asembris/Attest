@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, BarChart3, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react';
+import { ArrowLeft, BarChart3, Library, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react';
 import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from '../api/types';
 import { verdictCounts, awaitingPublication } from '../api/types';
 import ReceiptsStrip from './ReceiptsStrip';
@@ -16,6 +16,7 @@ export default function AuditResults({
   onApprove,
   onBack,
   onShowBenchmark,
+  onShowClaims,
 }: {
   record: AuditRecord;
   health: HealthResponse | null;
@@ -25,6 +26,7 @@ export default function AuditResults({
   onApprove: (decisions: DecisionRequest[]) => void;
   onBack: () => void;
   onShowBenchmark: () => void;
+  onShowClaims: () => void;
 }) {
   const counts = verdictCounts(record);
   // WHAT THE RUN IS ACTUALLY PARKED ON: every claim whose VERDICT is still unpublished —
@@ -98,10 +100,18 @@ export default function AuditResults({
             <span className="text-ink-500 mx-1">/</span>
             <span className="text-sm text-ink-300">Audit Results</span>
           </div>
-          <button onClick={onShowBenchmark} className="btn-ghost text-sm">
-            <BarChart3 size={15} />
-            Benchmark
-          </button>
+          <div className="flex items-center gap-1">
+            {/* The other half of the thesis, one click from the decision that creates it:
+                publish a verdict here, then go and read it back out of the CATALOG. */}
+            <button onClick={onShowClaims} className="btn-ghost text-sm">
+              <Library size={15} />
+              Published claims
+            </button>
+            <button onClick={onShowBenchmark} className="btn-ghost text-sm">
+              <BarChart3 size={15} />
+              Benchmark
+            </button>
+          </div>
         </div>
       </header>
 

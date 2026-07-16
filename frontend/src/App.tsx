@@ -3,10 +3,15 @@ import { AnimatePresence, motion } from 'framer-motion';
 import Hero from './components/Hero';
 import AuditResults from './components/AuditResults';
 import Benchmark from './components/Benchmark';
+import ClaimsExplorer from './components/ClaimsExplorer';
 import { health as fetchHealth, submitAudit, approve, ApiError } from './api/client';
 import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from './api/types';
 
-type View = 'hero' | 'auditing' | 'results' | 'benchmark';
+// `claims` is the OTHER half of the thesis, and it is reachable from the results screen on
+// purpose: a reviewer publishes a verdict and can then go and read it back out of the
+// CATALOG, which is the whole argument — not "Attest saved it" but "the next agent inherits
+// it". No router here (see the house convention); a view is a member of this union.
+type View = 'hero' | 'auditing' | 'results' | 'benchmark' | 'claims';
 
 export default function App() {
   const [view, setView] = useState<View>('hero');
@@ -63,7 +68,12 @@ export default function App() {
     <AnimatePresence mode="wait">
       {view === 'hero' && (
         <motion.div key="hero" exit={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-          <Hero onRunAudit={runAudit} onShowBenchmark={() => setView('benchmark')} error={error} />
+          <Hero
+            onRunAudit={runAudit}
+            onShowBenchmark={() => setView('benchmark')}
+            onShowClaims={() => setView('claims')}
+            error={error}
+          />
         </motion.div>
       )}
 
@@ -96,7 +106,19 @@ export default function App() {
             onApprove={settle}
             onBack={() => setView('hero')}
             onShowBenchmark={() => setView('benchmark')}
+            onShowClaims={() => setView('claims')}
           />
+        </motion.div>
+      )}
+
+      {view === 'claims' && (
+        <motion.div
+          key="claims"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.4 }}
+        >
+          <ClaimsExplorer onBack={() => setView(record ? 'results' : 'hero')} />
         </motion.div>
       )}
 
