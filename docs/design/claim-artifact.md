@@ -358,7 +358,25 @@ that cannot see where the filtering happened cannot judge what it costs.
 
 ### Does the third verdict survive the round trip legibly?
 
-Yes — verbatim. But there is a trap next to it, and the spike measures both (§6):
+**GUARANTEE: the verdict is an EXPLICIT STORED VALUE on the claim artifact, and is read back
+as the literal string `Insufficient-Coverage`. It is NEVER inferred from DataHub's
+succeeded / failed / neither rollup bucket, and never from `result.type`.**
+
+It is stored twice, on purpose, and neither copy is a derivation of the rollup:
+
+- **`nativeResults['attest.verdict']` on the run event — AUTHORITATIVE.** The verdict verbatim,
+  one of exactly `Supported` / `Contradicted` / `Insufficient-Coverage`. This is what every
+  reader reads.
+- **A verdict tag on the assertion** (`urn:li:tag:Attest-Insufficient-Coverage`) — the latest
+  verdict, as an explicit value, so it is server-side filterable (§5).
+
+`result.type` and the `succeeded`/`failed` counts are a **lossy projection for DataHub's own
+health rollup and are not an input to anything Attest reads.** The rollup is measurably
+ambiguous — Insufficient-Coverage and a half-written claim both land on `succeeded=0
+failed=0` — which is exactly why the verdict is stored as a value rather than recovered from
+a bucket.
+
+Verbatim, measured. But there is a trap next to it, and the spike measures both (§6):
 
 | State | `runEvents.total` | `succeeded` | `failed` | `result.type` | `attest.verdict` |
 | --- | --- | --- | --- | --- | --- |
@@ -493,14 +511,37 @@ This is a **write-back and retrieval** change. It touches nothing that decides a
 
 ## 9. Effort, and where it will break
 
-**Estimate: two build sessions**, matching expectations.
+**Estimate: two build sessions, with a checkpoint between.** The split is by *layer*, and
+the seam is chosen so that **Session A is independently verifiable against the live catalog
+without any UI** — the checkpoint is a real gate, not a pause.
 
-- **Session A — write path.** `client.py`: three mutations (+ retry for landmine 4).
-  `writeback.py`: `write_claim_artifact` replacing `write_verdict`, claim-ID derivation, tag
-  swap. `service.py`: one call site changes. Offline tests against a fake; a live test that
-  approves two claims on one dataset and reads both back.
-- **Session B — read path.** `GET /claims`, `GET /claims/{id}`, the client-side filter
-  boundary, the UI, and the demo that answers the sharp question.
+**Session A — the write path.** *Done when two claims approved on one dataset are both
+readable from DataHub by hand.*
+
+- `client.py`: `upsert_custom_assertion`, `report_assertion_result`, `get_assertion`,
+  `list_dataset_assertions`, tag add/remove. Bounded retry for landmine 4.
+- `writeback.py`: `write_claim_artifact` (upsert → report → tag), deterministic `claim_id`,
+  the verdict-tag bootstrap, `WriteResult` naming the step.
+- `service.py`: the one call site; `POST /audit/{run_id}/writeback`.
+- Tests that BREAK it, in the project's tradition: report twice → assert **one** run event
+  (the `now()` rule); write twice → assert **one** artifact (the URN rule); assert
+  `fieldPath` is never sent; a half-written claim reads INCOMPLETE.
+- **`just live` is the only real evidence here** (risk 4). A live test approves two claims on
+  one dataset and reads both back independently.
+
+**CHECKPOINT — the thesis is provable here, before any UI exists.** `dataset.assertions(urn)`
+answers *"show me what the next agent inherits"* by hand, in one query. If that is not true at
+the end of A, B does not start.
+
+**Session B — the retrieval path.** *Done when the sharp question is answered on screen.*
+
+- `GET /claims?target_urn=&verdict=&claim_type=&reviewer=&since=`, `GET /claims/{claim_id}`,
+  each reporting **which predicates were pushed down** (§5).
+- The UI: per-claim artifacts with verdict history, INCOMPLETE state + retry.
+- Update `writeback.py`'s property descriptions so the dataset-level badge stops implying it
+  is the whole story (§6).
+- CLAUDE.md: the append-only-timeseries finding (§2), the two forbidden non-determinisms
+  (§9a), and the retrieval boundary (§5).
 
 ### Where it is likely to break, in order
 
@@ -559,6 +600,44 @@ So: **upsert** is idempotent by definition, **tag** is idempotent by set semanti
 **report** is idempotent by key. Re-running the entire write-back is a no-op on whatever
 already landed. **Recovery is repetition.** No compensating transactions, no outbox, no
 ordering state machine — none of the Session 14 saga territory.
+
+### Why a retry cannot double the record — the guarantee, stated
+
+**GUARANTEE: re-running the write-back on a half-written claim COMPLETES the missing steps.
+It never creates a duplicate claim, a second artifact, or a second run event.** N re-runs of
+a claim leave exactly one artifact, one run event per audit run, and one verdict tag.
+
+**The caller-supplied claim URN is what makes this true.** The URN is **derived from the
+claim's own identity** — `sha256(target_urn|claim_type|field_path|asserted_value)` — and is
+therefore **not minted per run, per attempt, or per retry**. A re-run recomputes the *same*
+URN from the *same* stored claim, so `upsertCustomAssertion(urn=…)` **updates the artifact
+that is already there**. It cannot land anywhere else. There is no server-generated id to
+diverge, which is precisely why candidate 1 was chosen over a representation that mints its
+own key.
+
+Step by step, on a re-run of a claim whose upsert landed but whose report and tag failed:
+
+| Step | Already landed? | What the re-run does |
+| --- | --- | --- |
+| `upsertCustomAssertion(urn=claim_id)` | yes | **updates the same artifact** — same URN, no second artifact |
+| `reportAssertionResult(ts=run.created_at)` | no | **writes the missing verdict** |
+| tag swap | no | **applies the missing tag** |
+
+And on a re-run where *everything* already landed, all three are no-ops: same URN, same
+timeseries key, same tag. **Repetition is safe, so the retry does not have to know which
+step failed** — it may simply redo all three. The per-step `WriteResult` exists to make the
+failure *legible* and to save network calls, **not** because correctness depends on the
+bookkeeping.
+
+> **There are exactly two ways to break this guarantee, and both are forbidden:** mint the
+> claim URN non-deterministically (per run, or with a timestamp/uuid in it), or use `now()`
+> for `timestampMillis`. Either one turns a retry into a duplicate record. Both need a test
+> that breaks them — write twice, assert one artifact and one run event.
+
+**Note the path, because it is not the approval.** Re-running `approve()` does **not** do
+this — a settled claim is excluded by the `awaits_human` intersection and a COMPLETE run is
+refused outright (see (b) below). The re-run is `POST /audit/{run_id}/writeback`. The
+guarantee above is about *that* path.
 
 ### THE RULE THIS BUYS, AND IT IS LOAD-BEARING
 
