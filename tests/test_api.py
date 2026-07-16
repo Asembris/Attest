@@ -19,13 +19,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from attest import writeback
 from attest.api.app import app, get_service
 from attest.api.service import AuditService
 from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.report import RunStatus
 from attest.store import AuditStore
-from attest import writeback
 from attest.writeback import AUDIT_RUN, CLAIM_TYPE, SOURCE_AGENT, VERDICT
 from fakes import (
     FakeChat,
