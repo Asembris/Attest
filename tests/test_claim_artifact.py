@@ -491,3 +491,81 @@ def test_a_failed_verdict_write_is_named_as_the_report_step(catalog, monkeypatch
     # retry endpoint exists to repair, and the read path must show as INCOMPLETE.
     artifact = writeback.read_claim_artifact(catalog, result.claim_urn)
     assert artifact is not None and artifact.complete is False
+
+
+# --- the badge, and the descriptions that describe it ------------------------
+
+
+def test_a_stale_property_description_is_RECONCILED_and_not_skipped(catalog):
+    """The fix that was written twice and shipped never.
+
+    `ensure_definitions` used to `continue` on any property that already existed, so a
+    definition created once was frozen in the catalog forever. Every later correction to its
+    text was a no-op that looked exactly like a fix: the code said the right thing, the
+    catalog said the old thing, the tests were green, and nobody could see the difference
+    without asking the server.
+
+    It was not hypothetical. Measured live in Session 16:
+
+        attest.verdict    description in DataHub: "test"
+
+    A placeholder from whichever early run created the property, sitting on Attest's
+    most-read surface, while writeback.py carried three careful sentences and Session 15
+    rewrote them to stop the badge overstating its coverage. The catalog never heard.
+    """
+    catalog.create_structured_property(
+        qualified_name="attest.verdict",
+        display_name="Attest verdict",
+        description="test",  # exactly what was live, verbatim
+    )
+
+    writeback.ensure_definitions(catalog)
+
+    assert catalog.definitions[writeback.VERDICT.urn]["description"] != "test", (
+        "the placeholder survived the bootstrap — a correction to a property's text is "
+        "still a no-op against a catalog that already has it"
+    )
+    assert (
+        catalog.definitions[writeback.VERDICT.urn]["description"]
+        == writeback.VERDICT.description
+    )
+
+
+def test_reconciling_definitions_is_idempotent(catalog):
+    """An up-to-date property is not rewritten on every approval.
+
+    The reconcile runs on every write-back, so a definition that already matches must cost
+    nothing — or the badge write turns into five pointless mutations per approval forever.
+    """
+    writeback.ensure_definitions(catalog)
+    catalog.updated.clear()
+
+    touched = writeback.ensure_definitions(catalog)
+
+    assert touched == ()
+    assert catalog.updated == []
+
+
+def test_the_badge_description_does_not_claim_to_be_the_whole_story(catalog):
+    """A field that overstates its coverage is this project's characteristic bug.
+
+    The badge is last-write-wins over a dataset's claims, so it describes ONE claim and
+    cannot say which. What it must never do is read as a summary of the dataset — that was
+    the exact gap the claim artifact was built to close (design §1), and leaving the badge
+    implying otherwise would re-open it on the most-read surface Attest has.
+
+    Asserted on the DESCRIPTION rather than on prose in a doc, because the description is
+    the thing a reader in DataHub's UI actually sees.
+    """
+    text = writeback.VERDICT.description.lower()
+
+    assert "cannot say which claim" in text, "the badge does not admit its central limit"
+    assert "assertions" in text, "the badge does not point at the record that has subjects"
+    # The two false halves of the old text, and neither may come back: only PUBLISHED
+    # verdicts land here, and claims published together share a timestamp, so "the most
+    # recent one" names an ordering that does not exist among them.
+    assert "not this dataset's overall status" in text
+    assert "published" in text, (
+        "the badge does not say that a withheld verdict leaves it untouched — so its "
+        "absence still reads as 'nothing was ever claimed'"
+    )

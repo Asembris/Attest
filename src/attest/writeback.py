@@ -223,39 +223,67 @@ class PropertyDef:
 
 
 # The dataset-level badge. KEPT, and deliberately: it answers a different question from the
-# claim artifacts -- "what is the latest Attest verdict on this dataset, at a glance, in the
-# dataset's own property panel". It stays last-write-wins and that is now fine, because the
-# subject-bearing record is the claim artifact and this is a convenience. The descriptions
-# say so rather than implying the badge is the whole story.
+# claim artifacts -- "is there an Attest verdict on this dataset, at a glance, in the
+# dataset's own property panel". It stays last-write-wins, which is fine ONLY because the
+# subject-bearing record is the claim artifact and this is a pointer to it.
+#
+# THE DESCRIPTIONS BELOW STATE WHAT THE BADGE CANNOT DO, and that is the point of them.
+# **A field that overstates its coverage is this project's characteristic bug** -- the same
+# one faithfulness.py committed until Session 13 said so out loud -- and this badge is the
+# most-read surface Attest has. What was here before claimed to be "the latest verdict about
+# ANY claim ... a badge for the most recent one", and BOTH halves were false:
+#
+#   * NOT "any claim an agent made": only claims a HUMAN PUBLISHED reach the catalog, so a
+#     claim a reviewer withheld leaves no trace here at all;
+#   * NOT "the most recent one": every claim in one run shares that run's timestamp, so
+#     among them there IS no most-recent. The survivor is whichever was written LAST, in
+#     claim order -- an arbitrary one, dressed up as a chronological one.
+#
+# The badge cannot say WHICH claim it describes. That was the whole problem statement of
+# the claim artifact (docs/design/claim-artifact.md §1), and the badge is still the thing
+# that has it. So it says so, and points at the record that does not.
 VERDICT = PropertyDef(
     "verdict",
     "Attest verdict",
-    "The latest verdict Attest reached about ANY claim an agent made about this dataset: "
-    "Supported, Contradicted, or Insufficient-Coverage. A dataset may carry several claims; "
-    "this is a badge for the most recent one, not the whole story. The per-claim record is "
-    "on this dataset's Assertions, one artifact per claim, each with its own verdict history.",
+    "ONE claim's verdict — Supported, Contradicted, or Insufficient-Coverage — and NOT "
+    "this dataset's overall status. This badge cannot say which claim it is about: it is "
+    "whichever verdict was published back last, and claims published together share a "
+    "timestamp, so 'last' is arbitrary among them rather than most-recent. It is a "
+    "presence indicator, not a summary. THE ACTUAL RECORD IS THIS DATASET'S ASSERTIONS: "
+    "one artifact per claim, each naming what was asserted, at what grain, with every "
+    "verdict it has ever had and who signed each one off. Read those, not this. Note also "
+    "that only verdicts a human PUBLISHED appear here — a claim a reviewer withheld leaves "
+    "this badge untouched, so its absence is not evidence that nothing was claimed.",
 )
 CLAIM_TYPE = PropertyDef(
     "claim_type",
     "Attest claim type",
-    "Which kind of claim the latest verdict is about: freshness, ownership, classification, "
-    "or schema. See this dataset's Assertions for every claim, not just the latest.",
+    "The claim type — freshness, ownership, classification, or schema — of the same single "
+    "claim `attest.verdict` describes. The five attest.* properties are written together in "
+    "one call, so they are consistent with each other: they all describe ONE claim. They "
+    "just cannot say which one. See this dataset's Assertions for every claim.",
 )
 CHECKED_AT = PropertyDef(
     "checked_at",
     "Attest checked at",
-    "When the audit that produced the latest verdict ran, ISO-8601.",
+    "When the audit ran that produced the verdict in `attest.verdict`, ISO-8601. It is that "
+    "one claim's audit, not the last time this dataset was audited — an audit whose verdicts "
+    "were all withheld never touches this.",
 )
 SOURCE_AGENT = PropertyDef(
     "source_agent",
     "Attest source agent",
-    "The agent whose claim was audited.",
+    "The agent that made the claim described by `attest.verdict`. Not every agent that has "
+    "made a claim about this dataset — see this dataset's Assertions for those.",
 )
 AUDIT_RUN = PropertyDef(
     "audit_run",
     "Attest audit run",
-    "The id of the audit run that produced the latest verdict. Attest's own store holds "
-    "every run, its evidence, and its approvals; this is the key that joins them.",
+    "The audit run that produced the verdict in `attest.verdict`. Every claim artifact on "
+    "this dataset carries its own run id per verdict, in the run event — so the history is "
+    "readable from this catalog alone, without Attest. This id additionally joins to "
+    "Attest's own store, which holds what the run cost, what evidence it saw, and what its "
+    "trajectory check said.",
 )
 
 PROPERTIES: tuple[PropertyDef, ...] = (
@@ -325,26 +353,59 @@ class WriteResult:
 
 
 def ensure_definitions(client: DataHubClient) -> tuple[str, ...]:
-    """Define Attest's structured properties in DataHub if they are not there yet.
+    """Define Attest's structured properties, and RECONCILE the ones already there.
 
     Attest bootstraps its own write surface. The ingestion CLI is for seed data, and a
     service that cannot write its results without someone first running a recipe by hand is
     not deployable.
 
-    Idempotent: a property that already exists is left alone. Returns what it created.
+    **A property that already exists has its description brought up to date, and skipping
+    that was a real bug.** This used to `continue` on any existing property, so a definition
+    created once was frozen forever and every later correction to its text was a no-op in
+    the code and invisible in the catalog. Found by looking, in Session 16:
+
+        attest.verdict    live description: "test"
+
+    A placeholder, on Attest's most-read surface, for as long as the property has existed —
+    while `writeback.py` carried three careful sentences nobody could see. Session 15 then
+    rewrote those sentences to stop the badge overstating its coverage (design §6), the
+    property already existed, and the catalog never heard about it. The fix was written, was
+    committed, and did nothing.
+
+    That is the loud-then-silent shape this project keeps finding: the code says the right
+    thing, the surface says the old thing, and nothing fails. So the description is now
+    reconciled on every call rather than only at creation — one extra mutation per property
+    on the first write-back after the text changes, and none afterwards.
+
+    Returns what it created or updated.
     """
-    created: list[str] = []
+    touched: list[str] = []
     for prop in PROPERTIES:
-        if client.get_structured_property(prop.urn) is not None:
+        existing = client.get_structured_property(prop.urn)
+        if existing is None:
+            client.create_structured_property(
+                qualified_name=prop.qualified_name,
+                display_name=prop.display_name,
+                description=prop.description,
+            )
+            touched.append(prop.qualified_name)
+            log.info("defined structured property %s", prop.qualified_name)
             continue
-        client.create_structured_property(
-            qualified_name=prop.qualified_name,
+
+        definition = existing.get("definition") or {}
+        if definition.get("description") == prop.description:
+            continue
+        # The catalog is showing something other than what this file says. The file wins:
+        # it is the reviewed text, and the catalog's copy is whatever happened to be
+        # written first.
+        client.update_structured_property(
+            urn=prop.urn,
             display_name=prop.display_name,
             description=prop.description,
         )
-        created.append(prop.qualified_name)
-        log.info("defined structured property %s", prop.qualified_name)
-    return tuple(created)
+        touched.append(prop.qualified_name)
+        log.info("refreshed the definition of %s", prop.qualified_name)
+    return tuple(touched)
 
 
 def ensure_verdict_tags(client: DataHubClient) -> tuple[str, ...]:

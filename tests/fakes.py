@@ -165,6 +165,10 @@ class FakeDataHub(FakeCatalog):
         super().__init__(snapshots)
         self.fail = fail
         self.defined: list[str] = []
+        # property urn -> its definition, so a test can see what the CATALOG says about a
+        # property rather than what the code says. Those drifted apart for real.
+        self.definitions: dict[str, dict[str, Any]] = {}
+        self.updated: list[str] = []
         # asset urn -> {property urn: values}. Last write wins, exactly like DataHub.
         self.written: dict[str, dict[str, list[Any]]] = {}
         # Claim artifacts. `assertions` is keyed by the CALLER's urn and `run_events` by
@@ -190,13 +194,43 @@ class FakeDataHub(FakeCatalog):
     def get_structured_property(self, urn: str) -> dict[str, Any] | None:
         if self.fail:
             raise DataHubError("GraphQL transport error: the catalog is down")
-        return {"urn": urn} if urn in self.defined else None
+        if urn not in self.defined:
+            return None
+        # The DEFINITION comes back, description and all — because that is what the real
+        # read returns, and because a fake that omitted it would make a stale description
+        # unreachable in tests. Which is exactly how one survived in the live catalog
+        # saying "test" for several sessions.
+        return {"urn": urn, "definition": self.definitions.get(urn, {})}
 
-    def create_structured_property(self, qualified_name: str, **kwargs: Any) -> dict[str, Any]:
+    def create_structured_property(
+        self, qualified_name: str, display_name: str = "", description: str = "", **kwargs: Any
+    ) -> dict[str, Any]:
         if self.fail:
             raise DataHubError("GraphQL transport error: the catalog is down")
-        self.defined.append(f"urn:li:structuredProperty:{qualified_name}")
-        return {"urn": f"urn:li:structuredProperty:{qualified_name}"}
+        urn = f"urn:li:structuredProperty:{qualified_name}"
+        self.defined.append(urn)
+        self.definitions[urn] = {
+            "qualifiedName": qualified_name,
+            "displayName": display_name,
+            "description": description,
+        }
+        return {"urn": urn}
+
+    def update_structured_property(
+        self, urn: str, display_name: str = "", description: str = ""
+    ) -> dict[str, Any]:
+        if self.fail:
+            raise DataHubError("GraphQL transport error: the catalog is down")
+        if urn not in self.defined:
+            # createStructuredProperty's mirror image: the real mutation has nothing to
+            # update, and a fake that invented the property would hide the ordering bug.
+            raise DataHubError(f"GraphQL errors: {urn} is not defined")
+        self.definitions.setdefault(urn, {}).update(
+            {k: v for k, v in
+             (("displayName", display_name), ("description", description)) if v}
+        )
+        self.updated.append(urn)
+        return {"urn": urn}
 
     def set_structured_properties(
         self, asset_urn: str, properties: dict[str, list[Any]]
