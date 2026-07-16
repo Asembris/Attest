@@ -47,6 +47,7 @@ from attest.api.service import (
     AuditService,
     NotResumable,
     RunNotFound,
+    TargetNotCovered,
     TrajectoryViolation,
 )
 from attest.config import settings
@@ -118,8 +119,23 @@ def submit_audit(
     claim, plus the receipts. If the run produced corrections, its status is
     `awaiting-review` and they are PENDING — proposed, never applied. Nothing has been
     written to DataHub, and nothing will be until someone approves it.
+
+    `target_urns`, if given, is a precondition: every URN named in it must be quoted in
+    `agent_output` (checked before the run) AND must have produced a claim (checked after
+    it). An audit that covered less than the caller required is a 422 rather than a 201 —
+    the run is still stored, and the error names it.
     """
-    return service.audit(request.agent_output, source_agent=request.source_agent)
+    try:
+        return service.audit(
+            request.agent_output,
+            source_agent=request.source_agent,
+            target_urns=request.target_urns,
+        )
+    except TargetNotCovered as exc:
+        # 422, the same as the request-time half of this precondition (schemas.py): the
+        # request is well-formed and cannot be processed as asked. A 201 here would tell a
+        # caller who said "audit these" that Attest did, when it did not.
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
 
 
 @app.get("/audit/{run_id}", response_model=AuditRecord)
@@ -142,6 +158,10 @@ def approve(
     Only what you name is settled. A proposal you do not mention stays PENDING — including
     when `decisions` is empty, which is a person having looked and decided nothing, and is
     a legitimate outcome rather than an error.
+
+    Leave any proposal undecided and the run stays `awaiting-review` and stays resumable:
+    post again with the rest. The run becomes `complete` on the call that settles the last
+    proposal, and only then are its checkpoints released.
 
     An accepted verdict is written back to the catalog as a structured property
     (writeback.py). A rejected one writes nothing. The write-backs are reported separately

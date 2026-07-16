@@ -31,13 +31,20 @@ class AuditRequest(BaseModel):
     )
     target_urns: tuple[str, ...] = Field(
         default=(),
-        description="The dataset URNs this audit is expected to cover. Optional. Each must "
-        "appear verbatim in agent_output — see the validator.",
+        description="The dataset URNs this audit is REQUIRED to cover. Optional. Each must "
+        "appear verbatim in agent_output (422 if not), and each must produce a claim (422 "
+        "if not — the audit still runs and is stored). It never narrows the audit.",
     )
 
     @model_validator(mode="after")
     def _urns_must_appear_in_the_text(self) -> AuditRequest:
         """A declared target URN has to be one the agent actually named.
+
+        HALF of the precondition; it is the half knowable at request time. The other half —
+        that a claim was actually extracted for each declared URN — cannot be known until
+        the decomposer has run, and it is enforced in `AuditService._require_coverage`. Both
+        halves answer to the same 422, because they are the same promise: an audit that
+        covers what the caller required, or an honest refusal.
 
         Two things this is NOT, and the distinction is the interesting part.
 
@@ -51,7 +58,8 @@ class AuditRequest(BaseModel):
         audited. Letting a caller narrow the audit to a subset of what the agent actually
         claimed would let them hide a claim from the auditor by not declaring it — which is
         the one thing an auditor must never offer. The scope of an audit is what the agent
-        said, not what the caller admits to.
+        said, not what the caller admits to. So the field can only ever DEMAND more
+        coverage, never less.
         """
         missing = [u for u in self.target_urns if u not in self.agent_output]
         if missing:
@@ -92,6 +100,12 @@ class ApprovalRequest(BaseModel):
     settled nothing. Those proposals stay PENDING. There is no "approve all" and its
     absence is deliberate — it is the accountability decision from Session 3, and it does
     not soften because there is now an API in front of it.
+
+    A call that leaves any proposal undecided leaves the run AWAITING_REVIEW, and it stays
+    resumable: call again with the rest. The run settles to COMPLETE on the call that
+    decides the last one. Until Session 14 this endpoint said all of the above and then
+    ended the run anyway, which turned "your proposals are still PENDING" into "your
+    proposals are PENDING and there is no longer any way to decide them".
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -99,7 +113,8 @@ class ApprovalRequest(BaseModel):
     decisions: tuple[DecisionRequest, ...] = Field(
         default=(),
         description="One entry per proposal you are settling. Proposals you do not name "
-        "stay PENDING — nothing is accepted by default.",
+        "stay PENDING — nothing is accepted by default, and the run stays awaiting review "
+        "until every proposal has been decided.",
     )
 
 
