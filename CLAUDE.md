@@ -1079,10 +1079,30 @@ second half: `GET /claims`, `GET /claims/{claim_urn}`, reading **DataHub**, neve
   is arbitrary among them). **The badge describes ONE claim and cannot say which** — that was
   the whole problem statement of the claim artifact, and the badge is the thing that still has
   it. A field that overstates its coverage is this project's characteristic bug.
+- **`repairable` keys off the FAILED WRITE, not off the state, and the checkpoint is what
+  found that.** Gating on `state is INCOMPLETE` looks equivalent and is not: an artifact is
+  **content-addressed**, so re-auditing a claim appends to the artifact it already has. A
+  claim audited last month, re-audited today, whose new verdict FAILED to write, still shows
+  **last month's verdict** — it reads `complete` (not a lie: the catalog does hold a verdict)
+  while the latest write sits recorded as broken. Gated on the state it could never be
+  repaired, and a stale verdict would stand indefinitely with the failure visible in the
+  response and actionable from nowhere. The rule that survives: PENDING_LAG and UNKNOWN are
+  never repairable, which now follows from the write rather than from a hand-maintained list.
+- **The content-addressing trap bites DEMOS as well as tests, and it bit this one.** A
+  read-state can only be shown on a claim nothing has asserted before — on a previously
+  audited claim, `pending-lag` and `incomplete` are both masked by the older verdict sitting
+  in the artifact. `test_live._await_verdict` documents the same trap for assertions ("wait
+  until it has a verdict" is satisfied instantly by a STALE one). **Wait for THIS run's
+  event, and demo read-states on fresh claims.**
 - **MEASURED, live** (`test_live.py::test_a_published_verdict_is_RETRIEVABLE_from_the_catalog_
   by_a_reader_with_no_store`): publish through `POST /audit` + `/approve`, then read back
   through `GET /claims` **and** through `ClaimReader(client, store=None)` — every claim,
   verdict, reviewer and history out of DataHub alone.
+- **MEASURED, by hand, at the Session 16 checkpoint** — all three states on the real server:
+  `pending-lag` caught at t+0.0s (`verdict=None`) resolving itself to `complete` at t+1.0s
+  with nothing touched; a deliberately half-written claim reading `incomplete` /
+  `failed_step='report'` / 0 verdicts, then `POST /audit/{id}/writeback` → `complete`, **the
+  same artifact URN**, and **exactly one verdict from that run, not two**.
 
 ## Known deferred items — document, don't fix
 
