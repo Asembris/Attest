@@ -54,6 +54,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
 from attest import record as record_module
@@ -79,6 +80,23 @@ class RunNotFound(ServiceError):
 
 class NotResumable(ServiceError):
     """The run is not parked at a checkpoint — nothing here is waiting on a human."""
+
+
+class TargetNotCovered(ServiceError):
+    """A URN the caller REQUIRED to be audited produced no claim.
+
+    `target_urns` is a precondition on the EXTRACTION, and it is the only thing a caller can
+    say about what an audit must cover. The request-time validator settles half of it — a
+    declared URN has to appear in the agent's text, or no claim could ever be about it. The
+    other half cannot be known until the decomposer has run: whether a claim was actually
+    produced for it.
+
+    A claim that came back but could not be CHECKED (an unresolvable URN — report.ClaimError)
+    satisfies this. The precondition is about coverage, not about verdicts, and an error is a
+    loud, readable outcome sitting in the record. A claim that was never produced at all — or
+    one Attest dropped — is the silent case, and the silent case is the one worth a refusal:
+    without it, the sentence the decomposer quietly skipped is a gap nobody sees.
+    """
 
 
 class TrajectoryViolation(ServiceError):
@@ -109,7 +127,12 @@ class AuditService:
 
     # --- audit ----------------------------------------------------------------
 
-    def audit(self, agent_output: str, source_agent: str = "") -> AuditRecord:
+    def audit(
+        self,
+        agent_output: str,
+        source_agent: str = "",
+        target_urns: Sequence[str] = (),
+    ) -> AuditRecord:
         """Run one audit, persist it, and return what was persisted.
 
         No lock. Concurrent audits are safe because nothing mutable is shared between them
@@ -119,6 +142,11 @@ class AuditService:
 
         The record is written BEFORE it is returned. A run whose verdicts reached a caller
         but never reached the store would be an audit with no audit trail.
+
+        `target_urns` is the caller's precondition on what this audit must cover, and it is
+        checked AFTER the run because it can only be known then — see `TargetNotCovered`. It
+        is never a filter: it cannot narrow what gets audited, only refuse an audit that
+        covered less than the caller required.
         """
         run_id = str(uuid.uuid4())
         started = datetime.now(tz=UTC)
@@ -143,7 +171,31 @@ class AuditService:
                 run_id,
                 report.trajectory.summary,
             )
+
+        # LAST, and after the store.save above, deliberately. The audit happened: it read
+        # the catalog, it spent tokens, it reached verdicts. Failing the caller's
+        # precondition is a fact ABOUT that run, not a reason to pretend it never ran, and
+        # the record it refuses to return over the wire is readable at GET /audit/{run_id}
+        # — the error says so, by id.
+        self._require_coverage(record, target_urns)
         return record
+
+    @staticmethod
+    def _require_coverage(record: AuditRecord, target_urns: Sequence[str]) -> None:
+        """Hold the finished audit to what the caller required it to cover."""
+        if not target_urns:
+            return
+        covered = {c.target_urn for c in record.claims}
+        covered |= {e.target_urn for e in record.errors}
+        missing = [u for u in target_urns if u not in covered]
+        if not missing:
+            return
+        raise TargetNotCovered(
+            f"this audit covers no claim about {missing}, which target_urns required it to. "
+            f"The agent's text names them, but the decomposer extracted no claim about them "
+            f"— the run's `dropped` list says whether one was produced and refused. The "
+            f"audit itself ran and is stored: GET /audit/{record.run_id}."
+        )
 
     def get(self, run_id: str) -> AuditRecord:
         stored = self.store.load(run_id)

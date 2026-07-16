@@ -13,6 +13,7 @@ file.
 
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -215,11 +216,12 @@ def test_a_target_urn_the_agent_never_wrote_is_rejected(client):
 
 
 def test_a_declared_target_urn_does_not_narrow_the_audit(tmp_path):
-    """target_urns is a precondition, NOT a filter.
+    """target_urns is a precondition, NOT a filter. It can demand more, never less.
 
     A caller who could scope the audit to a subset of what the agent claimed could hide a
     claim from the auditor by not declaring it. Both claims below are audited, though only
-    one URN is declared.
+    one URN is declared — and the undeclared one is not a precondition failure either: the
+    field says what the audit MUST cover, not what it may.
     """
     build(
         tmp_path,
@@ -234,6 +236,74 @@ def test_a_declared_target_urn_does_not_narrow_the_audit(tmp_path):
         ).json()
 
     assert {claim["target_urn"] for claim in body["claims"]} == {SF, EMPTY}
+
+
+def test_a_declared_target_urn_with_no_claim_is_refused_and_the_audit_is_still_stored(
+    tmp_path,
+):
+    """target_urns is a PRECONDITION, and a precondition that does nothing is a lie.
+
+    The agent names both datasets, so the request-time validator is satisfied — and until
+    Session 14 that was the end of it: the route dropped the field, audited whatever the
+    decomposer happened to extract, and returned 201. A caller who said "I require these
+    audited" got a confident report covering one of them and no indication of the other.
+
+    The decomposer here extracts a claim about SF only. EMPTY is named, required, and
+    uncovered, so the audit does not get to pass as one that covered it. The run itself is
+    real and is KEPT: it read the catalog and reached a verdict, and refusing the caller's
+    precondition is not a reason to pretend none of that happened.
+    """
+    service, _ = build(
+        tmp_path,
+        claim_reply([ownership(CAROL)]),
+        explanation_reply(f"{CAROL} is listed as an owner.", "Supported", []),
+    )
+    says = f"{SF} is owned by {CAROL}, and {EMPTY} is fine too."
+    with TestClient(app) as c:
+        response = c.post(
+            "/audit", json={"agent_output": says, "target_urns": [SF, EMPTY]}
+        )
+
+        assert response.status_code == 422
+        assert EMPTY in response.text
+        assert SF not in response.text.split(EMPTY)[0], "the covered URN was reported missing"
+
+        # The error names a run that really is there, and it really is readable.
+        run_id = re.search(r"/audit/([0-9a-f-]{36})", response.text).group(1)
+        stored = c.get(f"/audit/{run_id}")
+
+    assert stored.status_code == 200
+    assert stored.json()["claims"][0]["target_urn"] == SF
+    assert stored.json()["claims"][0]["evidence"], "the refused run lost its evidence"
+    assert service.store.load(run_id) is not None
+
+
+def test_a_declared_target_urn_that_only_produced_an_ERROR_still_counts_as_covered(tmp_path):
+    """A claim that could not be checked was still a claim. The precondition is about coverage.
+
+    The URN does not exist, so the claim comes back as a ClaimError rather than a verdict
+    (report.py) — a loud, readable outcome that is right there in the record. That is the
+    audit answering the caller's question, not skipping it. Refusing here would conflate "no
+    claim was extracted about this", which is silent and invisible, with "a claim was
+    extracted and the entity turned out not to exist", which is the finding itself.
+    """
+    missing = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.gone.away,PROD)"
+    build(
+        tmp_path,
+        claim_reply([ownership(CAROL, missing)]),
+        explanation_reply("the catalog was read.", "Supported", []),
+    )
+    with TestClient(app) as c:
+        response = c.post(
+            "/audit",
+            json={"agent_output": f"{missing} is owned by {CAROL}.",
+                  "target_urns": [missing]},
+        )
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["claims"] == [], "an unresolvable entity produced a verdict"
+    assert body["errors"][0]["target_urn"] == missing
 
 
 def test_an_injection_attempt_is_reported_rather_than_swallowed(tmp_path):
