@@ -600,6 +600,111 @@ def test_a_failed_write_back_is_reported_as_a_failure_not_a_success(tmp_path):
     # The decision still stands — a human did decide — and the store says what happened.
     assert body["audit"]["claims"][0]["correction"]["review"] == "accepted"
     assert "failed" in service.store.approvals(run_id)[0].writeback
+    # ...and it names WHICH of the three writes did not land, because "it failed" is not
+    # actionable: a failed report left no verdict; a failed tag left a correct verdict that
+    # search cannot find yet.
+    assert body["writebacks"][0]["failed_step"] == "upsert"
+
+
+# --- POST /audit/{run_id}/writeback ------------------------------------------
+
+
+def test_a_stranded_write_back_is_repaired_by_the_retry(tmp_path):
+    """THE RECOVERY PATH. A failed catalog write used to strand, honestly and forever.
+
+    Re-running `approve` cannot fix one: a settled claim is no longer awaiting a human, so
+    the intersection skips it, and a fully decided run is COMPLETE and not resumable at all.
+    The decision was on file, the catalog never heard, and there was no way to try again.
+    That was tolerable when the write was one atomic mutation. It is not now that it is
+    three, one of which fails for a reason as ordinary as an index that has not caught up.
+    """
+    service, _ = build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        service.client.fail = True  # the catalog is down at the moment of approval
+        approved = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "accept": True, "reviewer": "dana"}]},
+        ).json()
+        assert approved["writebacks"][0]["ok"] is False
+
+        # Re-approving does NOT repair it — the claim is settled, so it is skipped. This is
+        # the behaviour the retry endpoint exists BECAUSE of, so it is pinned here.
+        again = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "accept": True}]},
+        )
+        assert again.status_code == 409
+
+        service.client.fail = False  # the catalog comes back
+        response = c.post(f"/audit/{run_id}/writeback")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["writebacks"][0]["ok"] is True
+    assert body["writebacks"][0]["failed_step"] is None
+
+    # The claim reached the catalog, whole, and the reviewer came off the append-only log
+    # rather than being re-attributed to whoever called the retry.
+    artifact = writeback.read_claim_artifact(service.client, body["writebacks"][0]["claim_urn"])
+    assert artifact.complete and artifact.verdict == "Contradicted"
+    assert artifact.history[0].reviewer == "dana"
+
+    # The repair is itself an event on the record: a catalog write with no history is the
+    # shape this store exists to prevent.
+    assert any("retry" in a.note for a in service.store.approvals(run_id))
+
+
+def test_the_retry_writes_back_only_what_a_human_ACCEPTED(tmp_path):
+    """THE PROPERTY. The recovery path cannot approve anything, and cannot reach a rejection.
+
+    This is where "nothing is written until a human approves it" would quietly be traded for
+    convenience — an endpoint that re-writes a run's claims is one `if` away from writing
+    claims nobody ever accepted. It re-executes recorded decisions; it does not make any.
+    """
+    service, _ = build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        # The human REJECTS the proposal. Nothing should ever reach the catalog for it.
+        c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "accept": False, "reviewer": "dana"}]},
+        )
+        assert service.client.assertions == {}, "a rejection reached the catalog"
+
+        response = c.post(f"/audit/{run_id}/writeback")
+
+    assert response.status_code == 200
+    assert response.json()["writebacks"] == [], "the retry wrote back a REJECTED claim"
+    assert service.client.assertions == {}, "the retry wrote a claim nobody accepted"
+
+
+def test_the_retry_is_refused_for_a_flagged_run(tmp_path):
+    """The trajectory gate holds on the recovery path too, or it is not a gate.
+
+    A run that violated its own architecture is un-approvable, and a second door into the
+    catalog would make that enforceable only by whoever remembered to close it.
+    """
+    service, _ = build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "accept": True, "reviewer": "dana"}]},
+        )
+        # The stored run is retroactively flagged: it violated its architecture.
+        stored = service.store.load(run_id)
+        service.store.save(
+            stored.model_copy(update={"status": RunStatus.FLAGGED})
+        )
+        response = c.post(f"/audit/{run_id}/writeback")
+
+    assert response.status_code == 409
+    assert "flagged" in response.json()["detail"]
+
+
+def test_the_retry_on_an_unknown_run_is_a_404(client):
+    assert client.post("/audit/nope/writeback").status_code == 404
 
 
 def test_approving_a_run_with_nothing_to_review_is_a_409(tmp_path):
