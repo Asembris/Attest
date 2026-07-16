@@ -218,7 +218,8 @@ def test_claim_identity_cannot_depend_on_a_run_or_a_clock(catalog):
     rephrased = {**claim, "raw_text": "Alice owns this table."}
     assert writeback.claim_id(rephrased) == writeback.claim_id(claim)
     # ...but what it ASSERTS is the claim, and a different assertion is a different claim.
-    assert writeback.claim_id({**claim, "owner_urn": "urn:li:corpuser:bob"}) != writeback.claim_id(claim)
+    other_owner = {**claim, "owner_urn": "urn:li:corpuser:bob"}
+    assert writeback.claim_id(other_owner) != writeback.claim_id(claim)
 
 
 def test_write_claim_artifact_refuses_to_default_its_timestamp():
@@ -378,6 +379,45 @@ def test_two_different_claims_on_one_dataset_coexist(catalog):
 
 
 # --- the failed step ----------------------------------------------------------
+
+
+def test_the_retry_completes_a_half_written_claim_without_duplicating_it(catalog, monkeypatch):
+    """THE RECOVERY PATH, end to end: repair by repetition.
+
+    The verdict write fails, leaving a claim with no verdict. Re-running the whole write-back
+    — which is all the retry endpoint does — must finish it and leave exactly ONE artifact
+    with exactly ONE verdict. Not a second artifact (the URN is content-addressed) and not a
+    second run event (the timestamp is the run's).
+
+    This is why the design needed no saga: the repair is the original operation, run again.
+    """
+    claim = ownership_claim()
+    calls = {"n": 0}
+    real = catalog.report_assertion_result
+
+    def fail_once(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise DataHubError("the catalog did not index the assertion in time")
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(catalog, "report_assertion_result", fail_once)
+
+    first = write(catalog, claim)
+    assert first.ok is False and first.failed_step == writeback.REPORT
+    half = writeback.read_claim_artifact(catalog, first.claim_urn)
+    assert half.complete is False
+
+    # The retry: the same call, again. Nothing else.
+    second = write(catalog, claim)
+    assert second.ok is True
+    assert second.claim_urn == first.claim_urn, "the retry minted a DIFFERENT artifact"
+
+    artifacts = writeback.read_dataset_claims(catalog, SF)
+    assert len(artifacts) == 1, "the retry left a duplicate claim"
+    assert artifacts[0].complete is True
+    assert artifacts[0].verdict == "Contradicted"
+    assert len(artifacts[0].history) == 1, "the retry appended a duplicate verdict"
 
 
 def test_a_failed_write_names_the_step_that_failed(catalog):
