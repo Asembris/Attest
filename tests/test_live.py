@@ -260,10 +260,19 @@ def test_the_full_pipeline_end_to_end(client, now, capsys):
     assert contradicted.correction.review is ReviewStatus.PENDING
     assert len(report.proposals) == 1
 
+    # EVERY claim is decided, not just the correctable one: since Session 15 a run settles
+    # only when every VERDICT has been ruled on, and the correction is a separate act on top.
     final = pipeline.resume(
-        report.thread_id, [
-            Decision(claim_index=contradicted.index, publish=True, accept_correction=True)
-        ]
+        report.thread_id,
+        [
+            Decision(
+                claim_index=a.index,
+                publish=True,
+                accept_correction=True if a.index == contradicted.index else None,
+                reviewer="live-test",
+            )
+            for a in report.audits
+        ],
     )
     assert final.status is RunStatus.COMPLETE
     assert final.audits[contradicted.index].correction.review is ReviewStatus.ACCEPTED
@@ -337,7 +346,15 @@ def test_an_unrevisable_claim_is_never_corrected_into_a_different_true_one(clien
     )
     assert report.trace.named(REVISE), "the agent was never given the chance to revise"
     assert report.trace.named(RECHECK) == [], "nothing was revised, so nothing may be verified"
-    assert report.status is RunStatus.COMPLETE, "nothing to propose, so no human is summoned"
+    # It PARKS, and since Session 15 that is the point rather than an inconvenience. There
+    # is no proposal to rule on — the claim is unrevisable — but the VERDICT is a finding,
+    # and the most damning one this system produces: the agent was shown the catalog and
+    # stood by a false claim. Under the old gate (publication rode on an accepted
+    # correction) this exact outcome could never reach the catalog at all.
+    assert report.status is RunStatus.AWAITING_REVIEW, (
+        "a STOOD_FIRM finding must still reach a human to be published"
+    )
+    assert audit.awaits_human and not audit.correction.awaits_human
     assert report.trajectory.ok
 
 
@@ -416,25 +433,36 @@ def test_the_service_end_to_end_against_the_real_catalog(client, now, tmp_path, 
             assert stored["steps"], "the trajectory's evidence did not survive the store"
 
             # --- POST /audit/{id}/approve ------------------------------------
+            #
+            # EVERY claim is decided, not just the correctable one. Since Session 15 the
+            # verdict is what gets published and the correction is a separate act, so a run
+            # settles only when every verdict has been ruled on. The correctable claim gets
+            # both decisions; the rest get a bare publish.
             approved = http.post(
                 f"/audit/{run_id}/approve",
                 json={"decisions": [
                     {
-                        "claim_index": proposal["index"],
+                        "claim_index": c["index"],
                         "publish": True,
-                        "accept_correction": True,
+                        **(
+                            {"accept_correction": True}
+                            if c["index"] == proposal["index"]
+                            else {}
+                        ),
                         "reviewer": "live-test",
                     }
+                    for c in audit["claims"]
                 ]},
             )
             assert approved.status_code == 200, approved.text
             settled = approved.json()
 
             assert settled["audit"]["status"] == "complete"
-            assert len(settled["writebacks"]) == 1
-            assert settled["writebacks"][0]["target_urn"] == OWNED_BY_CAROL
-            assert settled["writebacks"][0]["ok"] is True, settled["writebacks"][0]
-            assert settled["writebacks"][0]["failed_step"] is None
+            # EVERY verdict reached the catalog, not just the corrected contradiction.
+            assert len(settled["writebacks"]) == len(audit["claims"])
+            for w in settled["writebacks"]:
+                assert w["ok"] is True, f"failed at {w['failed_step']}: {w['detail']}"
+            assert OWNED_BY_CAROL in {w["target_urn"] for w in settled["writebacks"]}
 
         # --- and the verdict is really on the dataset, in DataHub -------------
         written = {
