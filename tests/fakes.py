@@ -166,6 +166,13 @@ class FakeDataHub(FakeCatalog):
         self.defined: list[str] = []
         # asset urn -> {property urn: values}. Last write wins, exactly like DataHub.
         self.written: dict[str, dict[str, list[Any]]] = {}
+        # Claim artifacts. `assertions` is keyed by the CALLER's urn and `run_events` by
+        # (urn, timestampMillis) — the two key choices the retry guarantee rests on.
+        self.assertions: dict[str, dict[str, Any]] = {}
+        self.run_events: dict[str, dict[int, dict[str, Any]]] = {}
+        self.upserts: list[dict[str, Any]] = []
+        self.tags_defined: set[str] = set()
+        self.tagged: dict[str, set[str]] = {}
 
     def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.fail:
@@ -190,6 +197,157 @@ class FakeDataHub(FakeCatalog):
             raise DataHubError("GraphQL errors: could not write")
         self.written.setdefault(asset_urn, {}).update(properties)
         return {"properties": []}
+
+    # --- claim artifacts ---------------------------------------------------
+    #
+    # Modelled on what the REAL server was measured to do, not on what would be convenient:
+    #
+    #   * an assertion is keyed by the URN THE CALLER supplies, so a second write at the
+    #     same URN updates rather than appends — which is what makes a retry safe;
+    #   * a run event is keyed by (assertion urn, timestampMillis), because DataHub's
+    #     timeseries aspect is, so re-reporting one verdict at one timestamp collapses to a
+    #     single row. A fake that appended blindly would pass the duplicate-history test
+    #     while the real server failed it, and vice versa.
+    #
+    # It cannot model the index lag or the fieldPath trap — those are server machinery a
+    # fake does not have, which is the Session 5 rule and why `just live` is the evidence
+    # for this feature.
+
+    def upsert_custom_assertion(
+        self,
+        urn: str,
+        entity_urn: str,
+        custom_type: str,
+        description: str,
+        platform_urn: str,
+        logic: str,
+        external_url: str = "",
+        **extra: Any,
+    ) -> dict[str, Any]:
+        if self.fail:
+            raise DataHubError("GraphQL errors: could not write")
+        # Record the call verbatim, so a test can assert what WOULD have reached the server —
+        # notably that `fieldPath` is never among it.
+        self.upserts.append(
+            {
+                "urn": urn,
+                "entityUrn": entity_urn,
+                "type": custom_type,
+                "description": description,
+                "logic": logic,
+                "externalUrl": external_url,
+                **extra,
+            }
+        )
+        self.assertions[urn] = {
+            "urn": urn,
+            "info": {
+                "description": description,
+                "externalUrl": external_url,
+                "customAssertion": {
+                    "type": custom_type,
+                    "entityUrn": entity_urn,
+                    "logic": logic,
+                    "field": None,
+                },
+            },
+            "tags": {"tags": []},
+        }
+        return self.assertions[urn]
+
+    def report_assertion_result(
+        self,
+        urn: str,
+        result_type: str,
+        timestamp_millis: int,
+        properties: dict[str, str] | None = None,
+        external_url: str = "",
+        retry_seconds: float = 30.0,
+    ) -> bool:
+        if self.fail:
+            raise DataHubError("GraphQL errors: could not write")
+        if urn not in self.assertions:
+            raise DataHubError(
+                f"Failed to report Assertion Run Event. Assertion with urn {urn} does not "
+                f"exist or is not associated with any entity."
+            )
+        # Keyed by timestamp, exactly like the timeseries aspect. The SAME verdict reported
+        # twice at the same timestamp is ONE event, not two.
+        self.run_events.setdefault(urn, {})[timestamp_millis] = {
+            "timestampMillis": timestamp_millis,
+            "result": {
+                "type": result_type,
+                "externalUrl": external_url,
+                "nativeResults": [
+                    {"key": k, "value": v} for k, v in (properties or {}).items()
+                ],
+            },
+        }
+        return True
+
+    def get_assertion(self, urn: str) -> dict[str, Any] | None:
+        if self.fail:
+            raise DataHubError("GraphQL transport error: the catalog is down")
+        node = self.assertions.get(urn)
+        if node is None:
+            return None
+        return self._with_events(node)
+
+    def list_dataset_assertions(
+        self, dataset_urn: str, start: int = 0, count: int = 50
+    ) -> list[dict[str, Any]]:
+        if self.fail:
+            raise DataHubError("GraphQL transport error: the catalog is down")
+        return [
+            self._with_events(node)
+            for node in self.assertions.values()
+            if (node["info"]["customAssertion"]["entityUrn"] == dataset_urn)
+        ][start : start + count]
+
+    def _with_events(self, node: dict[str, Any]) -> dict[str, Any]:
+        events = sorted(
+            self.run_events.get(node["urn"], {}).values(),
+            key=lambda e: e["timestampMillis"],
+            reverse=True,
+        )
+        return {
+            **node,
+            "runEvents": {
+                "total": len(events),
+                "succeeded": sum(1 for e in events if e["result"]["type"] == "SUCCESS"),
+                "failed": sum(1 for e in events if e["result"]["type"] == "FAILURE"),
+                "runEvents": events,
+            },
+        }
+
+    def create_tag(self, tag_id: str, name: str, description: str = "") -> str:
+        if self.fail:
+            raise DataHubError("GraphQL errors: could not write")
+        urn = f"urn:li:tag:{tag_id}"
+        self.tags_defined.add(urn)
+        return urn
+
+    def add_tag(self, tag_urn: str, resource_urn: str) -> bool:
+        if self.fail:
+            raise DataHubError("GraphQL errors: could not write")
+        self.tagged.setdefault(resource_urn, set()).add(tag_urn)
+        node = self.assertions.get(resource_urn)
+        if node is not None:
+            node["tags"] = {
+                "tags": [{"tag": {"urn": u}} for u in sorted(self.tagged[resource_urn])]
+            }
+        return True
+
+    def remove_tag(self, tag_urn: str, resource_urn: str) -> bool:
+        if self.fail:
+            raise DataHubError("GraphQL errors: could not write")
+        self.tagged.setdefault(resource_urn, set()).discard(tag_urn)
+        node = self.assertions.get(resource_urn)
+        if node is not None:
+            node["tags"] = {
+                "tags": [{"tag": {"urn": u}} for u in sorted(self.tagged[resource_urn])]
+            }
+        return True
 
 
 def dataset(urn: str, **aspects: Any) -> DatasetSnapshot:

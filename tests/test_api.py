@@ -25,6 +25,7 @@ from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.report import RunStatus
 from attest.store import AuditStore
+from attest import writeback
 from attest.writeback import AUDIT_RUN, CLAIM_TYPE, SOURCE_AGENT, VERDICT
 from fakes import (
     FakeChat,
@@ -357,10 +358,29 @@ def test_approving_a_correction_writes_the_verdict_back_to_the_catalog(client):
     # that it later said something true does not unsay it.
     assert body["audit"]["claims"][0]["verdict"] == "Contradicted"
 
-    assert body["writebacks"] == [{"target_urn": SF, "ok": True, "detail": ""}]
+    assert body["writebacks"][0]["target_urn"] == SF
+    assert body["writebacks"][0]["ok"] is True
+    assert body["writebacks"][0]["failed_step"] is None
+    assert body["writebacks"][0]["claim_urn"].startswith("urn:li:assertion:attest-")
 
-    # And what actually reached the catalog is queryable, not a text blob: separate typed
-    # properties, one of which points back at the run that produced the verdict.
+    # What reached the catalog is a CLAIM ARTIFACT: the claim, and its verdict, addressable
+    # on its own. Not a dataset-level field that the next claim would overwrite.
+    artifact = writeback.read_claim_artifact(
+        service.client, body["writebacks"][0]["claim_urn"]
+    )
+    assert artifact is not None
+    assert artifact.target_urn == SF
+    assert artifact.claim_type == "ownership"
+    assert artifact.complete, "the artifact carries no verdict"
+    # Read off the STORED value, never off the native result type or the rollup counts.
+    assert artifact.verdict == "Contradicted"
+    assert artifact.history[0].audit_run == run_id
+    assert artifact.history[0].reviewer == "dana"
+    assert artifact.history[0].decision == "accepted"
+    # The latest verdict is filterable, because it is a tag.
+    assert writeback.verdict_tag_urn("Contradicted") in artifact.tags
+
+    # The dataset-level badge is still written, as a glance view beside the artifact.
     written = service.client.written[SF]
     assert written[VERDICT.urn] == ["Contradicted"]
     assert written[CLAIM_TYPE.urn] == ["ownership"]

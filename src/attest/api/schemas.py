@@ -119,13 +119,43 @@ class ApprovalRequest(BaseModel):
 
 
 class WriteBackView(BaseModel):
-    """What the catalog did with an accepted verdict."""
+    """What the catalog did with an accepted verdict.
+
+    `failed_step` names WHICH of the three writes did not land, and it is not a nicety. The
+    claim artifact cannot be written atomically — upsert the claim, report the verdict, swap
+    the verdict tag — so "it failed" is not actionable on its own. A failed `report` left a
+    claim with no verdict; a failed `tag` left a verdict that is entirely correct and merely
+    not yet findable by search. Different facts, and a caller is entitled to tell them apart.
+    Every failure is repairable with `POST /audit/{run_id}/writeback`.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     target_urn: str
     ok: bool
     detail: str = ""
+    claim_urn: str = Field(
+        default="",
+        description="The claim artifact's URN in DataHub. Derived from the claim's own "
+        "content, so it is stable across re-runs and names the same artifact every time.",
+    )
+    failed_step: str | None = Field(
+        default=None,
+        description="Which write did not land: `upsert`, `report`, or `tag`. None if all did.",
+    )
+
+
+class WriteBackResponse(BaseModel):
+    """The result of re-running the catalog write for a run's already-accepted claims.
+
+    No decision is taken here and none can be: this re-executes the side effect of decisions
+    that are already in the append-only log. A claim nobody accepted is not reachable.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str
+    writebacks: tuple[WriteBackView, ...] = ()
 
 
 class ApprovalResponse(BaseModel):
