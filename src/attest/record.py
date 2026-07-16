@@ -56,7 +56,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from attest.report import AuditReport, CorrectionOutcome, ReviewStatus, RunStatus
+from attest.report import (
+    AuditReport,
+    CorrectionOutcome,
+    PublicationStatus,
+    ReviewStatus,
+    RunStatus,
+)
 
 
 class EvidenceView(BaseModel):
@@ -143,6 +149,30 @@ class CorrectionView(BaseModel):
         )
 
 
+class PublicationView(BaseModel):
+    """Whether this claim's VERDICT has been cleared to reach the catalog.
+
+    Separate from `CorrectionView.review`, and the separation is the Option A decision
+    (report.PublicationStatus): publishing a verdict is not the same act as accepting a
+    correction, and a projection that folded them back together would re-create exactly the
+    coupling that kept STOOD_FIRM contradictions — and every Supported and
+    Insufficient-Coverage verdict — out of the catalog entirely.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    status: PublicationStatus = PublicationStatus.PENDING
+    reviewer: str = ""
+
+    @property
+    def awaits_human(self) -> bool:
+        return self.status is PublicationStatus.PENDING
+
+    @property
+    def published(self) -> bool:
+        return self.status is PublicationStatus.PUBLISHED
+
+
 class ClaimRecord(BaseModel):
     """One audited claim: what was said, what the catalog said, and why."""
 
@@ -173,6 +203,12 @@ class ClaimRecord(BaseModel):
     rejected: tuple[str, ...] = ()
 
     correction: CorrectionView
+    publication: PublicationView = PublicationView()
+
+    @property
+    def awaits_human(self) -> bool:
+        """Is this claim still waiting on a person, for anything? See report.ClaimAudit."""
+        return self.publication.awaits_human or self.correction.awaits_human
 
 
 class ClaimErrorRecord(BaseModel):
@@ -268,6 +304,18 @@ class AuditRecord(BaseModel):
         """Corrections that re-verified clean and are waiting on a human."""
         return tuple(c for c in self.claims if c.correction.awaits_human)
 
+    @property
+    def awaiting(self) -> tuple[ClaimRecord, ...]:
+        """Every claim still waiting on a person — to publish its verdict, or to rule on a
+        correction. This is what the checkpoint loop exits on, and it is wider than
+        `proposals`: since Session 15 every verdict needs clearing, not just corrections."""
+        return tuple(c for c in self.claims if c.awaits_human)
+
+    @property
+    def published(self) -> tuple[ClaimRecord, ...]:
+        """Claims whose verdict a human cleared for the catalog. What write-back fires on."""
+        return tuple(c for c in self.claims if c.publication.published)
+
     def verdict_counts(self) -> dict[str, int]:
         counts: dict[str, int] = {}
         for claim in self.claims:
@@ -333,6 +381,9 @@ def from_report(
                         )
                         for t in a.correction.attempts
                     ),
+                ),
+                publication=PublicationView(
+                    status=a.publication.status, reviewer=a.publication.reviewer
                 ),
             )
             for a in report.audits

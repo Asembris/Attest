@@ -165,7 +165,11 @@ def test_an_audit_returns_verdicts_with_their_evidence(tmp_path):
     assert response.status_code == 201
     body = response.json()
 
-    assert body["status"] == "complete"
+    # It PARKS, even though the claim is Supported and there is nothing to correct: the
+    # verdict needs a human before it reaches the catalog (Session 15, Option A). A verdict
+    # Attest never records is indistinguishable from a claim Attest never checked.
+    assert body["status"] == "awaiting-review"
+    assert body["claims"][0]["publication"]["status"] == "pending"
     assert len(body["claims"]) == 1
     claim = body["claims"][0]
     assert claim["verdict"] == "Supported"
@@ -347,7 +351,14 @@ def test_approving_a_correction_writes_the_verdict_back_to_the_catalog(client):
 
     response = client.post(
         f"/audit/{run_id}/approve",
-        json={"decisions": [{"claim_index": 0, "accept": True, "reviewer": "dana"}]},
+        json={
+            "decisions": [{
+                "claim_index": 0,
+                "publish": True,
+                "accept_correction": True,
+                "reviewer": "dana",
+            }]
+        },
     )
     assert response.status_code == 200
     body = response.json()
@@ -391,7 +402,7 @@ def test_approving_a_correction_writes_the_verdict_back_to_the_catalog(client):
     approvals = service.store.approvals(run_id)
     assert len(approvals) == 1
     assert approvals[0].reviewer == "dana"
-    assert approvals[0].accept is True
+    assert approvals[0].publish is True
     assert "written to" in approvals[0].writeback
 
 
@@ -401,7 +412,14 @@ def test_rejecting_a_correction_writes_nothing(client):
 
     body = client.post(
         f"/audit/{run_id}/approve",
-        json={"decisions": [{"claim_index": 0, "accept": False, "note": "wrong owner"}]},
+        json={
+            "decisions": [{
+                "claim_index": 0,
+                "publish": False,
+                "accept_correction": False,
+                "note": "wrong owner",
+            }]
+        },
     ).json()
 
     assert body["audit"]["claims"][0]["correction"]["review"] == "rejected"
@@ -409,7 +427,7 @@ def test_rejecting_a_correction_writes_nothing(client):
     assert service.client.written == {}, "a rejected correction reached the catalog"
 
     approvals = service.store.approvals(run_id)
-    assert approvals[0].accept is False
+    assert approvals[0].publish is False
     assert approvals[0].writeback == "skipped"
 
 
@@ -448,7 +466,7 @@ def test_approving_nothing_leaves_the_proposal_pending_AND_still_decidable(clien
     # And the promise is real, not just a status string: the decision can still be made.
     second = client.post(
         f"/audit/{run_id}/approve",
-        json={"decisions": [{"claim_index": 0, "accept": True}]},
+        json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
     )
     assert second.status_code == 200, second.text
     assert second.json()["audit"]["status"] == "complete"
@@ -474,7 +492,7 @@ def test_a_partial_approval_parks_the_run_again_and_a_second_call_finishes_it(tm
 
         first = c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True}]},
+            json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
         ).json()
 
         # Claim 0 is settled and written. Claim 1 is untouched — and REACHABLE.
@@ -492,7 +510,7 @@ def test_a_partial_approval_parks_the_run_again_and_a_second_call_finishes_it(tm
 
         second = c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 1, "accept": False}]},
+            json={"decisions": [{"claim_index": 1, "publish": False, "accept_correction": False}]},
         )
 
     assert second.status_code == 200, second.text
@@ -521,7 +539,7 @@ def test_a_second_call_does_not_re_write_a_claim_the_first_already_settled(tmp_p
         run_id = c.post("/audit", json={"agent_output": TWO_CLAIMS}).json()["run_id"]
         c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True}]},
+            json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
         )
         catalog.written.clear()  # so a second write is unmistakable rather than idempotent
 
@@ -530,8 +548,8 @@ def test_a_second_call_does_not_re_write_a_claim_the_first_already_settled(tmp_p
             f"/audit/{run_id}/approve",
             json={
                 "decisions": [
-                    {"claim_index": 0, "accept": True},
-                    {"claim_index": 1, "accept": True},
+                    {"claim_index": 0, "publish": True, "accept_correction": True},
+                    {"claim_index": 1, "publish": True, "accept_correction": True},
                 ]
             },
         ).json()
@@ -559,8 +577,18 @@ def test_a_decision_is_logged_with_its_own_write_result_not_another_claims(tmp_p
             f"/audit/{run_id}/approve",
             json={
                 "decisions": [
-                    {"claim_index": 0, "accept": True, "reviewer": "dana"},
-                    {"claim_index": 1, "accept": False, "reviewer": "dana"},
+                    {
+                        "claim_index": 0,
+                        "publish": True,
+                        "accept_correction": True,
+                        "reviewer": "dana",
+                    },
+                    {
+                        "claim_index": 1,
+                        "publish": False,
+                        "accept_correction": False,
+                        "reviewer": "dana",
+                    },
                 ]
             },
         )
@@ -568,10 +596,10 @@ def test_a_decision_is_logged_with_its_own_write_result_not_another_claims(tmp_p
     logged = {a.claim_index: a for a in service.store.approvals(run_id)}
     assert len(logged) == 2
 
-    assert logged[0].accept is True
+    assert logged[0].publish is True
     assert "written to" in logged[0].writeback
 
-    assert logged[1].accept is False
+    assert logged[1].publish is False
     assert logged[1].writeback == "skipped", (
         "a rejected decision was logged with the write result of a DIFFERENT claim that "
         "happened to name the same dataset. Nothing was written for this decision."
@@ -591,7 +619,7 @@ def test_a_failed_write_back_is_reported_as_a_failure_not_a_success(tmp_path):
         service.client.fail = True  # the catalog goes down between audit and approval
         body = c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True}]},
+            json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
         ).json()
 
     assert body["writebacks"][0]["ok"] is False
@@ -624,7 +652,14 @@ def test_a_stranded_write_back_is_repaired_by_the_retry(tmp_path):
         service.client.fail = True  # the catalog is down at the moment of approval
         approved = c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True, "reviewer": "dana"}]},
+            json={
+                "decisions": [{
+                    "claim_index": 0,
+                    "publish": True,
+                    "accept_correction": True,
+                    "reviewer": "dana",
+                }]
+            },
         ).json()
         assert approved["writebacks"][0]["ok"] is False
 
@@ -632,7 +667,7 @@ def test_a_stranded_write_back_is_repaired_by_the_retry(tmp_path):
         # the behaviour the retry endpoint exists BECAUSE of, so it is pinned here.
         again = c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True}]},
+            json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
         )
         assert again.status_code == 409
 
@@ -668,7 +703,14 @@ def test_the_retry_writes_back_only_what_a_human_ACCEPTED(tmp_path):
         # The human REJECTS the proposal. Nothing should ever reach the catalog for it.
         c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": False, "reviewer": "dana"}]},
+            json={
+                "decisions": [{
+                    "claim_index": 0,
+                    "publish": False,
+                    "accept_correction": False,
+                    "reviewer": "dana",
+                }]
+            },
         )
         assert service.client.assertions == {}, "a rejection reached the catalog"
 
@@ -690,7 +732,14 @@ def test_the_retry_is_refused_for_a_flagged_run(tmp_path):
         run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
         c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True, "reviewer": "dana"}]},
+            json={
+                "decisions": [{
+                    "claim_index": 0,
+                    "publish": True,
+                    "accept_correction": True,
+                    "reviewer": "dana",
+                }]
+            },
         )
         # The stored run is retroactively flagged: it violated its architecture.
         stored = service.store.load(run_id)
@@ -708,13 +757,19 @@ def test_the_retry_on_an_unknown_run_is_a_404(client):
 
 
 def test_approving_a_run_with_nothing_to_review_is_a_409(tmp_path):
-    """A completed run has no proposals to settle, and pretending otherwise is a lie."""
-    build(tmp_path, *SUPPORTED)
+    """A completed run has nothing to settle, and pretending otherwise is a lie.
+
+    Since Session 15 the only run that completes without a human is one with NO claims: every
+    verdict needs publishing, so a Supported run parks now where it used to sail through.
+    """
+    build(tmp_path, claim_reply([]))
     with TestClient(app) as c:
-        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        created = c.post("/audit", json={"agent_output": "Nothing here names a dataset."})
+        run_id = created.json()["run_id"]
+        assert created.json()["status"] == "complete", "a run with no claims must not park"
         response = c.post(
             f"/audit/{run_id}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True}]},
+            json={"decisions": [{"claim_index": 0, "publish": True}]},
         )
 
     assert response.status_code == 409
@@ -724,7 +779,7 @@ def test_approving_a_run_with_nothing_to_review_is_a_409(tmp_path):
 def test_approving_an_unknown_run_is_a_404(client):
     response = client.post(
         "/audit/no-such-run/approve",
-        json={"decisions": [{"claim_index": 0, "accept": True}]},
+        json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
     )
     assert response.status_code == 404
 
@@ -753,7 +808,7 @@ def test_a_run_that_violated_its_own_architecture_cannot_be_approved(tmp_path):
 
         response = c.post(
             f"/audit/{submitted['run_id']}/approve",
-            json={"decisions": [{"claim_index": 0, "accept": True}]},
+            json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
         )
 
     assert response.status_code == 409
@@ -779,7 +834,7 @@ def test_a_run_whose_pause_is_gone_is_a_409_not_a_shortcut(client):
 
     response = client.post(
         f"/audit/{run_id}/approve",
-        json={"decisions": [{"claim_index": 0, "accept": True}]},
+        json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
     )
     assert response.status_code == 409
     assert "no paused graph" in response.text

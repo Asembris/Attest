@@ -85,6 +85,7 @@ from attest.report import (
     ClaimAudit,
     ClaimError,
     Correction,
+    Publication,
 )
 from attest.sanitize import Finding
 
@@ -214,5 +215,13 @@ def _audit(claim: ClaimRecord) -> ClaimAudit:
                 else None
             ),
             review=claim.correction.review,
+        ),
+        # Rebuilt, not defaulted. A resumed run whose publications came back PENDING would
+        # re-offer verdicts a human had already published or withheld — and, worse, the
+        # checkpoint would park a run that was finished. What the record does not carry, a
+        # restarted run reports differently; that is why this is here and why test_resume
+        # compares the whole record.
+        publication=Publication(
+            status=claim.publication.status, reviewer=claim.publication.reviewer
         ),
     )

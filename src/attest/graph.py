@@ -116,7 +116,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Literal, TypedDict
 
@@ -161,6 +161,8 @@ from attest.report import (
     Correction,
     CorrectionOutcome,
     Decision,
+    Publication,
+    PublicationStatus,
     ReviewStatus,
     RunStatus,
 )
@@ -200,9 +202,25 @@ class AuditState(TypedDict, total=False):
     n_claims: int
     # Revisions spent on the CURRENT claim. Reset at each claim. The retry cap reads this.
     retries: int
-    # claim index (as a string key, because msgpack maps want string keys) -> accept.
-    # Written by a human via `resume`, never by the graph.
-    decisions: dict[str, bool]
+    # A human's decisions, from `resume`, never written by the graph. Keyed by claim index
+    # as a STRING because msgpack maps want string keys.
+    #
+    # TWO dicts, not one dict of pairs, and the reason is the msgpack landmine at the top of
+    # this file rather than taste: state holds PRIMITIVES ONLY. A `dict[str, Decision]` — or
+    # even a `dict[str, dict]` — is a typed object in checkpointed state, which round-trips
+    # today with a deprecation warning and comes back as bare dicts after a resume the day
+    # it stops. Two flat maps of str -> bool cannot rot that way.
+    #
+    # They are SEPARATE because they settle separate things (report.Decision): publishing a
+    # verdict is not accepting a correction, and a claim can legitimately have one decided
+    # and the other pending.
+    publish_decisions: dict[str, bool]
+    correction_decisions: dict[str, bool]
+    # Who decided, per claim. Carried so the PUBLICATION records its reviewer at the moment
+    # it is settled, rather than being looked up later from the store — the store has not
+    # been written yet when the write-back runs, and a lookup there silently attributed
+    # every artifact to "unknown".
+    reviewers: dict[str, str]
     run_error: str | None
 
 
@@ -655,35 +673,62 @@ class Pipeline:
         return CorrectionOutcome.NOT_CORRECTED
 
     def _checkpoint(self, state: AuditState) -> AuditState:
-        """The human's turn. Reached only when there is something to sign off.
+        """The human's turn. Reached whenever any claim is still waiting on a person.
 
         The graph is interrupted BEFORE this node, so it does not run until someone calls
-        `resume`. What it does is apply their decisions — and a proposal nobody decided on
+        `resume`. What it does is apply their decisions — and anything nobody decided on
         stays PENDING, which is the whole point.
 
-        A proposal that is already settled is skipped, so a second visit cannot re-decide
-        it: `awaits_human` is false the moment a review lands. A correction is settled once,
-        and the node that settles it is the one that enforces that.
+        It settles TWO independent things per claim, and never conflates them (Session 15):
+        whether the VERDICT is published, and — only where the loop produced a proposal —
+        whether the CORRECTION is accepted. A human may publish a verdict and reject the fix
+        the agent suggested for it; the old single flag could not express that.
+
+        Anything already settled is skipped, so a second visit cannot re-decide it:
+        `awaits_human` is false the moment a decision lands. A claim is settled once, and
+        the node that settles it is the one that enforces that.
         """
         ledger = self._ledger(state)
-        decisions = state.get("decisions") or {}
+        publish = state.get("publish_decisions") or {}
+        corrections = state.get("correction_decisions") or {}
 
         with ledger.trace.step(
             CHECKPOINT, StepKind.DETERMINISTIC, proposals=len(ledger.audits)
         ) as s:
+            published = 0
             reviewed = 0
             for n, audit in enumerate(ledger.audits):
-                if not audit.correction.awaits_human:
-                    continue
-                verdict = decisions.get(str(audit.index))
-                if verdict is None:
-                    continue  # unreviewed stays PENDING. Never accepted by default.
-                ledger.audits[n] = _with_review(
-                    audit,
-                    ReviewStatus.ACCEPTED if verdict else ReviewStatus.REJECTED,
-                )
-                reviewed += 1
-            s.outputs = {"reviewed": reviewed}
+                updated = audit
+
+                if audit.publication.awaits_human:
+                    told = publish.get(str(audit.index))
+                    if told is not None:
+                        updated = _with_publication(
+                            updated,
+                            Publication(
+                                status=(
+                                    PublicationStatus.PUBLISHED
+                                    if told
+                                    else PublicationStatus.WITHHELD
+                                ),
+                                reviewer=(state.get("reviewers") or {}).get(
+                                    str(audit.index), ""
+                                ),
+                            ),
+                        )
+                        published += 1
+
+                if audit.correction.awaits_human:
+                    told = corrections.get(str(audit.index))
+                    if told is not None:
+                        updated = _with_review(
+                            updated,
+                            ReviewStatus.ACCEPTED if told else ReviewStatus.REJECTED,
+                        )
+                        reviewed += 1
+
+                ledger.audits[n] = updated
+            s.outputs = {"published": published, "reviewed": reviewed}
 
         return {}
 
@@ -730,38 +775,55 @@ class Pipeline:
     def _more_claims(self, state: AuditState) -> Literal["more", "review", "finish"]:
         if state["cursor"] < state["n_claims"]:
             return "more"
-        # Park for a human only if there is actually something to sign off. A run with no
-        # corrections should not demand attention it does not need.
+        # Park for a human if anything is still waiting on one. Since Session 15 that is
+        # every audited claim, because every verdict needs clearing before it reaches the
+        # catalog — so a run with claims parks, and a run with none does not.
         return "review" if self._awaits_human(state) else "finish"
 
     def _review_settled(self, state: AuditState) -> Literal["await", "finish"]:
-        """THE WAY OUT OF THE CHECKPOINT, and the only one: every proposal decided.
+        """THE WAY OUT OF THE CHECKPOINT, and the only one: every claim decided.
 
         Deliberately the same question `_more_claims` asks before parking in the first
-        place. A run may not settle while it still holds a proposal nobody has ruled on —
-        so a partial decision (or an empty one) goes back round and parks again, and the
-        run stays exactly as resumable as it was before someone looked at it.
+        place. A run may not settle while it still holds anything nobody has ruled on — so a
+        partial decision (or an empty one) goes back round and parks again, and the run
+        stays exactly as resumable as it was before someone looked at it.
+
+        **The N-decisions-per-run this implies is INTENDED, not a bug.** Since Session 15
+        every verdict needs clearing, so a run of ten claims takes ten decisions to settle —
+        in one call or several, and it re-parks between them rather than stranding. It
+        cannot strand: `_awaits_human` is monotone, every decision moves at least one claim
+        out of PENDING and nothing moves back, so the loop terminates as soon as the last
+        claim is ruled on. A run whose claims are all decided but one simply parks again,
+        which is Session 14's guarantee holding at the new granularity.
         """
         return "await" if self._awaits_human(state) else "finish"
 
     def _awaits_human(self, state: AuditState) -> bool:
-        """Is any proposal in this run still waiting on a person?
+        """Is anything in this run still waiting on a person?
 
         One predicate, read by the edge INTO the checkpoint and the edge OUT of it, so the
         condition that parks a run and the condition that releases it cannot drift apart.
+
+        Since Session 15 it asks about the whole claim, not just its correction: a verdict
+        awaiting publication counts, and so does a proposal awaiting acceptance. That is the
+        Option A gate — a Supported claim and a Contradicted one that STOOD FIRM both park,
+        where before neither did and neither could ever reach the catalog.
         """
         ledger = self._ledger(state)
-        return any(a.correction.awaits_human for a in ledger.audits)
+        return any(a.awaits_human for a in ledger.audits)
 
     # --- the public API -------------------------------------------------------
 
     def run(self, source_text: str, thread_id: str | None = None) -> AuditReport:
         """Audit an agent's output.
 
-        Returns a COMPLETE report, or — if the run produced corrections that a human has
-        to sign off — an AWAITING_REVIEW report with the graph parked at the checkpoint.
-        The verdicts in a parked report are final and readable; only the CORRECTIONS are
-        unsettled. Call `resume` to settle them.
+        Returns a COMPLETE report, or — if it produced any claim a human has to sign off —
+        an AWAITING_REVIEW report with the graph parked at the checkpoint. Since Session 15
+        that is any run WITH claims: every verdict needs clearing before it reaches the
+        catalog, so a run that extracted nothing completes and a run that audited something
+        parks. The verdicts in a parked report are final and readable; what is unsettled is
+        whether they are PUBLISHED, and whether any proposed correction is accepted. Call
+        `resume` to settle them.
         """
         thread_id = thread_id or str(uuid.uuid4())
         self._ledgers[thread_id] = _Ledger(
@@ -779,7 +841,9 @@ class Pipeline:
             "cursor": 0,
             "n_claims": 0,
             "retries": 0,
-            "decisions": {},
+            "publish_decisions": {},
+            "correction_decisions": {},
+            "reviewers": {},
             "run_error": None,
         }
         self.graph.invoke(state, self._config(thread_id))
@@ -788,21 +852,43 @@ class Pipeline:
     def resume(
         self, thread_id: str, decisions: list[Decision] | None = None
     ) -> AuditReport:
-        """Sign off (or reject) the proposed corrections, and finish the run.
+        """Settle a parked run's claims: publish or withhold each verdict, and rule on any
+        proposed correction. Finish when nothing is left pending.
 
-        A proposal not named in `decisions` stays PENDING. There is no "approve all"
-        default, and its absence is the design: see the module docstring.
+        Anything not named in `decisions` stays PENDING. There is no "approve all" default,
+        and its absence is the design: see the module docstring.
 
-        And a run only FINISHES when there is nothing left pending. Decide some of the
-        proposals and the run parks again with the rest still on offer, so this may be
-        called as many times as it takes — the returned report says AWAITING_REVIEW until
-        the last one is settled. Deciding nothing at all is the degenerate case of that,
-        and it leaves the run exactly where it was rather than ending it.
+        A run only FINISHES when nothing is left pending. Decide some of the claims and it
+        parks again with the rest still on offer, so this may be called as many times as it
+        takes — the returned report says AWAITING_REVIEW until the last one is settled.
+        Deciding nothing at all is the degenerate case of that, and it leaves the run
+        exactly where it was rather than ending it.
+
+        The two decisions are kept apart all the way down (report.Decision): `publish`
+        settles whether the VERDICT reaches the catalog, `accept_correction` settles whether
+        a proposed REVISION is right. A `None` on either is "no opinion", not "no".
         """
         config = self._config(thread_id)
-        chosen = {str(d.claim_index): d.accept for d in decisions or []}
+        taken = decisions or []
 
-        self.graph.update_state(config, {"decisions": chosen})
+        self.graph.update_state(
+            config,
+            {
+                "publish_decisions": {
+                    str(d.claim_index): d.publish
+                    for d in taken
+                    if d.publish is not None
+                },
+                "correction_decisions": {
+                    str(d.claim_index): d.accept_correction
+                    for d in taken
+                    if d.accept_correction is not None
+                },
+                "reviewers": {
+                    str(d.claim_index): d.reviewer for d in taken if d.reviewer
+                },
+            },
+        )
         self.graph.invoke(None, config)
         return self._report(thread_id)
 
@@ -923,6 +1009,11 @@ class Pipeline:
         self.saver.delete_thread(thread_id)
 
 
+def _with_publication(audit: ClaimAudit, publication: Publication) -> ClaimAudit:
+    """A copy carrying a settled publication. Frozen, so a decision replaces rather than mutates."""
+    return replace(audit, publication=publication)
+
+
 def _with_review(audit: ClaimAudit, review: ReviewStatus) -> ClaimAudit:
     """A reviewed copy. Correction is frozen, so a decision replaces rather than mutates."""
     return ClaimAudit(
@@ -932,6 +1023,7 @@ def _with_review(audit: ClaimAudit, review: ReviewStatus) -> ClaimAudit:
         reason=audit.reason,
         evidence=audit.evidence,
         explanation=audit.explanation,
+        publication=audit.publication,
         correction=Correction(
             outcome=audit.correction.outcome,
             attempts=audit.correction.attempts,

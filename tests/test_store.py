@@ -269,13 +269,22 @@ def test_a_decision_is_appended_and_never_overwrites_the_last_one(store):
         revision_reply(ownership(CAROL)),
     ))
 
-    store.record_decision("run-1", Decision(0, accept=True, reviewer="dana"), writeback="written")
-    store.record_decision("run-1", Decision(0, accept=False, reviewer="sam", note="on reflection"))
+    store.record_decision(
+        "run-1",
+        Decision(0, publish=True, accept_correction=True, reviewer="dana"),
+        writeback="written",
+    )
+    store.record_decision(
+        "run-1",
+        Decision(0, publish=False, accept_correction=False, reviewer="sam", note="on reflection"),
+    )
 
     log = store.approvals("run-1")
     assert len(log) == 2, "a decision overwrote an earlier one"
     assert [a.reviewer for a in log] == ["dana", "sam"]
-    assert [a.accept for a in log] == [True, False]
+    assert [a.publish for a in log] == [True, False]
+    # The two acts are logged apart, because they ARE apart. See report.Decision.
+    assert [a.accept_correction for a in log] == [True, False]
     assert log[0].writeback == "written"
     assert log[1].note == "on reflection"
 
@@ -323,7 +332,7 @@ def test_a_reviewed_run_stores_the_review_status_it_actually_reached(store):
     store.save(from_report(parked, run_id="run-r"))
     assert store.load("run-r").claims[0].correction.review is ReviewStatus.PENDING
 
-    settled = p.resume("run-r", [Decision(claim_index=0, accept=True)])
+    settled = p.resume("run-r", [Decision(claim_index=0, publish=True, accept_correction=True)])
     store.save(from_report(settled, run_id="run-r"))
 
     loaded = store.load("run-r")

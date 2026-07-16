@@ -21,7 +21,7 @@ from attest.claims import ClaimType, Verdict
 from attest.datahub import FieldSnapshot
 from attest.graph import Pipeline
 from attest.llm import LLM
-from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
+from attest.report import CorrectionOutcome, Decision, PublicationStatus, ReviewStatus, RunStatus
 from attest.trajectory import CHECKER, CHECKPOINT, GUARD, RECHECK, REVISE, Rule
 from fakes import (
     FakeCatalog,
@@ -435,7 +435,9 @@ def test_an_unattended_proposal_stays_pending_rather_than_being_accepted():
     assert CHECKPOINT in [s.name for s in final.trace]
 
     # And deciding it later still works, which is the whole point of staying parked.
-    settled = p.resume(parked.thread_id, [Decision(claim_index=0, accept=True)])
+    settled = p.resume(
+        parked.thread_id, [Decision(claim_index=0, publish=True, accept_correction=True)]
+    )
     assert settled.status is RunStatus.COMPLETE
     assert settled.audits[0].correction.review is ReviewStatus.ACCEPTED
 
@@ -452,7 +454,9 @@ def test_a_human_decision_settles_a_proposal(accept, expected):
         revision_reply(ownership_claim(owner=CAROL)),
     )
     parked = p.run(SAYS)
-    final = p.resume(parked.thread_id, [Decision(claim_index=0, accept=accept)])
+    final = p.resume(
+        parked.thread_id, [Decision(claim_index=0, publish=True, accept_correction=accept)]
+    )
 
     assert final.status is RunStatus.COMPLETE
     assert final.audits[0].correction.review is expected
@@ -460,16 +464,55 @@ def test_a_human_decision_settles_a_proposal(accept, expected):
     assert final.audits[0].verdict is Verdict.CONTRADICTED
 
 
-def test_a_run_with_nothing_to_propose_does_not_stop_for_a_human():
-    """A checkpoint that fires when there is nothing to decide trains people to ignore it."""
+def test_a_supported_claim_parks_for_publication_even_with_nothing_to_correct():
+    """OPTION A (Session 15). A verdict needs a human before it reaches the catalog — ANY verdict.
+
+    This test used to assert the opposite, and its old name said so: *a run with nothing to
+    propose does not stop for a human*. The premise was that the only thing worth a person's
+    attention is a correction. That premise is what kept every Supported and
+    Insufficient-Coverage verdict — and every Contradicted claim the agent STOOD FIRM on —
+    out of the catalog forever, because the write-back fired only on an accepted correction.
+
+    Attest exists to say that absence is not an answer. A dataset with no Attest verdict has
+    to mean "nobody checked", not "checked, fine, said nothing" — otherwise Attest's own
+    output has the ambiguity its verdicts exist to remove. So a Supported claim parks: not
+    because it is suspicious, but because publishing it is a human's call.
+
+    There is exactly one run that still does not stop for a human, and it is the honest one:
+    a run with no claims. See below.
+    """
     p, _ = pipeline(
         claim_reply([ownership_claim(owner=CAROL)]),
         explanation_reply(f"{CAROL} is listed as an owner.", "Supported", []),
     )
     report = p.run(SAYS)
 
-    assert report.status is RunStatus.COMPLETE
+    assert report.audits[0].verdict is Verdict.SUPPORTED
+    # No correction was attempted — there is nothing wrong to fix. It still parks.
+    assert report.audits[0].correction.outcome is CorrectionOutcome.NOT_ATTEMPTED
     assert report.proposals == ()
+    assert report.status is RunStatus.AWAITING_REVIEW
+    assert report.audits[0].publication.status is PublicationStatus.PENDING
+    assert report.audits[0].awaits_human
+
+    # ...and it settles on a publish decision alone, with no correction to rule on.
+    final = p.resume(report.thread_id, [Decision(claim_index=0, publish=True)])
+    assert final.status is RunStatus.COMPLETE
+    assert final.audits[0].publication.status is PublicationStatus.PUBLISHED
+
+
+def test_a_run_with_no_claims_does_not_stop_for_a_human():
+    """The one run that still completes unattended: there is nothing to publish.
+
+    A checkpoint that fires when there is nothing to decide trains people to ignore it, and
+    that is still true — it is just that since Session 15 "nothing to decide" means "no
+    claims", not "no corrections".
+    """
+    p, _ = pipeline(claim_reply([]))
+    report = p.run("Nothing here names a dataset.")
+
+    assert report.audits == ()
+    assert report.status is RunStatus.COMPLETE
     assert "human_checkpoint" not in report.trace.names
 
 
@@ -567,4 +610,7 @@ def test_max_retries_zero_turns_the_loop_off_entirely():
     assert report.audits[0].verdict is Verdict.CONTRADICTED
     assert report.audits[0].correction.outcome is CorrectionOutcome.NOT_ATTEMPTED
     assert report.trace.named(REVISE) == []
-    assert report.status is RunStatus.COMPLETE
+    # It still parks: the loop being off means nothing to CORRECT, not nothing to PUBLISH.
+    # A Contradicted verdict nobody tried to fix is exactly the finding a catalog wants.
+    assert report.status is RunStatus.AWAITING_REVIEW
+    assert report.proposals == (), "the loop was off; there is no proposal to review"

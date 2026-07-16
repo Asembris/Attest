@@ -71,14 +71,37 @@ class AuditRequest(BaseModel):
 
 
 class DecisionRequest(BaseModel):
-    """A human's call on one proposed correction."""
+    """A human's call on one audited claim: publish its verdict, and rule on any correction.
+
+    **TWO SEPARATE FIELDS, DELIBERATELY.** Until Session 15 this was one `accept` flag that
+    meant "accept the correction" and, as a side effect nobody chose, "publish the verdict".
+    They are different decisions about different things, and a human can hold them
+    independently — "your claim was wrong (publish that), and the fix you proposed is also
+    wrong (reject that)". One boolean could not say it.
+
+    Both are optional: only what you name is settled, and anything you leave out stays
+    PENDING and re-parks the run. A decision naming neither is legal and does nothing.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     claim_index: int = Field(ge=0, description="Which audited claim this decides.")
-    accept: bool = Field(
-        description="True accepts the proposed correction and writes the verdict back to "
-        "DataHub. False rejects it and writes nothing."
+    publish: bool | None = Field(
+        default=None,
+        description="True clears this claim's VERDICT for the catalog: it is written back "
+        "as a claim artifact. False withholds it and writes nothing. Omit for 'no opinion' "
+        "— the verdict stays pending and the run stays parked. Every audited claim has one "
+        "of these, whatever its verdict: Supported and Insufficient-Coverage are findings a "
+        "catalog needs too, and a verdict Attest never records is indistinguishable from a "
+        "claim Attest never checked.",
+    )
+    accept_correction: bool | None = Field(
+        default=None,
+        description="True accepts the revision the agent proposed for a Contradicted claim; "
+        "False rejects it. Omit if there is no proposal, or for 'no opinion'. This does NOT "
+        "publish anything — that is `publish`. Note an accepted correction never rewrites "
+        "the original verdict: the agent was wrong, and later saying something true does "
+        "not unsay it.",
     )
     reviewer: str = Field(default="", description="Who decided. Recorded, not verified.")
     note: str = Field(default="", description="Why. Kept with the decision, forever.")
@@ -87,7 +110,8 @@ class DecisionRequest(BaseModel):
         """The wire type, as the domain type the graph's checkpoint already takes."""
         return Decision(
             claim_index=self.claim_index,
-            accept=self.accept,
+            publish=self.publish,
+            accept_correction=self.accept_correction,
             reviewer=self.reviewer,
             note=self.note,
         )

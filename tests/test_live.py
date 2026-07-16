@@ -261,7 +261,9 @@ def test_the_full_pipeline_end_to_end(client, now, capsys):
     assert len(report.proposals) == 1
 
     final = pipeline.resume(
-        report.thread_id, [Decision(claim_index=contradicted.index, accept=True)]
+        report.thread_id, [
+            Decision(claim_index=contradicted.index, publish=True, accept_correction=True)
+        ]
     )
     assert final.status is RunStatus.COMPLETE
     assert final.audits[contradicted.index].correction.review is ReviewStatus.ACCEPTED
@@ -417,7 +419,12 @@ def test_the_service_end_to_end_against_the_real_catalog(client, now, tmp_path, 
             approved = http.post(
                 f"/audit/{run_id}/approve",
                 json={"decisions": [
-                    {"claim_index": proposal["index"], "accept": True, "reviewer": "live-test"}
+                    {
+                        "claim_index": proposal["index"],
+                        "publish": True,
+                        "accept_correction": True,
+                        "reviewer": "live-test",
+                    }
                 ]},
             )
             assert approved.status_code == 200, approved.text
@@ -551,7 +558,12 @@ def test_two_claims_on_one_dataset_coexist_in_the_catalog(client, now, tmp_path,
             settled = http.post(
                 f"/audit/{run_id}/approve",
                 json={"decisions": [
-                    {"claim_index": p["index"], "accept": True, "reviewer": "live-test"}
+                    {
+                        "claim_index": p["index"],
+                        "publish": True,
+                        "accept_correction": True,
+                        "reviewer": "live-test",
+                    }
                     for p in proposals
                 ]},
             ).json()

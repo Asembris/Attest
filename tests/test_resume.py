@@ -166,7 +166,7 @@ def test_a_run_parked_by_a_dead_process_is_resumed_through_the_checkpoint_node(t
 
     second = restart(tmp_path, "durable")
     settled, writebacks = second.approve(
-        parked.run_id, [Decision(claim_index=0, accept=True)]
+        parked.run_id, [Decision(claim_index=0, publish=True, accept_correction=True)]
     )
 
     # (a) the decision landed.
@@ -201,14 +201,14 @@ def test_the_resumed_report_is_the_report_the_unrestarted_run_would_have_produce
     parked = restarted.audit(SAYS, source_agent="bot")
     del restarted
     after_restart = restart(tmp_path, "restarted").approve(
-        parked.run_id, [Decision(claim_index=0, accept=True)]
+        parked.run_id, [Decision(claim_index=0, publish=True, accept_correction=True)]
     )[0]
 
     # The same audit, start to finish, in one process.
     straight_through = service(tmp_path, "straight")
     parked_too = straight_through.audit(SAYS, source_agent="bot")
     unrestarted = straight_through.approve(
-        parked_too.run_id, [Decision(claim_index=0, accept=True)]
+        parked_too.run_id, [Decision(claim_index=0, publish=True, accept_correction=True)]
     )[0]
 
     assert normalized(after_restart) == normalized(unrestarted)
@@ -242,7 +242,7 @@ def test_a_rehydrated_run_does_not_invent_a_cost_the_original_refused_to_state(
 
     del first
     settled = restart(tmp_path, "unpriced", tokens=(400, 90)).approve(
-        parked.run_id, [Decision(claim_index=0, accept=True)]
+        parked.run_id, [Decision(claim_index=0, publish=True, accept_correction=True)]
     )[0]
 
     assert settled.receipts.usd is None, (
@@ -291,7 +291,7 @@ def test_the_guards_own_failures_survive_the_restart(tmp_path):
     del first
 
     settled = restart_with(tmp_path, "guard", lying, fake).approve(
-        parked.run_id, [Decision(claim_index=0, accept=True)]
+        parked.run_id, [Decision(claim_index=0, publish=True, accept_correction=True)]
     )[0]
 
     resumed = settled.claims[0]
@@ -436,7 +436,9 @@ def test_a_run_whose_pause_is_gone_is_a_409_and_not_a_shortcut(tmp_path):
     )
 
     with pytest.raises(NotResumable, match="no paused graph"):
-        orphaned.approve(parked.run_id, [Decision(claim_index=0, accept=True)])
+        orphaned.approve(parked.run_id, [
+            Decision(claim_index=0, publish=True, accept_correction=True)
+        ])
 
     # And the audit itself is intact and still readable, which is the whole reason the
     # store and the checkpointer are two different things.
@@ -453,7 +455,7 @@ def test_a_completed_run_deletes_its_checkpoints(tmp_path):
     parked = svc.audit(SAYS)
     assert svc.pipeline.is_parked(parked.run_id)
 
-    svc.approve(parked.run_id, [Decision(claim_index=0, accept=True)])
+    svc.approve(parked.run_id, [Decision(claim_index=0, publish=True, accept_correction=True)])
 
     assert not svc.pipeline.is_parked(parked.run_id), "a settled run kept its paused graph"
     # And the audit history is untouched by the cleanup: the RUN is over, not deleted.

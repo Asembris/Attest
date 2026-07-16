@@ -87,11 +87,18 @@ from attest.record import (
     DroppedView,
     EvidenceView,
     FindingView,
+    PublicationView,
     Receipts,
     StepView,
     ViolationView,
 )
-from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
+from attest.report import (
+    CorrectionOutcome,
+    Decision,
+    PublicationStatus,
+    ReviewStatus,
+    RunStatus,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -137,6 +144,14 @@ CREATE TABLE IF NOT EXISTS claims (
     -- The model drafts that were thrown away, and why. An auditor that quietly retries
     -- until something passes is hiding its own failure rate.
     rejected            TEXT NOT NULL DEFAULT '[]',
+    -- Whether a human cleared this VERDICT for the catalog: pending | published | withheld.
+    -- A real column rather than a blob, because "what have we published, and who signed it
+    -- off" is a question you filter by. Kept SEPARATE from corrections.review on purpose:
+    -- publishing a verdict is not accepting a correction, and fusing them is what kept every
+    -- Supported, Insufficient-Coverage and STOOD_FIRM verdict out of the catalog entirely.
+    -- See report.PublicationStatus.
+    publication         TEXT NOT NULL DEFAULT 'pending',
+    published_by        TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (run_id, claim_index)
 );
 
@@ -195,7 +210,12 @@ CREATE TABLE IF NOT EXISTS approvals (
     approval_id   TEXT PRIMARY KEY,
     run_id        TEXT NOT NULL,
     claim_index   INTEGER NOT NULL,
-    accept        INTEGER NOT NULL,
+    -- TWO acts, never one flag. NULL means the decision did not settle that question --
+    -- "no opinion", which is not "no". Folding them back into one boolean would re-create
+    -- the coupling that kept every Supported, Insufficient-Coverage and STOOD_FIRM verdict
+    -- out of the catalog. See report.Decision.
+    publish           INTEGER,
+    accept_correction INTEGER,
     reviewer      TEXT NOT NULL DEFAULT '',
     note          TEXT NOT NULL DEFAULT '',
     decided_at    TEXT NOT NULL,
@@ -206,6 +226,7 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 
 CREATE INDEX IF NOT EXISTS idx_claims_verdict ON claims (verdict, claim_type);
+CREATE INDEX IF NOT EXISTS idx_claims_publication ON claims (publication);
 CREATE INDEX IF NOT EXISTS idx_claims_urn ON claims (target_urn);
 CREATE INDEX IF NOT EXISTS idx_runs_created ON runs (created_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_run ON approvals (run_id, claim_index);
@@ -219,7 +240,9 @@ class Approval:
     approval_id: str
     run_id: str
     claim_index: int
-    accept: bool
+    # None means this decision took no view on that question. See report.Decision.
+    publish: bool | None
+    accept_correction: bool | None
     reviewer: str
     note: str
     decided_at: datetime
@@ -367,8 +390,9 @@ class AuditStore:
                 db.execute(
                     "INSERT INTO claims (run_id, claim_index, claim_type, target_urn,"
                     " raw_text, claim_json, verdict, reason, explanation,"
-                    " explanation_source, faithful, violations, conflicts, rejected)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " explanation_source, faithful, violations, conflicts, rejected,"
+                    " publication, published_by)"
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         record.run_id,
                         claim.index,
@@ -386,6 +410,8 @@ class AuditStore:
                         ),
                         json.dumps([c.model_dump(mode="json") for c in claim.conflicts]),
                         json.dumps(list(claim.rejected)),
+                        claim.publication.status.value,
+                        claim.publication.reviewer,
                     ),
                 )
                 for seq, e in enumerate(claim.evidence):
@@ -460,7 +486,8 @@ class AuditStore:
             approval_id=str(uuid.uuid4()),
             run_id=run_id,
             claim_index=decision.claim_index,
-            accept=decision.accept,
+            publish=decision.publish,
+            accept_correction=decision.accept_correction,
             reviewer=decision.reviewer,
             note=decision.note,
             decided_at=decided_at or datetime.now(tz=UTC),
@@ -468,13 +495,17 @@ class AuditStore:
         )
         with self._write() as db:
             db.execute(
-                "INSERT INTO approvals (approval_id, run_id, claim_index, accept, reviewer,"
-                " note, decided_at, writeback) VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO approvals (approval_id, run_id, claim_index, publish,"
+                " accept_correction, reviewer, note, decided_at, writeback)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     approval.approval_id,
                     approval.run_id,
                     approval.claim_index,
-                    int(approval.accept),
+                    None if approval.publish is None else int(approval.publish),
+                    None
+                    if approval.accept_correction is None
+                    else int(approval.accept_correction),
                     approval.reviewer,
                     approval.note,
                     approval.decided_at.isoformat(),
@@ -550,6 +581,10 @@ class AuditStore:
                     ),
                     rejected=tuple(json.loads(c["rejected"])),
                     correction=_correction(corrected.get(c["claim_index"])),
+                    publication=PublicationView(
+                        status=PublicationStatus(c["publication"]),
+                        reviewer=c["published_by"],
+                    ),
                 )
                 for c in claims
             ),
@@ -608,7 +643,12 @@ class AuditStore:
                 approval_id=r["approval_id"],
                 run_id=r["run_id"],
                 claim_index=r["claim_index"],
-                accept=bool(r["accept"]),
+                publish=None if r["publish"] is None else bool(r["publish"]),
+                accept_correction=(
+                    None
+                    if r["accept_correction"] is None
+                    else bool(r["accept_correction"])
+                ),
                 reviewer=r["reviewer"],
                 note=r["note"],
                 decided_at=datetime.fromisoformat(r["decided_at"]),
