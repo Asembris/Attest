@@ -64,6 +64,7 @@ from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.polarity import check as check_polarity
 from attest.report import CorrectionOutcome, Decision, ReviewStatus, RunStatus
+from attest.retrieval import ClaimQuery, ClaimReader, ReadState
 from attest.store import AuditStore
 from attest.trajectory import RECHECK, REVISE, Rule
 from attest.writeback import AUDIT_RUN, VERDICT
@@ -873,3 +874,127 @@ def test_all_three_verdicts_reach_the_catalog_through_the_real_approval_flow(
             print(f"    native type : {a.history[0].native_type}   <- lossy projection")
             print(f"    reviewer    : {a.history[0].reviewer}")
         print("\n  Two of these three could not reach the catalog at all before Option A.\n")
+
+
+@pytest.mark.live
+def test_a_published_verdict_is_RETRIEVABLE_from_the_catalog_by_a_reader_with_no_store(
+    client, now, tmp_path, capsys
+):
+    """THE SESSION 16 CHECKPOINT, and the other half of the thesis.
+
+    Session 15 proved Attest WRITES results back. That is one of Challenge 1's two claims.
+    The other is that *the next person or agent inherits the knowledge* — and an artifact
+    nobody can retrieve inherits nothing. This is the retrieval half, against real GMS,
+    through the real approval flow.
+
+    **The reader here is given NO STORE.** `ClaimReader(client, store=None)` is not a
+    convenience — it is the scenario, constructed: a second agent has Attest's catalog and
+    not Attest's database, and if the answer needed SQLite the thesis would be false. So
+    every claim, verdict, reviewer and history below comes out of DataHub alone.
+
+    What the offline tier cannot do, and why this exists: a fake has no eventually-consistent
+    index, so the read-state work is untestable there in the way that matters. This is the
+    Session 5 rule — a fake cannot fail in a way the real thing fails through machinery the
+    fake does not have — and `just live` is the evidence.
+    """
+    agent_output = (
+        f"The dataset {DOCUMENTED} is owned by {ALICE}. "
+        f"The dataset {DOCUMENTED} has an ssn column."
+    )
+
+    service = AuditService(
+        pipeline=Pipeline(llm=LLM(), client=client, now=now),
+        store=AuditStore(tmp_path / "attest.db"),
+        client=client,
+    )
+    app.dependency_overrides[get_service] = lambda: service
+    try:
+        with TestClient(app) as http:
+            audit = http.post(
+                "/audit", json={"agent_output": agent_output, "source_agent": "session-16"}
+            ).json()
+            run_id = audit["run_id"]
+            assert audit["receipts"]["trajectory_ok"], audit["receipts"]["trajectory_summary"]
+
+            settled = http.post(
+                f"/audit/{run_id}/approve",
+                json={"decisions": [
+                    {
+                        "claim_index": c["index"],
+                        "publish": True,
+                        **(
+                            {"accept_correction": True}
+                            if c["correction"]["outcome"] == "corrected"
+                            else {}
+                        ),
+                        "reviewer": "session-16",
+                    }
+                    for c in audit["claims"]
+                ]},
+            ).json()
+            assert settled["audit"]["status"] == "complete"
+            for w in settled["writebacks"]:
+                assert w["ok"] is True, f"failed at {w['failed_step']}: {w['detail']}"
+
+            # Let this run's verdicts become readable before asserting on the read. The lag
+            # is real and measured (~2s median); waiting for THIS run's event rather than
+            # any event is what keeps it honest — the artifact is content-addressed, so a
+            # previous run's verdict is already sitting there.
+            for w in settled["writebacks"]:
+                assert _await_verdict(client, w["claim_urn"], run_id=run_id) is not None
+
+            # --- THE THESIS QUERY, through the API ---------------------------
+            body = http.get("/claims", params={"target_urn": DOCUMENTED}).json()
+
+        assert body["retrieval"]["entry_point"] == "dataset.assertions"
+        assert body["retrieval"]["pushed_down"] == ["target_urn"]
+
+        published = {c["claim_type"]: c for c in body["claims"]}
+        assert {"ownership", "schema"} <= set(published), (
+            f"the dataset does not carry both claims: {sorted(published)}"
+        )
+        for claim in body["claims"]:
+            assert claim["state"] == "complete", (
+                f"{claim['claim_urn']} reads {claim['state']} after its write was confirmed"
+            )
+            assert claim["verdict"] is not None
+            assert claim["asserted"], "a verdict with no subject — the gap this design closed"
+
+        # --- AND NOW WITH NO ATTEST STORE AT ALL. The second agent. ----------
+        reader = ClaimReader(client, store=None)
+        inherited = reader.list(ClaimQuery(target_urn=DOCUMENTED))
+
+        assert len(inherited.claims) >= 2
+        for c in inherited.claims:
+            assert c.state is ReadState.COMPLETE, (
+                "a settled verdict is not readable without Attest's store — the thesis is "
+                "that the CATALOG carries this, and it does not"
+            )
+            assert c.artifact.verdict is not None
+            assert c.artifact.history, "no verdict history survived into the catalog"
+
+        # The cross-catalog entry point: filters, scopes to nothing. Disjoint, measured.
+        contradicted = reader.list(ClaimQuery(verdict="Contradicted", claim_type="schema"))
+        assert contradicted.retrieval.entry_point == "searchAcrossEntities"
+        assert sorted(contradicted.retrieval.pushed_down) == ["claim_type", "verdict"]
+        assert any(
+            c.artifact.target_urn == DOCUMENTED for c in contradicted.claims
+        ), "the ssn contradiction is not findable by a catalog-wide verdict search"
+    finally:
+        app.dependency_overrides.clear()
+
+    with capsys.disabled():
+        print(f"\n\n  {'=' * 74}")
+        print("  WHAT A SECOND AGENT INHERITS — from DataHub alone, no Attest store")
+        print(f"  {'=' * 74}")
+        print(f"\n  ClaimReader(client, store=None).list(target_urn={DOCUMENTED.split(',')[1]})")
+        print(f"    -> {len(inherited.claims)} claim artifacts, one GraphQL query\n")
+        for c in inherited.claims:
+            a = c.artifact
+            print(f"    {a.claim_type:16} {str(a.verdict):22} {c.state.value}")
+            print(f"      asserts   : {str(a.logic.get('asserted', ''))[:56]}")
+            print(f"      history   : {len(a.history)} verdict(s), newest {a.history[0].verdict}")
+            print(f"      signed by : {a.history[0].reviewer}")
+        print(
+            "\n  Every field above came out of the catalog. No Attest process, no SQLite.\n"
+        )
