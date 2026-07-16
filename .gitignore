@@ -41,3 +41,4 @@ benchmark/results/_*.log
 # A working diagnostic (an external read-only audit's findings). Not a repo artifact — the
 # fixes it drove are in the code and history; the report itself is scratch.
 AUDIT.md
+AUDIT2.md
