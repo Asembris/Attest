@@ -242,11 +242,25 @@ class RetrievedClaim:
     def repairable(self) -> bool:
         """Is there a failed write here that `POST /audit/{id}/writeback` would repair?
 
-        ONLY for INCOMPLETE. A PENDING_LAG claim has nothing to repair — its write already
-        landed — and offering a retry for it would invite a human to "fix" a two-second
-        wait. The two states must never share one control.
+        **Keyed off the FAILED WRITE, not off the state**, and that distinction was found by
+        running the checkpoint rather than by thinking about it. Gating on `INCOMPLETE` looks
+        equivalent and is not, because a claim artifact is content-addressed: re-auditing a
+        claim appends to the artifact it already has. So a claim audited last month, audited
+        again today, whose new verdict FAILED to write, still shows last month's verdict —
+        it reads COMPLETE (the catalog does hold a verdict; that is not a lie) while Attest's
+        latest write sits recorded as broken. Gated on the state, that claim could never be
+        repaired, and the stale verdict would stand indefinitely with the failure visible in
+        the response and actionable from nowhere.
+
+        A failed write is repairable whether or not an older verdict happens to be showing.
+
+        What must NOT get a repair, and this is the rule that stays: PENDING_LAG. Its write
+        landed (`ok is True`), there is nothing to fix, and offering a retry would invite a
+        human to "fix" a two-second wait. UNKNOWN gets none either — there is no recorded
+        write to re-run, and acting on absence as though it were a diagnosis is the whole
+        mistake this module refuses.
         """
-        return self.state is ReadState.INCOMPLETE
+        return self.wrote is not None and self.wrote.ok is False
 
 
 @dataclass(frozen=True)

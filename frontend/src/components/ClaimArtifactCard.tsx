@@ -45,13 +45,23 @@ export default function ClaimArtifactCard({
 }) {
   const [expanded, setExpanded] = useState(false);
 
-  // THE RETRY IS OFFERED FOR `incomplete` AND FOR NOTHING ELSE.
+  // THE RETRY IS OFFERED FOR A FAILED WRITE — not for a state.
   //
-  // A `pending-lag` claim has nothing to repair — its write already landed and the index is
-  // seconds behind — so a retry button there would invite a human to "fix" a two-second wait,
-  // and the two states must never share one control. An `unknown` claim has no recorded write
-  // to re-run, and offering one would mean acting on absence as though it were a diagnosis.
-  const repairable = claim.state === 'incomplete' && Boolean(claim.audit_run);
+  // Gating on `state === 'incomplete'` looks equivalent and is not. A claim artifact is
+  // content-addressed, so re-auditing a claim appends to the artifact it already has: a
+  // claim audited last month and re-audited today, whose new verdict FAILED to write, still
+  // shows last month's verdict. It reads `complete` — the catalog does hold a verdict — while
+  // the latest write sits recorded as broken. Gated on the state, that claim could never be
+  // repaired from here and the stale verdict would stand indefinitely.
+  //
+  // What must never get this control is `pending-lag`: its write landed, there is nothing to
+  // repair, and a retry there invites a human to "fix" a two-second wait. `unknown` gets none
+  // either — there is no recorded write to re-run. Both follow from keying on failed_step,
+  // which is set for neither.
+  const repairable = Boolean(claim.failed_step) && Boolean(claim.audit_run);
+  // A failed write on a claim that still shows an OLDER verdict. Worth saying out loud: the
+  // verdict on screen is real and is simply not the newest audit's.
+  const stale = repairable && claim.state === 'complete';
 
   return (
     <motion.div
@@ -125,9 +135,11 @@ export default function ClaimArtifactCard({
                       The write stopped at {claim.failed_step}
                     </div>
                     <div className="text-xs text-ink-300">
-                      {claim.failed_step === 'tag'
-                        ? "The verdict is correct and merely not findable by a verdict search yet. The tag is a derived index, never the verdict itself."
-                        : 'This claim is in the catalog with no verdict. Re-running the write completes it.'}{' '}
+                      {stale
+                        ? 'The verdict shown is real, and it is from an EARLIER audit — the latest one did not land. Re-running the write adds it.'
+                        : claim.failed_step === 'tag'
+                          ? 'The verdict is correct and merely not findable by a verdict search yet. The tag is a derived index, never the verdict itself.'
+                          : 'This claim is in the catalog with no verdict. Re-running the write completes it.'}{' '}
                       Safe to run more than once: it lands on the same artifact and cannot
                       append a duplicate.
                     </div>

@@ -198,6 +198,65 @@ def test_a_claim_nobody_published_is_UNKNOWN_not_a_failed_write(catalog, store):
     assert state is ReadState.UNKNOWN
 
 
+def test_a_RE_AUDITED_claim_whose_new_write_failed_is_still_repairable(catalog):
+    """FOUND BY RUNNING THE CHECKPOINT, not by thinking about it.
+
+    A claim artifact is content-addressed, so re-auditing a claim APPENDS to the artifact it
+    already has — that is the feature. Which means a claim audited last month and audited
+    again today, whose new verdict FAILED to write, still shows last month's verdict. It
+    reads COMPLETE, and that is not a lie: the catalog does hold a verdict.
+
+    But its latest write is broken, and if repairability were gated on `state is INCOMPLETE`
+    this claim could never be repaired — the failure would be visible in the response and
+    actionable from nowhere, and a stale verdict would stand indefinitely while Attest's own
+    record said the newest audit never landed.
+
+    So repairability keys off the FAILED WRITE. `state` says what the catalog holds;
+    `repairable` says whether Attest has a write to re-run. Two questions again.
+    """
+    claim = ownership_claim()
+    urn = publish(catalog, claim, "Supported", at=NOW - timedelta(days=30))
+
+    # Today's audit reaches a new verdict, and its write breaks.
+    broken = retrieval.RetrievedClaim(
+        artifact=writeback.read_claim_artifact(catalog, urn),
+        state=read_state(
+            writeback.read_claim_artifact(catalog, urn), wrote(urn, ok=False, step="report")
+        ),
+        wrote=wrote(urn, ok=False, step="report"),
+    )
+
+    assert broken.state is ReadState.COMPLETE, "the catalog does hold last month's verdict"
+    assert broken.artifact.verdict == "Supported"
+    assert broken.repairable, (
+        "a claim with a recorded FAILED write is not repairable because an older verdict "
+        "happens to be showing — the stale verdict would stand forever"
+    )
+
+
+def test_a_lagging_claim_is_never_repairable_however_it_reads(catalog):
+    """The rule that must survive keying repairability off the write.
+
+    PENDING_LAG's write LANDED. There is nothing to fix, and a retry control there invites a
+    human to "fix" a two-second wait. UNKNOWN has no recorded write to re-run at all.
+    """
+    urn = upsert(catalog, ownership_claim())
+
+    lagging = retrieval.RetrievedClaim(
+        artifact=writeback.read_claim_artifact(catalog, urn),
+        state=ReadState.PENDING_LAG,
+        wrote=wrote(urn, ok=True),
+    )
+    unknown = retrieval.RetrievedClaim(
+        artifact=writeback.read_claim_artifact(catalog, urn),
+        state=ReadState.UNKNOWN,
+        wrote=None,
+    )
+
+    assert not lagging.repairable, "a landed write was offered a repair"
+    assert not unknown.repairable, "absence was treated as a diagnosis"
+
+
 def test_the_catalog_wins_when_it_holds_a_verdict_whatever_the_record_says(catalog):
     """A verdict that is present is present.
 
@@ -287,10 +346,17 @@ def test_collapsing_the_disambiguation_collapses_the_read(catalog, monkeypatch):
     assert sabotaged.get(lagging).state is ReadState.INCOMPLETE, (
         "the sabotage did not take — this test is not exercising read_state at all"
     )
-    assert sabotaged.get(lagging).repairable, (
-        "the naive read now offers a repair for a claim nobody can vouch for, which is "
-        "exactly the harm the four states prevent"
+    # A claim nobody can vouch for is now reported as broken, to every reader and to the UI:
+    # the honest "we cannot say" has become a confident accusation, from no new evidence.
+    assert sabotaged.get(finished).state is ReadState.COMPLETE, (
+        "the sabotage broke more than the disambiguation — a verdict that IS in the catalog "
+        "must still read complete, or this test proves nothing about the interesting case"
     )
+    # Note what does NOT follow, and it is deliberate defence in depth: `repairable` keys off
+    # the recorded WRITE rather than off the state, so even this sabotage cannot conjure a
+    # repair button for a claim with no recorded failure. The naive read still misinforms
+    # every reader; it just cannot also invite them to act on it.
+    assert not sabotaged.get(lagging).repairable
 
 
 # --- the push-down report ------------------------------------------------------
