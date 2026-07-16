@@ -359,6 +359,45 @@ def test_an_agent_may_stand_by_a_claim_the_evidence_cannot_settle():
     assert report.trace.named(RECHECK) == [], "nothing was re-verified: nothing changed"
 
 
+def test_a_claim_the_agent_STOOD_FIRM_on_can_be_published():
+    """THE CASE THAT DECIDED OPTION A, and it used to be unreachable.
+
+    An agent claims something false, is shown the catalog, and stands by it. That is the
+    most damning finding this system can produce — it is the measured 2-in-6 column-swap
+    result, and the whole reason `revise.subject()` exists.
+
+    It could never reach the catalog. The gate was `outcome is CORRECTED`, so the ONLY
+    verdict ever written back was a contradiction the agent had already fixed. A compliance
+    auditor that publishes "the agent was wrong and corrected itself" while silently
+    swallowing "the agent was wrong and refused to" is publishing the good news and hiding
+    the bad. Backwards, and it is why publication is now its own act.
+
+    Note there is no correction to accept here — `proposal is None` — so the decision is a
+    bare `publish`. Under the old shape there was no decision that could be made at all.
+    """
+    p, _ = pipeline(
+        claim_reply([ownership_claim(owner=ALICE)]),
+        explanation_reply("the catalog lists a different owner.", "Contradicted", []),
+        revision_reply(ownership_claim(owner=ALICE), unchanged=True),
+    )
+    report = p.run(SAYS)
+
+    audit = report.audits[0]
+    assert audit.correction.outcome is CorrectionOutcome.STOOD_FIRM
+    assert audit.correction.awaits_human is False, "there is no proposal to rule on"
+    # ...and yet the run parks, because the VERDICT is still waiting to be published.
+    assert audit.awaits_human, "a STOOD_FIRM finding must still reach a human"
+    assert report.status is RunStatus.AWAITING_REVIEW
+
+    final = p.resume(report.thread_id, [Decision(claim_index=0, publish=True, reviewer="dana")])
+    assert final.status is RunStatus.COMPLETE
+    assert final.audits[0].publication.status is PublicationStatus.PUBLISHED
+    assert final.audits[0].publication.reviewer == "dana"
+    assert final.audits[0].verdict is Verdict.CONTRADICTED, (
+        "the published verdict is the finding itself, not a correction"
+    )
+
+
 def test_a_supported_claim_is_never_sent_round_the_correction_loop():
     p, chat = pipeline(
         claim_reply([ownership_claim(owner=CAROL)]),

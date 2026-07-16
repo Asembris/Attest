@@ -840,3 +840,100 @@ def test_a_run_whose_pause_is_gone_is_a_409_not_a_shortcut(client):
     assert "no paused graph" in response.text
     # The audit itself is intact and still readable.
     assert client.get(f"/audit/{run_id}").json()["claims"][0]["evidence"]
+
+
+# --- Option A: every verdict is publishable (Session 15) ----------------------
+
+
+def test_publishing_and_accepting_a_correction_are_INDEPENDENT(tmp_path):
+    """THE SPLIT. "You were wrong, and your proposed fix is also wrong" must be sayable.
+
+    One `accept` flag could not say it: accepting the correction was what published the
+    verdict, so rejecting the fix silently withheld the finding too. That is backwards for a
+    compliance auditor — the finding is the part the catalog needs.
+    """
+    service, _ = build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        body = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{
+                "claim_index": 0,
+                "publish": True,          # the verdict IS a finding: publish it
+                "accept_correction": False,  # ...but the agent's proposed fix is not right
+                "reviewer": "dana",
+            }]},
+        ).json()
+
+    assert body["audit"]["status"] == "complete"
+    claim = body["audit"]["claims"][0]
+    assert claim["publication"]["status"] == "published"
+    assert claim["correction"]["review"] == "rejected"
+
+    # The verdict reached the catalog even though the correction was rejected.
+    assert len(body["writebacks"]) == 1 and body["writebacks"][0]["ok"] is True
+    artifact = writeback.read_claim_artifact(service.client, body["writebacks"][0]["claim_urn"])
+    assert artifact.verdict == "Contradicted"
+
+
+def test_a_withheld_verdict_reaches_nothing(tmp_path):
+    """`publish: false` is a decision, and it writes nothing. Not a silent default."""
+    service, _ = build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        body = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{
+                "claim_index": 0,
+                "publish": False,
+                "accept_correction": True,
+                "reviewer": "dana",
+            }]},
+        ).json()
+
+    assert body["audit"]["claims"][0]["publication"]["status"] == "withheld"
+    assert body["writebacks"] == []
+    assert service.client.assertions == {}, "a withheld verdict reached the catalog"
+
+
+def test_a_supported_verdict_can_be_published(tmp_path):
+    """The verdict that could NEVER reach the catalog before. Two thirds of the matrix."""
+    service, _ = build(tmp_path, *SUPPORTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        body = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "publish": True, "reviewer": "dana"}]},
+        ).json()
+
+    assert body["audit"]["status"] == "complete"
+    assert len(body["writebacks"]) == 1
+    artifact = writeback.read_claim_artifact(service.client, body["writebacks"][0]["claim_urn"])
+    assert artifact.verdict == "Supported"
+    assert artifact.history[0].reviewer == "dana"
+
+
+def test_a_partial_publication_parks_the_run_again_rather_than_stranding_it(tmp_path):
+    """The loop exits only when EVERY claim is decided — and it must not strand.
+
+    N decisions per run is the intended cost of Option A. What would not be acceptable is a
+    run that parks forever: `awaits_human` is monotone, so every decision moves a claim out
+    of PENDING and none moves back.
+    """
+    build(tmp_path, *TWO_PROPOSALS)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": TWO_CLAIMS}).json()["run_id"]
+        first = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "publish": True, "accept_correction": True}]},
+        ).json()
+        assert first["audit"]["status"] == "awaiting-review", "claim 1 is still undecided"
+        assert len(first["writebacks"]) == 1
+
+        second = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 1, "publish": True, "accept_correction": True}]},
+        ).json()
+
+    assert second["audit"]["status"] == "complete", "the run stranded"
+    assert len(second["writebacks"]) == 1, "the second call re-wrote the first claim"
