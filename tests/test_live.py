@@ -735,3 +735,141 @@ def test_the_third_verdict_reaches_the_catalog_as_its_literal_self(client, now, 
               "   <- lossy projection; NOT what the verdict is read from")
         print(f"    tag                     : {[t for t in artifact.tags if 'Attest-' in t]}")
         print()
+
+
+@pytest.mark.live
+def test_all_three_verdicts_reach_the_catalog_through_the_real_approval_flow(
+    client, now, tmp_path, capsys
+):
+    """THE SESSION B CHECKPOINT. Every verdict type, published by a human, through /approve.
+
+    At the end of Session A this test could not have been written. Publication rode on an
+    accepted CORRECTION, so the only thing that ever reached the catalog was a contradiction
+    the agent had successfully self-corrected -- one of five contradiction outcomes and zero
+    of the other two verdicts. An approved Supported claim and an approved
+    Insufficient-Coverage claim were not merely absent from the demo; they were unreachable.
+
+    That is what Option A fixed, and this is the proof, end to end and honest about it:
+    nothing here calls `write_claim_artifact`. Everything goes through `POST /audit` and
+    `POST /audit/{id}/approve`, exactly as a person would.
+
+    Four claims, one per interesting case:
+
+        Supported              a verdict that could never be published before
+        Insufficient-Coverage  ditto -- and the catalog being silent is a FINDING, because
+                               "we checked and found nothing recorded" is not the same fact
+                               as "nobody ever checked". That distinction is the product.
+        Contradicted           the ordinary finding
+        Contradicted/unrevisable  the ssn column: the agent is shown the catalog and either
+                               STANDS FIRM or refuses. THE case that decided Option A, and
+                               the one that used to die silently.
+
+    The outcome of the ssn claim is NOT asserted (CLAUDE.md): a real model chooses between
+    stood-firm and refused and both are honest, so asserting one flakes 1-in-3. What is
+    asserted is the property that holds every time -- it produces no proposal, and it is
+    published anyway.
+    """
+    agent_output = (
+        f"The dataset {DOCUMENTED} is owned by {ALICE}. "
+        f"The dataset {UNREVIEWED} contains no PII. "
+        f"The dataset {OWNED_BY_CAROL} is owned by {DANA}. "
+        f"The dataset {DOCUMENTED} has an ssn column."
+    )
+
+    service = AuditService(
+        pipeline=Pipeline(llm=LLM(), client=client, now=now),
+        store=AuditStore(tmp_path / "attest.db"),
+        client=client,
+    )
+    app.dependency_overrides[get_service] = lambda: service
+    try:
+        with TestClient(app) as http:
+            audit = http.post(
+                "/audit", json={"agent_output": agent_output, "source_agent": "session-b"}
+            ).json()
+            run_id = audit["run_id"]
+            assert audit["receipts"]["trajectory_ok"], audit["receipts"]["trajectory_summary"]
+
+            by_verdict = {}
+            for c in audit["claims"]:
+                by_verdict.setdefault(c["verdict"], []).append(c)
+            assert set(by_verdict) == {
+                "Supported",
+                "Contradicted",
+                "Insufficient-Coverage",
+            }, f"expected all three verdicts, got { {k: len(v) for k, v in by_verdict.items()} }"
+
+            # EVERY claim parks -- including the ones with nothing to correct. That is the gate.
+            assert audit["status"] == "awaiting-review"
+            for c in audit["claims"]:
+                assert c["publication"]["status"] == "pending"
+
+            # The unrevisable claim: no proposal, whatever the model chose to do.
+            ssn = [c for c in audit["claims"] if c["claim_type"] == "schema"]
+            assert len(ssn) == 1
+            assert ssn[0]["verdict"] == "Contradicted"
+            assert ssn[0]["correction"]["proposal"] is None, (
+                "Attest proposed a fix for a claim that cannot be fixed -- almost certainly "
+                "by swapping in a column that does exist"
+            )
+
+            # --- a human publishes every verdict, through the real endpoint -----
+            #
+            # Publishing a verdict does NOT settle a proposed correction, and this test got
+            # that wrong first time: it published all four and the run rightly parked again,
+            # because the correctable claim's proposal was still on offer. That is the split
+            # working — two acts, two decisions — so a claim carrying a proposal gets both.
+            settled = http.post(
+                f"/audit/{run_id}/approve",
+                json={"decisions": [
+                    {
+                        "claim_index": c["index"],
+                        "publish": True,
+                        **(
+                            {"accept_correction": True}
+                            if c["correction"]["outcome"] == "corrected"
+                            else {}
+                        ),
+                        "reviewer": "session-b",
+                    }
+                    for c in audit["claims"]
+                ]},
+            ).json()
+
+        assert settled["audit"]["status"] == "complete"
+        assert len(settled["writebacks"]) == len(audit["claims"])
+        for w in settled["writebacks"]:
+            assert w["ok"] is True, f"failed at {w['failed_step']}: {w['detail']}"
+
+        # --- READ IT BACK FROM DATAHUB. No Attest state consulted. -------------
+        published = {}
+        for w in settled["writebacks"]:
+            artifact = _await_verdict(client, w["claim_urn"], run_id=run_id)
+            assert artifact is not None and artifact.complete, (
+                f"{w['claim_urn']} carries no verdict in the catalog"
+            )
+            published[artifact.verdict] = artifact
+
+        assert set(published) == {"Supported", "Contradicted", "Insufficient-Coverage"}, (
+            f"only {sorted(published)} reached the catalog"
+        )
+        for verdict, artifact in published.items():
+            assert artifact.history[0].reviewer == "session-b"
+            assert artifact.history[0].audit_run == run_id
+            assert writeback.verdict_tag_urn(verdict) in artifact.tags
+    finally:
+        app.dependency_overrides.clear()
+
+    with capsys.disabled():
+        print(f"\n\n  {'=' * 74}")
+        print("  ALL THREE VERDICTS, PUBLISHED BY A HUMAN, READ BACK FROM DATAHUB")
+        print(f"  {'=' * 74}")
+        for verdict in ("Supported", "Contradicted", "Insufficient-Coverage"):
+            a = published[verdict]
+            dataset_name = a.target_urn.split(",")[1]
+            print(f"\n  attest.verdict = {a.verdict!r}")
+            print(f"    on          : {dataset_name}")
+            print(f"    claim       : {a.claim_type}  ({a.logic.get('raw_text','')[:44]}...)")
+            print(f"    native type : {a.history[0].native_type}   <- lossy projection")
+            print(f"    reviewer    : {a.history[0].reviewer}")
+        print("\n  Two of these three could not reach the catalog at all before Option A.\n")
