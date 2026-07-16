@@ -8,6 +8,8 @@ from the two endpoints that are not simply "here is the run".
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from attest.record import AuditRecord
@@ -195,6 +197,139 @@ class ApprovalResponse(BaseModel):
 
     audit: AuditRecord
     writebacks: tuple[WriteBackView, ...] = ()
+
+
+class VerdictEventView(BaseModel):
+    """One verdict a claim has had, at one point in time. Read from DataHub.
+
+    The history is real history: `assertionRunEvent` is a timeseries aspect, so re-auditing
+    a claim APPENDS rather than overwrites. A Supported that later became Contradicted has
+    both, in order, with who signed each one off — which is what a last-write-wins field
+    could never hold, and the reason "was this ever contradicted before someone fixed the
+    tag" is answerable from the catalog alone.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    at: datetime = Field(description="When the audit that reached this verdict ran.")
+    verdict: str = Field(
+        description="The verdict, VERBATIM as stored on the run event "
+        "(`attest.verdict`). Never inferred from DataHub's SUCCESS/FAILURE/ERROR rollup — "
+        "that projection is lossy, and an Insufficient-Coverage claim and a half-written "
+        "one land in the same bucket."
+    )
+    audit_run: str = ""
+    reviewer: str = ""
+    decision: str = ""
+    evidence: str = ""
+    native_type: str = Field(
+        default="",
+        description="DataHub's own result type. A LOSSY PROJECTION for its health rollup, "
+        "shown for transparency and read by nothing.",
+    )
+
+
+class ClaimView(BaseModel):
+    """One claim artifact, as the catalog holds it — plus whether Attest can vouch for it.
+
+    `state` is the load-bearing field. See `read_state` in retrieval.py: the claim comes
+    from DataHub, and the state comes from joining DataHub's answer with Attest's own
+    record of what it wrote. An absent verdict is not one fact.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    claim_urn: str = Field(
+        description="The artifact's URN. Content-addressed from the claim itself, so the "
+        "same claim re-audited lands here again and appends to the history below."
+    )
+    target_urn: str
+    claim_type: str
+    grain: str = Field(description="`table` or `column`.")
+    description: str
+    asserted: dict = Field(
+        default_factory=dict,
+        description="What the claim asserts, from the artifact's `logic` payload.",
+    )
+    verdict: str | None = Field(
+        default=None,
+        description="The LATEST verdict, or null when the catalog holds none. Null is not "
+        "a verdict and must not be read as one — check `state` to find out why it is null.",
+    )
+    state: str = Field(
+        description="complete | pending-lag | incomplete | unknown. `complete`: the "
+        "catalog holds the verdict. `pending-lag`: Attest's record says the write landed "
+        "and DataHub's index has not caught up (transient, ~2s measured; nothing to "
+        "repair). `incomplete`: Attest's record says the write FAILED at a step, so no "
+        "verdict is coming — repair with POST /audit/{run_id}/writeback. `unknown`: there "
+        "is no verdict and Attest's record cannot say whether one was attempted. "
+        "**`unknown` is not `incomplete`**: reading absence as an answer is the mistake "
+        "this whole product exists to catch."
+    )
+    failed_step: str | None = Field(
+        default=None,
+        description="Which write did not land — `upsert`, `report`, or `tag` — when "
+        "`state` is `incomplete`. This is what distinguishes a repairable claim from one "
+        "that is merely waiting on an index, and it comes from Attest's store, not from "
+        "DataHub, which cannot know it.",
+    )
+    audit_run: str = Field(
+        default="",
+        description="The run whose write-back produced this artifact's latest state, when "
+        "Attest's store knows it. What POST /audit/{run_id}/writeback needs to repair it.",
+    )
+    tags: tuple[str, ...] = ()
+    history: tuple[VerdictEventView, ...] = Field(
+        default=(),
+        description="Every verdict this claim has ever had, newest first. Append-only.",
+    )
+
+
+class RetrievalView(BaseModel):
+    """WHERE each predicate was applied: DataHub's index, or Attest, afterwards.
+
+    **This is part of the answer, not diagnostics.** The thesis is that claim artifacts are
+    RETRIEVABLE FROM DATAHUB, which is true. That they are FULLY QUERYABLE IN DATAHUB would
+    be false: the two server-side entry points are disjoint — `dataset.assertions` scopes to
+    a dataset but filters nothing, and search filters `customType` and `tags` but cannot
+    scope to a dataset at all (measured: nine candidate field names, all zero). `reviewer`
+    and `since` cannot be pushed down at either, because an assertion indexes nothing else.
+
+    So: DataHub does the scoping; Attest does most of the filtering. A response that hid
+    that would let a reader believe the catalog answered a question Attest answered — an
+    unfounded claim about where the evidence came from, published by the tool built to
+    catch exactly that.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    entry_point: str = Field(
+        description="The DataHub query used: `dataset.assertions` or `searchAcrossEntities`."
+    )
+    pushed_down: tuple[str, ...] = Field(
+        default=(), description="Predicates DataHub's index applied."
+    )
+    filtered_locally: tuple[str, ...] = Field(
+        default=(),
+        description="Predicates ATTEST applied, over the response DataHub returned. Not a "
+        "scan and not N+1: run events come back inline, so this is a filter over one "
+        "already-narrowed page.",
+    )
+    considered: int = Field(
+        default=0,
+        description="How many artifacts the catalog returned before Attest filtered them. "
+        "`considered` minus the number returned is what the local half cost.",
+    )
+    note: str = ""
+
+
+class ClaimsResponse(BaseModel):
+    """Claim artifacts from the catalog, and an honest account of how they were found."""
+
+    model_config = ConfigDict(frozen=True)
+
+    claims: tuple[ClaimView, ...] = ()
+    retrieval: RetrievalView
 
 
 class HealthResponse(BaseModel):

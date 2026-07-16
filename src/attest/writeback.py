@@ -623,7 +623,7 @@ class ClaimArtifact:
         return self.history[0].verdict if self.history else None
 
 
-def _artifact_from_graphql(node: Mapping[str, Any]) -> ClaimArtifact:
+def artifact_from_graphql(node: Mapping[str, Any]) -> ClaimArtifact:
     info = node.get("info") or {}
     custom = info.get("customAssertion") or {}
     try:
@@ -673,7 +673,7 @@ def read_claim_artifact(client: DataHubClient, urn: str) -> ClaimArtifact | None
     node = client.get_assertion(urn)
     if not node:
         return None
-    return _artifact_from_graphql(node)
+    return artifact_from_graphql(node)
 
 
 def read_dataset_claims(client: DataHubClient, dataset_urn: str) -> tuple[ClaimArtifact, ...]:
@@ -684,7 +684,7 @@ def read_dataset_claims(client: DataHubClient, dataset_urn: str) -> tuple[ClaimA
     with no Attest process running and no access to Attest's store.
     """
     return tuple(
-        _artifact_from_graphql(node)
+        artifact_from_graphql(node)
         for node in client.list_dataset_assertions(dataset_urn)
         if (
             (node.get("info") or {}).get("customAssertion") or {}

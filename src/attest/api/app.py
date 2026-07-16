@@ -1,11 +1,26 @@
 """Attest as a service.
 
-    POST /audit               submit an agent's output; get a report back
-    GET  /audit/{run_id}      retrieve a stored report
-    POST /audit/{run_id}/approve   the human checkpoint: settle the proposed corrections
-    GET  /health              liveness
+    POST /audit                      submit an agent's output; get a report back
+    GET  /audit/{run_id}             retrieve a stored report
+    POST /audit/{run_id}/approve     the human checkpoint: settle the proposals
+    POST /audit/{run_id}/writeback   repair a partial catalog write. Approves nothing
+    GET  /claims                     claim artifacts, FROM DATAHUB. What a reader inherits
+    GET  /claims/{claim_urn}         one claim, with its whole verdict history
+    GET  /health                     liveness
 
-Four endpoints, and the interesting one is the third.
+**The two halves of the thesis are the approve endpoint and the claims endpoints.**
+`/audit/{id}/approve` is where a human publishes a verdict to the catalog; `/claims` is
+where anyone reads it back. Challenge 1's claim is "writes results back so the next person
+or agent inherits the knowledge", and inheriting means retrieving — an artifact nobody can
+query is only half of it.
+
+**`/claims` answers from DATAHUB, not from Attest's store.** That is deliberate and it is
+load-bearing: an endpoint that answered from SQLite would prove nothing about what a second
+agent inherits, because a second agent cannot open Attest's database. The store is consulted
+for exactly one thing — explaining an absent verdict, which the catalog cannot do — and it
+can never add a claim, remove one, or change a verdict. See retrieval.py.
+
+The interesting one is still the approve.
 
 **The checkpoint does not soften at the API layer.** `POST /audit` returns a report whose
 proposed corrections are PENDING, and they stay PENDING until a person names them in an
@@ -27,11 +42,12 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.staticfiles import StaticFiles
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -40,12 +56,17 @@ from attest.api.schemas import (
     ApprovalRequest,
     ApprovalResponse,
     AuditRequest,
+    ClaimsResponse,
+    ClaimView,
     HealthResponse,
+    RetrievalView,
+    VerdictEventView,
     WriteBackResponse,
     WriteBackView,
 )
 from attest.api.service import (
     AuditService,
+    ClaimNotFound,
     NotResumable,
     RunNotFound,
     TargetNotCovered,
@@ -55,6 +76,7 @@ from attest.config import settings
 from attest.datahub import DataHubClient
 from attest.graph import Pipeline
 from attest.record import AuditRecord
+from attest.retrieval import ClaimQuery, RetrievedClaim
 from attest.store import AuditStore
 
 log = logging.getLogger(__name__)
@@ -220,6 +242,128 @@ def retry_writeback(run_id: str, service: Service) -> WriteBackResponse:
         # exactly where that gate would quietly be re-opened.
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     return WriteBackResponse(run_id=run_id, writebacks=_views(results))
+
+
+@app.get("/claims", response_model=ClaimsResponse)
+def list_claims(
+    service: Service,
+    target_urn: Annotated[str, Query(
+        description="Scope to one dataset. PUSHED DOWN to DataHub "
+        "(`dataset.assertions`) — and when you name one, it is the ONLY predicate that "
+        "can be: that entry point filters nothing, and search cannot scope to a dataset "
+        "at all. This is the thesis query: what the next agent inherits about a dataset.",
+    )] = "",
+    verdict: Annotated[str, Query(
+        description="Latest verdict: Supported | Contradicted | Insufficient-Coverage. "
+        "Pushed down as a TAG when no `target_urn` is given, otherwise applied by Attest.",
+    )] = "",
+    claim_type: Annotated[str, Query(
+        description="freshness | ownership | classification | schema. Pushed down as "
+        "`customType` when no `target_urn` is given, otherwise applied by Attest.",
+    )] = "",
+    reviewer: Annotated[str, Query(
+        description="Who signed a verdict off. ALWAYS applied by Attest: an assertion "
+        "indexes only `customType` and `tags`, so there is no filter to push this into. "
+        "Matches a claim ANY of whose verdicts this person signed, not just the latest.",
+    )] = "",
+    since: Annotated[datetime | None, Query(
+        description="Claims with a verdict at or after this time. ALWAYS applied by "
+        "Attest, for the same reason as `reviewer`.",
+    )] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> ClaimsResponse:
+    """Claim artifacts, READ FROM DATAHUB. What the next agent inherits.
+
+    **This answers from the catalog, never from Attest's store**, and that is the whole
+    point rather than an implementation detail: an API that answered from SQLite would
+    prove nothing about what a second agent can retrieve. The store is consulted for
+    exactly one thing — explaining why a verdict is absent — and it cannot add, remove, or
+    change one.
+
+    **Read `retrieval` in the response.** It says which predicates DataHub's index applied
+    and which Attest applied over the response. The honest line is *DataHub does the
+    scoping; Attest does most of the filtering*, and the response says so on every call
+    rather than letting a reader assume the catalog answered the whole question.
+
+    Every claim carries a `state`, and it is not decoration: an absent verdict means three
+    different things (`pending-lag`, `incomplete`, `unknown`) with three different
+    responses, and only one of them is a bug.
+    """
+    page = service.claims(
+        ClaimQuery(
+            target_urn=target_urn,
+            verdict=verdict,
+            claim_type=claim_type,
+            reviewer=reviewer,
+            since=since,
+        ),
+        limit=limit,
+    )
+    return ClaimsResponse(
+        claims=tuple(_claim_view(c) for c in page.claims),
+        retrieval=RetrievalView(
+            entry_point=page.retrieval.entry_point,
+            pushed_down=page.retrieval.pushed_down,
+            filtered_locally=page.retrieval.filtered_locally,
+            considered=page.retrieval.considered,
+            note=page.retrieval.note,
+        ),
+    )
+
+
+@app.get("/claims/{claim_urn:path}", response_model=ClaimView)
+def get_claim(claim_urn: str, service: Service) -> ClaimView:
+    """One claim artifact and its whole verdict history, from DataHub.
+
+    The history is append-only and it is real: `assertionRunEvent` is a timeseries aspect,
+    so a claim that was Supported in March and Contradicted in July carries both, each with
+    the run that reached it and the human who signed it off. That is the question CLAUDE.md
+    named as unanswerable from a last-write-wins field — *"was this ever contradicted before
+    someone fixed the tag"* — answered from the catalog alone.
+
+    `{claim_urn:path}` because an assertion URN is not path-safe: it contains colons, and a
+    dataset URN inside it contains commas and parentheses. `:path` takes the rest of the
+    path verbatim rather than making every caller double-encode it.
+    """
+    try:
+        return _claim_view(service.claim(claim_urn))
+    except ClaimNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+
+
+def _claim_view(claim: RetrievedClaim) -> ClaimView:
+    """One retrieved claim, as the wire type.
+
+    `failed_step` and `audit_run` come off the STORE's record (`wrote`), not off the
+    artifact: DataHub cannot know which step of Attest's write failed, and pretending the
+    catalog told us would misattribute the one field that makes `incomplete` actionable.
+    """
+    a = claim.artifact
+    return ClaimView(
+        claim_urn=a.claim_urn,
+        target_urn=a.target_urn,
+        claim_type=a.claim_type,
+        grain=a.grain,
+        description=a.description,
+        asserted=a.logic.get("asserted") or {},
+        verdict=a.verdict,
+        state=claim.state.value,
+        failed_step=claim.wrote.failed_step if claim.wrote else None,
+        audit_run=claim.wrote.run_id if claim.wrote else "",
+        tags=a.tags,
+        history=tuple(
+            VerdictEventView(
+                at=datetime.fromtimestamp(e.at / 1000, tz=UTC),
+                verdict=e.verdict,
+                audit_run=e.audit_run,
+                reviewer=e.reviewer,
+                decision=e.decision,
+                evidence=e.evidence,
+                native_type=e.native_type,
+            )
+            for e in a.history
+        ),
+    )
 
 
 def _views(results) -> tuple[WriteBackView, ...]:
