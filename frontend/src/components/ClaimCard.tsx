@@ -6,20 +6,27 @@ import { datahubDatasetUrl } from '../api/types';
 import VerdictBadge from './VerdictBadge';
 import EvidencePanel from './EvidencePanel';
 import CorrectionPanel from './CorrectionPanel';
+import PublicationPanel from './PublicationPanel';
 
 export default function ClaimCard({
   claim,
   index,
   reviewable,
-  decision,
-  onDecide,
+  publish,
+  onPublish,
+  acceptCorrection,
+  onAcceptCorrection,
   writeback,
 }: {
   claim: ClaimRecord;
   index: number;
   reviewable: boolean;
-  decision: boolean | undefined;
-  onDecide: (accept: boolean) => void;
+  // TWO decisions, deliberately kept apart all the way down: publishing a verdict is not
+  // accepting a correction. See PublicationPanel.
+  publish: boolean | undefined;
+  onPublish: (publish: boolean) => void;
+  acceptCorrection: boolean | undefined;
+  onAcceptCorrection: (accept: boolean) => void;
   writeback: WriteBackView | null;
 }) {
   const [expanded, setExpanded] = useState(reviewable);
@@ -108,12 +115,23 @@ export default function ClaimCard({
               </div>
               <EvidencePanel evidence={claim.evidence} claimType={claim.claim_type} />
 
-              {/* Correction loop outcome + the live human checkpoint */}
+              {/* The correction loop's outcome, and the decision on the REVISION. Rendered
+                  first because it is context for the publication decision below: whether the
+                  agent fixed its claim is something a reviewer wants to know before deciding
+                  to publish the verdict against it. */}
               <CorrectionPanel
                 claim={claim}
                 reviewable={reviewable}
-                decision={decision}
-                onDecide={onDecide}
+                decision={acceptCorrection}
+                onDecide={onAcceptCorrection}
+              />
+
+              {/* The publication act. EVERY claim has one, whatever its verdict. */}
+              <PublicationPanel
+                claim={claim}
+                reviewable={reviewable}
+                publish={publish}
+                onPublish={onPublish}
                 writeback={writeback}
               />
             </div>

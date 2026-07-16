@@ -1,16 +1,21 @@
 import { motion, AnimatePresence } from 'framer-motion';
-import { GitBranch, ShieldAlert, ShieldCheck, ExternalLink, XCircle, Check } from 'lucide-react';
-import type { ClaimRecord, CorrectionOutcome, WriteBackView } from '../api/types';
+import { GitBranch, ShieldAlert, ShieldCheck, Check } from 'lucide-react';
+import type { ClaimRecord, CorrectionOutcome } from '../api/types';
 
-// Phase 4: the correction loop's outcome AND the real human checkpoint. `outcome` is one of
-// six names, not a boolean. Only `corrected` (a revision that re-verified clean against the
-// same snapshot) is a proposal a human can accept; the rest are honest dead-ends shown as
-// what they are, never as corrections.
+// The correction loop's outcome, and the decision on the REVISION it proposed. `outcome` is
+// one of six names, not a boolean. Only `corrected` (a revision that re-verified clean
+// against the same snapshot) is a proposal a human can accept; the rest are honest
+// dead-ends, shown as what they are and never as corrections.
 //
-// Approve/reject is the REAL durable flow: the decision is collected here, submitted to
-// POST /audit/{run_id}/approve (App), which resumes the parked graph through the
-// human_checkpoint node and, on accept, writes the verdict back to DataHub. The write-back
-// result is reported truthfully — a write that failed says so while the decision still stands.
+// THIS PANEL NO LONGER PUBLISHES ANYTHING, and that is the Option A separation arriving in
+// the UI. Accepting a correction and publishing a verdict are different decisions about
+// different things, and a person can hold them independently: "your claim was wrong —
+// publish that — and the fix you proposed is also wrong — reject that." One button could
+// not say it, and while it was one button the only verdict that ever reached the catalog
+// was a contradiction the agent had successfully corrected. See PublicationPanel.
+//
+// Note what accepting does NOT do: it never rewrites the original verdict. The agent was
+// wrong, and later saying something true does not unsay it.
 
 const OUTCOME: Record<
   CorrectionOutcome,
@@ -36,22 +41,16 @@ const OUTCOME: Record<
   'not-attempted': { label: '', blurb: '', tone: 'none' },
 };
 
-function datahubUrl(urn: string): string {
-  return `http://localhost:9002/dataset/${encodeURIComponent(urn)}`;
-}
-
 export default function CorrectionPanel({
   claim,
   reviewable,
   decision,
   onDecide,
-  writeback,
 }: {
   claim: ClaimRecord;
   reviewable: boolean;
   decision: boolean | undefined;
   onDecide: (accept: boolean) => void;
-  writeback: WriteBackView | null;
 }) {
   const meta = OUTCOME[claim.correction.outcome];
   if (meta.tone === 'none') return null;
@@ -60,6 +59,10 @@ export default function CorrectionPanel({
   const revisedText = typeof proposal?.raw_text === 'string' ? proposal.raw_text : null;
   const isProposal = meta.tone === 'proposal';
   const review = claim.correction.review;
+  // Only a `corrected` outcome is decidable. A stood-firm or refused claim is shown for what
+  // it is and has no control — there is nothing to accept, and offering one would imply the
+  // agent had proposed something.
+  const decidable = reviewable && isProposal;
 
   return (
     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="overflow-hidden">
@@ -103,11 +106,12 @@ export default function CorrectionPanel({
           </div>
         )}
 
-        {/* The live human checkpoint — only while the run is parked and this is a pending proposal. */}
-        {reviewable && (
+        {/* The live checkpoint — only while the run is parked and this is a pending proposal. */}
+        {decidable && (
           <div className="pl-8 pt-1">
             <div className="text-xs text-ink-300 mb-3 italic">
-              A human decides before anything is written back. Approving writes the verdict to DataHub.
+              Accepting records that the revision is sound. It does not publish anything, and
+              it does not unsay the original verdict — that claim was still wrong.
             </div>
             {/* The selected choice fills SOLID and shifts its label; the unpicked one dims.
                 Both stay clickable so the decision is reversible before Submit — clicking the
@@ -125,7 +129,7 @@ export default function CorrectionPanel({
                 }`}
               >
                 {decision === true ? <Check size={15} strokeWidth={3} /> : <ShieldCheck size={14} />}
-                {decision === true ? 'Approved' : 'Approve write-back'}
+                {decision === true ? 'Accepted' : 'Accept correction'}
               </button>
               <button
                 onClick={() => onDecide(false)}
@@ -145,43 +149,23 @@ export default function CorrectionPanel({
           </div>
         )}
 
-        {/* The settled result — after the run is resumed and the catalog write attempted. */}
+        {/* The settled decision on the REVISION. What reached the catalog is the
+            PublicationPanel's business — a correction's fate and a verdict's are two facts,
+            and reporting one as the other is what conflated them in the first place. */}
         <AnimatePresence>
           {review === 'accepted' && (
             <motion.div key="accepted" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="pl-8">
-              {writeback && !writeback.ok ? (
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-contradicted/10 border border-contradicted/25">
-                  <XCircle size={18} className="text-contradicted shrink-0" />
-                  <div className="flex-1">
-                    <div className="text-sm text-contradicted font-medium">
-                      Approved, but the catalog write failed
-                    </div>
-                    <div className="text-xs text-ink-300">
-                      The decision stands; DataHub was not updated. {writeback.detail}
-                    </div>
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-supported/10 border border-supported/20">
+                <div className="flex items-center justify-center w-7 h-7 rounded-full bg-supported text-ink-950 shrink-0">
+                  <ShieldCheck size={15} strokeWidth={3} />
+                </div>
+                <div className="flex-1">
+                  <div className="text-sm text-supported font-medium">Correction accepted</div>
+                  <div className="text-xs text-ink-300">
+                    A human agreed the revision is sound. The original verdict still stands.
                   </div>
                 </div>
-              ) : (
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-supported/10 border border-supported/20">
-                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-supported text-ink-950 shrink-0">
-                    <ShieldCheck size={15} strokeWidth={3} />
-                  </div>
-                  <div className="flex-1">
-                    <div className="text-sm text-supported font-medium">Verdict written to catalog</div>
-                    <div className="text-xs text-ink-300 break-words">
-                      {claim.verdict} persisted to {claim.target_urn}
-                    </div>
-                  </div>
-                  <a
-                    href={datahubUrl(claim.target_urn)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-xs text-accent-400 hover:text-accent transition-colors font-medium shrink-0"
-                  >
-                    View in DataHub <ExternalLink size={12} />
-                  </a>
-                </div>
-              )}
+              </div>
             </motion.div>
           )}
           {review === 'rejected' && (
@@ -191,8 +175,10 @@ export default function CorrectionPanel({
                   <ShieldAlert size={15} />
                 </div>
                 <div className="flex-1">
-                  <div className="text-sm text-ink-100 font-medium">Write-back rejected</div>
-                  <div className="text-xs text-ink-400">No changes were written to the catalog.</div>
+                  <div className="text-sm text-ink-100 font-medium">Correction rejected</div>
+                  <div className="text-xs text-ink-400">
+                    A human looked and did not agree the revision is sound.
+                  </div>
                 </div>
               </div>
             </motion.div>

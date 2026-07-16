@@ -12,7 +12,32 @@ export type Verdict = 'Supported' | 'Contradicted' | 'Insufficient-Coverage';
 
 export type ClaimType = 'freshness' | 'ownership' | 'classification' | 'schema';
 
-export type RunStatus = 'complete' | 'awaiting-review';
+// `flagged` is a TERMINAL, UN-APPROVABLE state, not a warning: the run violated one of its
+// own trajectory invariants (a checker spent tokens, an explanation skipped the guard), so
+// `service.approve` refuses it with a 409 and nothing it produced may reach the catalog.
+// It was missing here, so the UI rendered a flagged run as though it were merely parked and
+// offered a Submit that could only ever 409.
+export type RunStatus = 'complete' | 'awaiting-review' | 'flagged';
+
+// Whether a human has cleared a claim's VERDICT for the catalog (report.PublicationStatus).
+// SEPARATE from a correction's review, and that separation is the whole Option A decision:
+// publishing a verdict is not accepting a correction, and fusing them kept every Supported,
+// Insufficient-Coverage, and STOOD_FIRM verdict out of DataHub entirely.
+export type PublicationStatus = 'pending' | 'published' | 'withheld';
+
+// How a claim artifact's verdict reads in the catalog RIGHT NOW (retrieval.ReadState).
+// Four states because an absent verdict is not one fact:
+//   complete     the catalog holds the verdict
+//   pending-lag  the write LANDED and DataHub's index has not shown it yet. Transient
+//                (~2s, measured). NOTHING TO REPAIR — never offer a retry for this
+//   incomplete   the write FAILED at a step. No verdict is coming. Repairable
+//   unknown      no verdict, and Attest's record cannot say whether one was attempted.
+//                NOT a synonym for incomplete — treating it as one is reading absence as
+//                an answer, which is the mistake this whole product exists to catch
+export type ReadState = 'complete' | 'pending-lag' | 'incomplete' | 'unknown';
+
+/** Which of the three catalog writes did not land. `null` when they all did. */
+export type WriteStep = 'upsert' | 'report' | 'tag';
 
 export type ExplanationSource = 'model' | 'template';
 
@@ -75,6 +100,15 @@ export interface CorrectionView {
   attempts: AttemptView[];
 }
 
+/** Whether a human cleared this claim's VERDICT for the catalog. Distinct from the
+ *  correction's review — see PublicationStatus. Every audited claim has one of these,
+ *  whatever its verdict: a verdict Attest never records is indistinguishable from a claim
+ *  Attest never checked, which is the ambiguity the whole product exists to refuse. */
+export interface PublicationView {
+  status: PublicationStatus;
+  reviewer: string;
+}
+
 /** One audited claim: what was said, what the catalog said, and why. */
 export interface ClaimRecord {
   index: number;
@@ -95,6 +129,7 @@ export interface ClaimRecord {
   rejected: string[];
 
   correction: CorrectionView;
+  publication: PublicationView;
 }
 
 /** A claim that could not be checked at all (e.g. entity-not-found). NOT a verdict. */
@@ -154,20 +189,110 @@ export interface AuditRecord {
   injection_findings: FindingView[];
 }
 
-/** POST /audit/{run_id}/approve — one human decision on one proposed correction. */
+/** POST /audit/{run_id}/approve — one human's call on one audited claim.
+ *
+ *  TWO SEPARATE FIELDS, and this mirror carried a single `accept: boolean` for a full
+ *  session after the backend split them — which the backend REFUSES (`extra="forbid"`), so
+ *  every approve the UI sent came back 422. They are different decisions about different
+ *  things: "your claim was wrong (publish that), and the fix you proposed is also wrong
+ *  (reject that)" is a position a human can hold, and one boolean could not say it.
+ *
+ *  Both are optional. `undefined` is "no opinion", which is NOT "no": an unnamed claim
+ *  stays pending and the run stays parked, decidable later. */
 export interface DecisionRequest {
   claim_index: number;
-  accept: boolean;
+  /** True publishes this claim's VERDICT to the catalog as a claim artifact; false
+   *  withholds it. Every audited claim needs one, whatever its verdict. */
+  publish?: boolean;
+  /** True accepts the revision the agent proposed for a Contradicted claim. Only
+   *  meaningful where there is a proposal. Does NOT publish anything. */
+  accept_correction?: boolean;
   reviewer?: string;
   note?: string;
 }
 
-/** What the catalog did with an accepted verdict. Reported separately: a write can fail
- *  independently while the human decision still stands. */
+/** What the catalog did with a published verdict. Reported separately from the decision: a
+ *  write can fail independently while the human decision still stands. */
 export interface WriteBackView {
   target_urn: string;
   ok: boolean;
   detail: string;
+  /** The claim artifact's URN. Content-addressed, so it names the same artifact every time. */
+  claim_urn: string;
+  /** WHICH of the three writes did not land. "It failed" is not actionable: a failed
+   *  `report` left a claim with no verdict, while a failed `tag` left a verdict that is
+   *  entirely correct and merely not findable by search yet. */
+  failed_step: WriteStep | null;
+}
+
+/** Response of POST /audit/{run_id}/writeback — the repair path. Approves nothing. */
+export interface WriteBackResponse {
+  run_id: string;
+  writebacks: WriteBackView[];
+}
+
+// --- GET /claims — what a reader inherits from the catalog -------------------
+
+/** One verdict a claim has had, at one point in time. Append-only: re-auditing a claim
+ *  ADDS an event rather than replacing one, so a Supported that later became Contradicted
+ *  carries both, in order, with who signed each off. */
+export interface VerdictEventView {
+  at: string;
+  verdict: Verdict;
+  audit_run: string;
+  reviewer: string;
+  decision: string;
+  evidence: string;
+  /** DataHub's own SUCCESS/FAILURE/ERROR. A LOSSY projection for its health rollup —
+   *  shown for transparency and read by nothing. The verdict above is authoritative. */
+  native_type: string;
+}
+
+/** One claim artifact as the CATALOG holds it, plus whether Attest can vouch for it. */
+export interface ClaimView {
+  claim_urn: string;
+  target_urn: string;
+  claim_type: ClaimType;
+  grain: 'table' | 'column';
+  description: string;
+  asserted: Record<string, unknown>;
+  /** The LATEST verdict, or null when the catalog holds none. Null is NOT a verdict —
+   *  read `state` to find out why it is null. */
+  verdict: Verdict | null;
+  state: ReadState;
+  /** Which write failed, when `state` is `incomplete`. From Attest's store: DataHub
+   *  cannot know it. This is what makes incomplete actionable and pending-lag not. */
+  failed_step: WriteStep | null;
+  /** The run to hand POST /audit/{run_id}/writeback to repair this claim. */
+  audit_run: string;
+  tags: string[];
+  history: VerdictEventView[];
+}
+
+/** WHERE each predicate was applied. Part of the answer, not diagnostics: "retrievable
+ *  from DataHub" is true, "fully queryable in DataHub" is not, and a UI that hid the
+ *  difference would let a reader believe the catalog answered what Attest answered. */
+export interface RetrievalView {
+  entry_point: string;
+  pushed_down: string[];
+  filtered_locally: string[];
+  considered: number;
+  note: string;
+}
+
+export interface ClaimsResponse {
+  claims: ClaimView[];
+  retrieval: RetrievalView;
+}
+
+/** The filters GET /claims takes. `target_urn` is pushed down to DataHub; with it named,
+ *  it is the ONLY one that can be. */
+export interface ClaimFilters {
+  target_urn?: string;
+  verdict?: Verdict | '';
+  claim_type?: ClaimType | '';
+  reviewer?: string;
+  since?: string;
 }
 
 /** The settled run plus what reached DataHub. Response of the approve endpoint. */
@@ -192,11 +317,31 @@ export const VERDICT_KEY: Record<Verdict, 'supported' | 'contradicted' | 'insuff
   'Insufficient-Coverage': 'insufficient',
 };
 
-/** Corrections that re-verified clean and are waiting on a human (record.proposals). */
+/** Corrections that re-verified clean and are waiting on a human (record.proposals).
+ *
+ *  NOT the same as what a run is parked on — see `awaitingPublication`. A claim can have no
+ *  proposal at all and still be holding the run open, because publishing a verdict is its
+ *  own act. */
 export function proposals(record: AuditRecord): ClaimRecord[] {
   return record.claims.filter(
     (c) => c.correction.outcome === 'corrected' && c.correction.review === 'pending',
   );
+}
+
+/** EVERY claim whose verdict is still waiting on a human. THIS is what parks the run.
+ *
+ *  The UI used to count `proposals` instead, which was right until Option A and wrong
+ *  after it: the checkpoint parks while ANY claim's publication is pending, and only a
+ *  correction ever produced a proposal. So a four-claim run with one proposal had one
+ *  decision submitted, re-parked on the other three, and could never reach `complete` —
+ *  the UI reported it as settled and the run stayed open forever.
+ *
+ *  It is every claim on purpose. Supported and Insufficient-Coverage are findings a catalog
+ *  needs too: a dataset with no Attest verdict is otherwise ambiguous between "we checked
+ *  and it was fine" and "nobody ever looked", which is precisely the ambiguity this product
+ *  exists to refuse. */
+export function awaitingPublication(record: AuditRecord): ClaimRecord[] {
+  return record.claims.filter((c) => c.publication.status === 'pending');
 }
 
 export function verdictCounts(record: AuditRecord): Record<Verdict, number> {
