@@ -229,9 +229,50 @@ checkpoint does not soften because there is now an HTTP surface.**
   exactly one place: the approval path. `POST /audit` changes nothing in the catalog, ever,
   and `tests/test_api.py` asserts it. There is no `?auto_approve=true` and no "approve all";
   an HTTP surface is exactly where that would have been traded away for convenience.
+- **The CHECKPOINT IS A LOOP, and PENDING has to stay reachable (Session 14).** The only
+  edge out of `human_checkpoint` is the one that finds nothing pending; anything still
+  PENDING routes straight back to it, where `interrupt_before` parks the run again. It used
+  to be an unconditional edge to ASSEMBLE, so a partial approval — or an empty one, which
+  the API explicitly documents as legal — settled the run COMPLETE and the service then
+  deleted its checkpoint. The unnamed proposals stayed PENDING exactly as promised and
+  became **permanently un-decidable**: a COMPLETE run is not resumable, so the next approval
+  was a 409. "Nothing is accepted by default" is only an accountability guarantee for as
+  long as accepting it LATER is still possible. The frontend hid this by requiring every
+  proposal decided before submit; the public API contract was broken regardless.
+  `test_api.py` decides one of two proposals and asserts the run is still parked, still
+  AWAITING_REVIEW in the store, and finishable by a second call.
+- **A decision writes back only what THAT decision settled.** Re-deciding became reachable
+  the moment runs started re-parking, so `approve` intersects the accepted indices with what
+  was still `awaits_human` in the record **as it stood before the resume**. The checkpoint
+  node already skips an already-reviewed proposal (a correction is settled once); the
+  write-back mirrors that rule rather than re-deriving it, or naming an already-accepted
+  claim would replay its catalog write on every later call.
+- **The decision log is keyed by CLAIM INDEX, not by target URN.** Two accepted claims can
+  name one dataset. Keyed by URN, every decision about that dataset inherited the last
+  write's result — so a REJECTED decision was recorded as having been written to the
+  catalog. A false entry in the append-only record of who decided what, inside the store
+  that exists *because* DataHub cannot hold this history.
 - **A failed write-back is reported as failed.** The approval still stands — a human did
   decide — but the catalog does not know, and the store records which. A silent failure
   would leave DataHub disagreeing with the audit history and nobody any the wiser.
+- **`target_urns` is a PRECONDITION and it is now enforced in BOTH halves (Session 14).** It
+  was validated and then dropped by the route: the caller supplied a constraint that did
+  nothing. It is honored rather than deleted, because a working precondition is worth more
+  than a field that lies, and the enforcement is two-sided by necessity. Half is knowable at
+  request time (the URN must appear verbatim in `agent_output`, or no claim could be about
+  it — schemas.py). The other half is only knowable after the decomposer runs: a claim must
+  actually have been extracted for each declared URN (`service._require_coverage`). Both
+  answer to **422**. It is still **never a filter** — it can demand more coverage, never
+  less; letting a caller narrow an audit would let them hide a claim from the auditor.
+- **The refused audit is STILL RUN AND STILL STORED, and the 422 names it.** The run read
+  the catalog, spent tokens and reached verdicts; the caller's precondition failing is a
+  fact about that run, not grounds to pretend it never happened. The error carries
+  `GET /audit/{run_id}` and `test_api.py` follows it and asserts the evidence is there.
+- **A claim that came back as a `ClaimError` COUNTS as covered.** The precondition is about
+  coverage, not verdicts, and an unresolvable URN is a loud outcome sitting in `errors`.
+  The silent case — no claim extracted at all — is the one worth refusing, because it is
+  the one nobody sees. (This is the same instinct as the benchmark's first real bug: a
+  claim the decomposer quietly dropped.)
 *(Session 4 serialized audits behind a lock and 409'd a run parked by a dead process. Both
 were resolved in Session 5 — see §2d, which supersedes them.)*
 
