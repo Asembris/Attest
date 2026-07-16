@@ -446,8 +446,129 @@ def prove_verdicts_and_history(probe: Probe, a_urn: str, b_urn: str) -> None:
         raise ProbeFailure("The history / three-verdict properties did not hold.")
 
 
+def prove_writeback_is_idempotent(probe: Probe) -> None:
+    """THE PROOF THE RETRY DESIGN RESTS ON. If this fails, the plan needs a saga.
+
+    The claim-artifact write is necessarily THREE operations (upsert, report, tag) where
+    the old write-back was one atomic mutation, so a partial failure is reachable. The
+    question is whether recovering from one needs compensating transactions and an outbox
+    — or whether re-running the same three calls is simply safe.
+
+    It is safe, and the reason is that a timeseries row is keyed by
+    (urn, aspect, timestampMillis). Report the SAME event at the SAME timestamp twice and
+    the second overwrites the first rather than appending a duplicate. So all three
+    operations are idempotent: upsert by definition, tag by set semantics, report by key.
+
+    WHICH MAKES ONE RULE LOAD-BEARING: `timestampMillis` MUST come from the run's stored
+    `created_at`, NEVER from `now()`. With `now()` every retry mints a NEW key, appends a
+    duplicate run event, and corrupts the append-only history — a retry inventing an audit
+    that never happened, in the log that exists to say what did. Same shape as the
+    None-is-not-zero receipt bug: the wrong default is invisible until the replay path runs.
+    """
+    header(5, "IDEMPOTENCE — is a partial write re-runnable, or does it need a saga?")
+
+    urn = "urn:li:assertion:attest-probe-idempotence"
+    probe.write_claim(urn, description="probe: idempotence", payload={"grain": "table"})
+    # Get past the index lag once, so the loop below measures idempotence and nothing else.
+    probe.try_report(urn, "INIT")
+
+    fixed_ts = 1_784_100_000_000  # deterministic: stands in for run.created_at
+    for attempt in (1, 2, 3):
+        probe.client.execute(
+            probe.REPORT,
+            {"urn": urn, "result": {
+                "timestampMillis": fixed_ts, "type": "FAILURE",
+                "properties": [{"key": "attest.verdict", "value": "Contradicted"},
+                               {"key": "attempt", "value": str(attempt)}]}},
+        )
+    print(f"  reported the SAME verdict at the SAME timestamp ({fixed_ts}) three times")
+
+    time.sleep(6)
+    got = probe.read_claim(urn) or {}
+    at_ts = [ev for ev in ((got.get("runEvents") or {}).get("runEvents") or [])
+             if ev["timestampMillis"] == fixed_ts]
+    for ev in at_ts:
+        nr = {n["key"]: n["value"] for n in (ev["result"].get("nativeResults") or [])}
+        print(f"    -> {len(at_ts)} run event at that ts; attempt={nr.get('attempt')} "
+              f"verdict={nr.get('attest.verdict')}")
+    ok = check("3 identical reports collapse to ONE run event (retry is SAFE)", len(at_ts) == 1,
+               f"{len(at_ts)} events at ts")
+    print("\n  => upsert is idempotent, tag is set semantics, report is keyed by timestamp.")
+    print("     Re-running the whole write-back is a no-op on what already landed, so a")
+    print("     partial failure is repaired by REPEATING it. No saga, no outbox, no")
+    print("     compensation — PROVIDED the timestamp is the run's, never now().")
+    if not ok:
+        raise ProbeFailure(
+            "Reports at one timestamp did NOT collapse. Retry would duplicate history and "
+            "the plan's recovery story is invalid — it would need real transactional work."
+        )
+
+
+def prove_four_states_are_legible(probe: Probe) -> None:
+    """Can a reader tell the three verdicts AND a half-written claim apart, from DataHub?
+
+    Two questions at once, because they turn out to be the same question. The third verdict
+    is load-bearing (CLAUDE.md §3) so it has to survive the round trip LEGIBLY, not merely
+    land in a neutral bucket. And a partial write (upsert ok, report failed) must read as
+    INCOMPLETE rather than as a claim that silently has no verdict.
+
+    The trap this measures: Insufficient-Coverage and a half-written claim BOTH show
+    succeeded=0 failed=0. A reader that consults only DataHub's rollup counts cannot tell
+    "the catalog is silent about this claim" from "Attest never finished writing it" — two
+    completely different facts. `runEvents.total` separates them, and equivalently so does
+    the presence of `attest.verdict`.
+    """
+    header(6, "LEGIBILITY — the three verdicts, and a HALF-WRITTEN claim, told apart")
+
+    states = [
+        ("supported", "SUCCESS", "Supported"),
+        ("contradicted", "FAILURE", "Contradicted"),
+        ("insufficient", "ERROR", "Insufficient-Coverage"),
+    ]
+    urns = {}
+    for name, native, verdict in states:
+        u = f"urn:li:assertion:attest-probe-legible-{name}"
+        probe.write_claim(u, description=f"probe: {verdict}", payload={"grain": "table"})
+        probe.report_verdict(u, native, {"attest.verdict": verdict,
+                                         "attest.reviewer": "dana@example.com"})
+        urns[verdict] = u
+    # The half-written claim: the artifact exists, the verdict write never happened.
+    half = "urn:li:assertion:attest-probe-legible-halfwritten"
+    probe.write_claim(half, description="probe: HALF-WRITTEN (upsert ok, report never ran)",
+                      payload={"grain": "table"})
+    urns["<half-written>"] = half
+
+    time.sleep(6)
+    print(f"  {'state':22} {'total':>5} {'succ':>4} {'fail':>4}  {'native':8} attest.verdict")
+    print(f"  {'-' * 22} {'-' * 5} {'-' * 4} {'-' * 4}  {'-' * 8} {'-' * 22}")
+    ok = True
+    for label, u in urns.items():
+        got = probe.read_claim(u) or {}
+        re_ = got.get("runEvents") or {}
+        evs = re_.get("runEvents") or []
+        nr = {n["key"]: n["value"] for ev in evs for n in (ev["result"].get("nativeResults") or [])}
+        native = evs[0]["result"]["type"] if evs else "—"
+        verdict = nr.get("attest.verdict") or "<absent>"
+        print(f"  {label:22} {re_.get('total'):>5} {re_.get('succeeded'):>4} "
+              f"{re_.get('failed'):>4}  {native:8} {verdict}")
+        if label != "<half-written>":
+            ok &= verdict == label
+
+    ok &= check("each verdict reads back VERBATIM — the third survives legibly", ok)
+    half_read = probe.read_claim(half) or {}
+    half_total = (half_read.get("runEvents") or {}).get("total") or 0
+    ok &= check("a half-written claim reads as INCOMPLETE (total=0), not verdict-less",
+                half_total == 0)
+    print("\n  NOTE: Insufficient-Coverage and <half-written> BOTH show succeeded=0 failed=0.")
+    print("  The discriminator is runEvents.total (>=1 vs 0) — equivalently, whether")
+    print("  attest.verdict is present. A reader on the rollup counts alone confuses")
+    print("  'the catalog is silent' with 'Attest never finished'. They are not the same fact.")
+    if not ok:
+        raise ProbeFailure("The four states are not distinguishable from DataHub alone.")
+
+
 def prove_cross_dataset_query(probe: Probe, a_urn: str) -> None:
-    header(5, "QUERY — find claim artifacts across the catalog")
+    header(7, "QUERY — find claim artifacts across the catalog")
 
     deadline = time.monotonic() + INDEX_TIMEOUT_S
     hits: dict[str, Any] = {}
@@ -498,6 +619,28 @@ def prove_cross_dataset_query(probe: Probe, a_urn: str) -> None:
             total = -1
         print(f"    {field:12} -> total={total}{'   <-- NOT filterable' if total <= 0 else ''}")
 
+    # THE CONSTRAINT THAT SHAPES THE WHOLE RETRIEVAL PATH. Search cannot scope assertions to
+    # a dataset — every plausible field name for the assertee comes back empty while the
+    # baseline returns them all, so this is genuinely absent, not a name we failed to guess.
+    print("\n  Can search scope assertions to ONE dataset? (every candidate field name)")
+    scoped_by = []
+    for field in ("entityUrn", "asserteeUrn", "datasetUrn", "entity", "dataset",
+                  "entityUrn.keyword", "asserteeUrn.keyword", "assertee", "urn"):
+        try:
+            total = probe.search(field, PROBE_DATASET).get("total") or 0
+        except DataHubError:
+            total = -1
+        if total > 0:
+            scoped_by.append(field)
+        print(f"    {field:20} -> total={total}")
+    print(f"\n  baseline (customType, unscoped) -> total={hits.get('total')}")
+    check("NO server-side dataset scoping exists for assertions (a real constraint)",
+          not scoped_by, f"scoped by {scoped_by}" if scoped_by else "")
+    print("  => the two server-side entry points are DISJOINT and do not compose:")
+    print("       dataset.assertions(urn)  scopes to a dataset, cannot filter verdict/type")
+    print("       searchAcrossEntities     filters verdict/type, cannot scope to a dataset")
+    print("     Reviewer and time are never server-side. See docs/design/claim-artifact.md §5.")
+
     if not ok:
         raise ProbeFailure("Claim artifacts are not queryable across the catalog.")
 
@@ -519,7 +662,7 @@ def demonstrate_fieldpath_landmine(probe: Probe) -> None:
     demanded — and the raciness is itself the argument, since a field that usually works is
     a worse trap than one that never does.
     """
-    header(6, "LANDMINE 1 — `fieldPath` makes a claim artifact PERMANENTLY verdict-less")
+    header(8, "LANDMINE 1 — `fieldPath` makes a claim artifact PERMANENTLY verdict-less")
     print("  (OBSERVATIONAL — asserts nothing: the failure mode is index-timing dependent.")
     print("   That is the finding, not a flaw in the probe. See the docstring.)")
 
@@ -580,10 +723,12 @@ def main() -> int:
             prove_independent_readback(probe, a_urn, b_urn)
             prove_no_overwrite(probe, a_urn, b_urn)
             prove_verdicts_and_history(probe, a_urn, b_urn)
+            prove_writeback_is_idempotent(probe)
+            prove_four_states_are_legible(probe)
             prove_cross_dataset_query(probe, a_urn)
             demonstrate_fieldpath_landmine(probe)
 
-            header(7, "CLEANUP — leave the seeded catalog exactly as it was found")
+            header(9, "CLEANUP — leave the seeded catalog exactly as it was found")
             probe.cleanup()
             # The listing is served from the same eventually-consistent index the writes go
             # through, so a delete is not visible the instant it returns. Poll, or the spike
@@ -642,10 +787,26 @@ What the server actually does (measured, not read):
     4. reportAssertionResult reads an eventually-consistent index: called right after
        the upsert it fails with "not associated with any entity". Retry, do not trust.
 
+  RETRY IS SAFE, AND ONE RULE IS WHY
+    A timeseries row is keyed by (urn, aspect, timestampMillis). Three identical
+    reports at one timestamp collapse to ONE run event, so upsert/report/tag are
+    all idempotent and a partial write is repaired by REPEATING it. No saga.
+    PROVIDED timestampMillis is the run's stored created_at and NEVER now() —
+    with now(), every retry appends a duplicate and corrupts the history.
+
   CONSTRAINTS THE DESIGN MUST ABSORB
     - Only `customType` and `tags` are filterable on an assertion. entityUrn,
       fieldPath and description are NOT. Per-dataset listing goes through
       dataset.assertions, not through search.
+    - The two server-side entry points are DISJOINT: dataset.assertions scopes to a
+      dataset but cannot filter verdict/type; search filters verdict/type but cannot
+      scope to a dataset (measured: no assertee field name is indexed). Reviewer and
+      time are never server-side — but they come back INLINE, so filtering them is
+      client-side over an already-narrowed single response, not a scan and not N+1.
+    - Insufficient-Coverage and a HALF-WRITTEN claim both read succeeded=0 failed=0.
+      runEvents.total (or the presence of attest.verdict) is the discriminator. A
+      reader on the rollup counts alone confuses "the catalog is silent" with
+      "Attest never finished the write" — different facts, different fixes.
     - Assertions do NOT support structured properties, so the latest verdict is
       filterable only as a TAG.
     - AssertionResultType has 4 values and Attest has 3 verdicts, which do not line
