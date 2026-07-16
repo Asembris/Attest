@@ -63,7 +63,7 @@ from attest.config import settings
 from attest.datahub import DataHubClient, DataHubError
 from attest.graph import Pipeline
 from attest.record import AuditRecord
-from attest.report import Decision, ReviewStatus, RunStatus
+from attest.report import Decision, RunStatus
 from attest.store import AuditStore
 from attest.writeback import WriteResult
 
@@ -276,35 +276,40 @@ class AuditService:
             created_at=stored.created_at,
         )
 
-        # Write back ONLY what a human accepted, and only after they accepted it.
+        # Write back ONLY the verdicts a human PUBLISHED, and only after they published them.
+        #
+        # The gate is `publication`, not the correction (Session 15, Option A). It used to be
+        # `correction.awaits_human`, which meant the only verdict that ever reached the
+        # catalog was a contradiction the agent had successfully self-corrected — so a
+        # STOOD_FIRM contradiction, the most damning finding Attest can produce, was silently
+        # swallowed, and Supported and Insufficient-Coverage verdicts never reached DataHub
+        # at all. See report.PublicationStatus.
         #
         # `awaiting` is what was still on offer when THIS call arrived, read off the record
-        # as it stood BEFORE the resume. A run now parks again while any proposal is
-        # undecided, so a caller can reach a claim they already settled on an earlier call —
-        # and the checkpoint node rightly ignores them (a correction is settled once). The
-        # write-back must ignore them for the same reason: a decision writes back what IT
-        # settled, and re-naming a claim decided an hour ago decides nothing now.
-        awaiting = {c.index for c in stored.claims if c.correction.awaits_human}
-        accepted = {d.claim_index for d in decisions if d.accept} & awaiting
-
-        # Who decided what, from THIS call. The decisions are recorded below, after the
-        # catalog write, so the store cannot answer this yet — see `_write_back`.
-        reviewers = {d.claim_index: d.reviewer for d in decisions if d.accept}
+        # as it stood BEFORE the resume. A run parks again while anything is undecided, so a
+        # caller can name a claim they already settled on an earlier call — and the
+        # checkpoint node rightly ignores it (a claim is settled once). The write-back
+        # ignores it for the same reason: a decision writes back what IT settled, and
+        # re-naming a claim decided an hour ago decides nothing now — it would only replay
+        # that claim's catalog write on every later call.
+        awaiting = {c.index for c in stored.claims if c.publication.awaits_human}
+        told_to_publish = {
+            d.claim_index for d in decisions if d.publish
+        } & awaiting
 
         results: list[WriteResult] = []
-        # Keyed by CLAIM, not by URN: two accepted claims can name one dataset, and keying
+        # Keyed by CLAIM, not by URN: two published claims can name one dataset, and keying
         # the outcome by URN would let the second write's result be reported as the first
         # decision's. A decision log that attributes a write to the wrong decision is a
         # false entry in the one record that exists to say who decided what.
         written: dict[int, WriteResult] = {}
         for claim in settled.claims:
-            if claim.index not in accepted:
+            if claim.index not in told_to_publish:
                 continue
-            if claim.correction.review is not ReviewStatus.ACCEPTED:
-                # The human named a claim that had nothing to accept. Not an error, and not
-                # a write: there is no proposal here to approve.
+            if not claim.publication.published:
+                # The checkpoint did not publish it after all. Not an error, and not a write.
                 continue
-            result = self._write_back(claim, settled, reviewers.get(claim.index, ""))
+            result = self._write_back(claim, settled, claim.publication.reviewer)
             results.append(result)
             written[claim.index] = result
 
@@ -369,15 +374,10 @@ class AuditService:
                 f"produced may reach the catalog. {stored.receipts.trajectory_summary}."
             )
 
-        accepted = [
-            c for c in stored.claims if c.correction.review is ReviewStatus.ACCEPTED
-        ]
+        published = [c for c in stored.claims if c.publication.published]
         results: list[WriteResult] = []
-        for claim in accepted:
-            # Here the store IS the source: the decision was recorded when it was made.
-            result = self._write_back(
-                claim, stored, self._reviewer_for(run_id, claim.index)
-            )
+        for claim in published:
+            result = self._write_back(claim, stored, claim.publication.reviewer)
             results.append(result)
             # The retry is logged too. It writes to the catalog, so it belongs in the
             # append-only record of what was written and when — and a repair that left no
@@ -388,8 +388,8 @@ class AuditService:
                 run_id,
                 Decision(
                     claim_index=claim.index,
-                    accept=True,
-                    reviewer=self._reviewer_for(run_id, claim.index),
+                    publish=True,
+                    reviewer=claim.publication.reviewer,
                     note="write-back retry",
                 ),
                 writeback=str(result),
@@ -404,12 +404,11 @@ class AuditService:
         duplicate verdict. `write_claim_artifact` has no default for it precisely so this
         cannot be forgotten here.
 
-        `reviewer` is PASSED IN rather than looked up, because its source differs by caller
-        and getting that wrong is silent. On the approval path the decision has not been
-        recorded yet — it is written after the catalog write, so a store lookup here finds
-        nothing and every artifact would be attributed to "unknown". On the retry path the
-        decision IS on file and the store is the only source. So each caller supplies the one
-        it actually has.
+        `reviewer` is PASSED IN rather than looked up, and since Session 15 both callers read
+        it off `claim.publication.reviewer` — the checkpoint records who published a verdict
+        at the moment it settles it. That is what fixed the earlier bug: the approval path
+        writes its decisions to the store AFTER the catalog write, so a store lookup here
+        found nothing and attributed every artifact to "unknown".
         """
         if not self.write_back:
             return WriteResult(
@@ -445,13 +444,6 @@ class AuditService:
         except DataHubError as exc:  # pragma: no cover - write_verdict already returns
             log.warning("dataset badge for %s not updated: %s", claim.target_urn, exc)
         return result
-
-    def _reviewer_for(self, run_id: str, claim_index: int) -> str:
-        """Who decided this claim, from the append-only log. Recorded, never verified."""
-        for approval in reversed(self.store.approvals(run_id)):
-            if approval.claim_index == claim_index and approval.accept:
-                return approval.reviewer
-        return ""
 
     # --- liveness -------------------------------------------------------------
 

@@ -166,7 +166,10 @@ def test_two_concurrent_audits_do_not_bill_each_other(tmp_path):
         chat.b_finished.set()
         run_a = a.result(timeout=30)
 
-    assert run_a.status is RunStatus.COMPLETE and run_b.status is RunStatus.COMPLETE
+    # Both PARK rather than complete: every verdict awaits publication (Session 15). What
+    # this test is about is the RECEIPTS, and a parked run has already spent its tokens.
+    assert run_a.status is RunStatus.AWAITING_REVIEW
+    assert run_b.status is RunStatus.AWAITING_REVIEW
     assert len(chat.calls) == 2 * CALLS_PER_RUN, "one of the runs did not do its own work"
 
     # The receipts. Each run made two calls; each run is charged for two calls.
