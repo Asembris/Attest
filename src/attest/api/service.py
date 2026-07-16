@@ -287,6 +287,10 @@ class AuditService:
         awaiting = {c.index for c in stored.claims if c.correction.awaits_human}
         accepted = {d.claim_index for d in decisions if d.accept} & awaiting
 
+        # Who decided what, from THIS call. The decisions are recorded below, after the
+        # catalog write, so the store cannot answer this yet — see `_write_back`.
+        reviewers = {d.claim_index: d.reviewer for d in decisions if d.accept}
+
         results: list[WriteResult] = []
         # Keyed by CLAIM, not by URN: two accepted claims can name one dataset, and keying
         # the outcome by URN would let the second write's result be reported as the first
@@ -300,7 +304,7 @@ class AuditService:
                 # The human named a claim that had nothing to accept. Not an error, and not
                 # a write: there is no proposal here to approve.
                 continue
-            result = self._write_back(claim, settled)
+            result = self._write_back(claim, settled, reviewers.get(claim.index, ""))
             results.append(result)
             written[claim.index] = result
 
@@ -324,20 +328,130 @@ class AuditService:
 
         return settled, tuple(results)
 
-    def _write_back(self, claim, run: AuditRecord) -> WriteResult:
+    def retry_writeback(self, run_id: str) -> tuple[WriteResult, ...]:
+        """Re-run the catalog write for claims a human ALREADY accepted. The recovery path.
+
+        The write-back is three operations — upsert the claim, report the verdict, swap the
+        tag — and cannot be atomic, so a partial write is reachable: a claim with no verdict,
+        or a verdict whose tag never landed. This repairs one.
+
+        **It is not the approval path, and it must not be.** Re-running `approve` cannot do
+        this: a settled claim is no longer `awaits_human`, so the intersection below excludes
+        it, and a run whose last proposal was decided is COMPLETE and not resumable at all.
+        Before this existed a failed write-back simply STRANDED — honestly recorded, and with
+        no way to try again. That was tolerable when the write was one atomic mutation. With
+        three, and an index lag that makes the middle one genuinely retryable, it is not.
+
+        **It cannot approve anything, and that is the point.** It reads the stored record and
+        re-writes only what is already `ACCEPTED` in it. A claim nobody accepted is not
+        reachable from here, a rejected one is not either, and no decision is taken — the
+        human act already happened and is in the append-only log. This re-executes a recorded
+        decision's side effect, which is why it needs no graph, no checkpoint, and no
+        interrupt. There is still exactly one path to approving something.
+
+        Safe to call repeatedly: every write is idempotent (writeback.py). The claim's URN is
+        derived from its content, so a re-run lands on the same artifact rather than minting a
+        second, and the run event is keyed by the run's own timestamp, so re-reporting
+        collapses onto the same row rather than appending a duplicate. It therefore re-runs
+        ALL accepted claims rather than tracking which step failed — correctness does not
+        depend on the bookkeeping, and `WriteResult.failed_step` exists to make the failure
+        legible, not to drive the repair.
+        """
+        stored = self.store.load(run_id)
+        if stored is None:
+            raise RunNotFound(f"no such audit run: {run_id}")
+        if stored.status is RunStatus.FLAGGED or not stored.receipts.trajectory_ok:
+            # The same hard gate as `approve`, for the same reason: a run that violated its
+            # own architecture must not reach the catalog by ANY path. A recovery endpoint is
+            # exactly where that would quietly be re-opened.
+            raise TrajectoryViolation(
+                f"run {run_id} is flagged: it violated its own architecture and nothing it "
+                f"produced may reach the catalog. {stored.receipts.trajectory_summary}."
+            )
+
+        accepted = [
+            c for c in stored.claims if c.correction.review is ReviewStatus.ACCEPTED
+        ]
+        results: list[WriteResult] = []
+        for claim in accepted:
+            # Here the store IS the source: the decision was recorded when it was made.
+            result = self._write_back(
+                claim, stored, self._reviewer_for(run_id, claim.index)
+            )
+            results.append(result)
+            # The retry is logged too. It writes to the catalog, so it belongs in the
+            # append-only record of what was written and when — and a repair that left no
+            # trace would be a catalog change with no history, which is the shape this whole
+            # store exists to prevent. The decision it names is the one already on file; the
+            # reviewer is not re-attributed, because nobody decided anything here.
+            self.store.record_decision(
+                run_id,
+                Decision(
+                    claim_index=claim.index,
+                    accept=True,
+                    reviewer=self._reviewer_for(run_id, claim.index),
+                    note="write-back retry",
+                ),
+                writeback=str(result),
+            )
+        return tuple(results)
+
+    def _write_back(self, claim, run: AuditRecord, reviewer: str) -> WriteResult:
+        """One claim, to the catalog, as a per-claim artifact.
+
+        `checked_at=run.created_at` is load-bearing rather than incidental: it keys the run
+        event, so it is what makes a retry collapse onto the same row instead of appending a
+        duplicate verdict. `write_claim_artifact` has no default for it precisely so this
+        cannot be forgotten here.
+
+        `reviewer` is PASSED IN rather than looked up, because its source differs by caller
+        and getting that wrong is silent. On the approval path the decision has not been
+        recorded yet — it is written after the catalog write, so a store lookup here finds
+        nothing and every artifact would be attributed to "unknown". On the retry path the
+        decision IS on file and the store is the only source. So each caller supplies the one
+        it actually has.
+        """
         if not self.write_back:
             return WriteResult(
                 ok=False, target_urn=claim.target_urn, detail="write-back is disabled"
             )
-        return writeback.write_verdict(
+        result = writeback.write_claim_artifact(
             self.client,
-            target_urn=claim.target_urn,
+            claim=claim.claim,
             verdict=claim.verdict,
-            claim_type=claim.claim_type,
             run_id=run.run_id,
-            source_agent=run.source_agent,
             checked_at=run.created_at,
+            evidence="; ".join(
+                f"{e.field}={e.value}" for e in claim.evidence if e.value is not None
+            ),
+            reviewer=reviewer,
+            decision="accepted",
+            source_agent=run.source_agent,
+            external_url=f"/audit/{run.run_id}",
         )
+        # The dataset-level badge, best-effort and deliberately secondary: it is a glance
+        # view, and the claim artifact above is the record. A badge failure does not make the
+        # claim's verdict any less written, so it does not turn the result red.
+        try:
+            writeback.write_verdict(
+                self.client,
+                target_urn=claim.target_urn,
+                verdict=claim.verdict,
+                claim_type=claim.claim_type,
+                run_id=run.run_id,
+                source_agent=run.source_agent,
+                checked_at=run.created_at,
+            )
+        except DataHubError as exc:  # pragma: no cover - write_verdict already returns
+            log.warning("dataset badge for %s not updated: %s", claim.target_urn, exc)
+        return result
+
+    def _reviewer_for(self, run_id: str, claim_index: int) -> str:
+        """Who decided this claim, from the append-only log. Recorded, never verified."""
+        for approval in reversed(self.store.approvals(run_id)):
+            if approval.claim_index == claim_index and approval.accept:
+                return approval.reviewer
+        return ""
 
     # --- liveness -------------------------------------------------------------
 

@@ -41,6 +41,7 @@ from attest.api.schemas import (
     ApprovalResponse,
     AuditRequest,
     HealthResponse,
+    WriteBackResponse,
     WriteBackView,
 )
 from attest.api.service import (
@@ -183,12 +184,54 @@ def approve(
     except NotResumable as exc:
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
-    return ApprovalResponse(
-        audit=settled,
-        writebacks=tuple(
-            WriteBackView(target_urn=w.target_urn, ok=w.ok, detail=w.detail)
-            for w in writebacks
-        ),
+    return ApprovalResponse(audit=settled, writebacks=_views(writebacks))
+
+
+@app.post("/audit/{run_id}/writeback", response_model=WriteBackResponse)
+def retry_writeback(run_id: str, service: Service) -> WriteBackResponse:
+    """Re-run the catalog write for claims this run's reviewers ALREADY accepted.
+
+    The recovery path for a partial write. A claim artifact takes three writes — the claim,
+    its verdict, then the verdict tag — and they cannot be atomic, so a failure can leave a
+    claim with no verdict, or a verdict that is correct but not yet findable by search. The
+    approve call reports exactly which step failed; this repairs it.
+
+    **This approves nothing, and cannot.** It re-executes the side effect of decisions that
+    are already recorded — a claim nobody accepted is not reachable from here, and a rejected
+    one writes nothing, exactly as at the checkpoint. There is still one path to approving
+    something, and this is not it. It exists because re-running `approve` cannot repair a
+    write: a settled claim is no longer awaiting a human, so it is skipped, and a fully
+    decided run is complete and no longer resumable. Without this a failed write-back simply
+    stranded.
+
+    Safe to call repeatedly, and it needs no state: every write is idempotent. The claim's
+    URN is derived from the claim's own content, so a re-run lands on the same artifact and
+    never mints a second one, and the verdict is keyed by the audit run's timestamp, so
+    re-reporting it collapses onto the same row rather than appending a duplicate to the
+    history.
+    """
+    try:
+        results = service.retry_writeback(run_id)
+    except RunNotFound as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except TrajectoryViolation as exc:
+        # The same 409 as approve, for the same reason: a run that violated its own
+        # architecture may not reach the catalog by any path, and a recovery endpoint is
+        # exactly where that gate would quietly be re-opened.
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    return WriteBackResponse(run_id=run_id, writebacks=_views(results))
+
+
+def _views(results) -> tuple[WriteBackView, ...]:
+    return tuple(
+        WriteBackView(
+            target_urn=w.target_urn,
+            ok=w.ok,
+            detail=w.detail,
+            claim_urn=w.claim_urn,
+            failed_step=w.failed_step,
+        )
+        for w in results
     )
 
 

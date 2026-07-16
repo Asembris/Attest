@@ -12,6 +12,7 @@ the failure mode this project exists to prevent.
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import httpx
@@ -307,6 +308,231 @@ class DataHubClient:
                 }
             },
         )["createStructuredProperty"]
+
+    # --- claim artifacts (assertions) --------------------------------------
+    #
+    # A claim artifact is a CUSTOM Assertion plus its appended run events. The assertion is
+    # the CLAIM (stable: what is asserted about what); each run event is the VERDICT at a
+    # point in time (append-only). Structured properties cannot hold this: they are
+    # last-write-wins, so two claims about one dataset overwrite each other and the catalog
+    # ends up holding a verdict with no subject. See docs/design/claim-artifact.md.
+
+    UPSERT_CUSTOM_ASSERTION = """
+    mutation upsertCustomAssertion($urn: String, $input: UpsertCustomAssertionInput!) {
+      upsertCustomAssertion(urn: $urn, input: $input) {
+        urn
+        info {
+          type description externalUrl
+          customAssertion { type entityUrn logic field { path } }
+        }
+      }
+    }
+    """
+
+    def upsert_custom_assertion(
+        self,
+        urn: str,
+        entity_urn: str,
+        custom_type: str,
+        description: str,
+        platform_urn: str,
+        logic: str,
+        external_url: str = "",
+    ) -> dict[str, Any]:
+        """Create or update ONE claim artifact, at a URN THE CALLER OWNS.
+
+        The `urn` argument is what makes the whole design work: Attest derives it from the
+        claim's own content, so re-writing the same claim lands on the same artifact and two
+        different claims about one dataset coexist. A server-minted id would diverge on
+        every retry.
+
+        **`fieldPath` IS DELIBERATELY NOT EXPOSED, AND MUST NEVER BE SENT.** Setting it makes
+        DataHub record the assertion's `asserteeUrn` as a *schemaField* URN, while the
+        `assertionRunEvent` aspect requires a *dataset* URN — so the artifact can be created
+        and read back perfectly and can then NEVER carry a verdict:
+
+            Invalid entity type urn validation failure (Required: [dataset]).
+            Path: /asserteeUrn  Urn: urn:li:schemaField:(...,email)
+
+        Worse, whether it fails depends on what the index holds at that instant, so it
+        sometimes appears to work. The column grain travels in `logic` instead, where it is
+        fully recoverable and costs nothing. Not passing it is not an oversight; it is the
+        fix, and it is enforced by this method having no parameter for it.
+        """
+        payload: dict[str, Any] = {
+            "entityUrn": entity_urn,
+            "type": custom_type,
+            "description": description,
+            "platform": {"urn": platform_urn},
+            "logic": logic,
+        }
+        if external_url:
+            payload["externalUrl"] = external_url
+        return self.execute(
+            self.UPSERT_CUSTOM_ASSERTION, {"urn": urn, "input": payload}
+        )["upsertCustomAssertion"]
+
+    REPORT_ASSERTION_RESULT = """
+    mutation reportAssertionResult($urn: String!, $result: AssertionResultInput!) {
+      reportAssertionResult(urn: $urn, result: $result)
+    }
+    """
+
+    # GMS resolves the assertion's assertee through an eventually-consistent index, so a
+    # result reported immediately after the artifact is created is refused with this,
+    # verbatim, until the index catches up. It is pure latency, not a real rejection.
+    _ASSERTION_NOT_INDEXED = "not associated with any entity"
+
+    def report_assertion_result(
+        self,
+        urn: str,
+        result_type: str,
+        timestamp_millis: int,
+        properties: dict[str, str] | None = None,
+        external_url: str = "",
+        retry_seconds: float = 30.0,
+    ) -> bool:
+        """Append ONE verdict event to a claim artifact.
+
+        `timestamp_millis` IS THE KEY, and it must be the audit run's own timestamp rather
+        than the wall clock. A timeseries row is keyed by (urn, aspect, timestampMillis), so
+        the same event reported twice at the same timestamp collapses to ONE row — which is
+        what makes a retry safe. Pass `now()` and every retry mints a new key, appends a
+        duplicate, and corrupts an append-only history with an audit that never happened.
+        Callers cannot get this wrong by accident: writeback.py has no default for it.
+
+        Retries past the index lag (see `_ASSERTION_NOT_INDEXED`) and gives up honestly:
+        `False` means the verdict did not land, and the caller reports that rather than
+        assuming it did. Any other GraphQL error is a real refusal and is raised.
+        """
+        result: dict[str, Any] = {
+            "timestampMillis": timestamp_millis,
+            "type": result_type,
+            "properties": [
+                {"key": k, "value": v} for k, v in (properties or {}).items()
+            ],
+        }
+        if external_url:
+            result["externalUrl"] = external_url
+
+        deadline = time.monotonic() + retry_seconds
+        while True:
+            try:
+                return bool(
+                    self.execute(
+                        self.REPORT_ASSERTION_RESULT, {"urn": urn, "result": result}
+                    )["reportAssertionResult"]
+                )
+            except DataHubError as exc:
+                if self._ASSERTION_NOT_INDEXED not in str(exc):
+                    raise
+                if time.monotonic() >= deadline:
+                    raise DataHubError(
+                        f"the catalog did not index {urn} within {retry_seconds:.0f}s, so "
+                        f"its verdict could not be reported: {exc}"
+                    ) from exc
+                time.sleep(1.0)
+
+    ASSERTION_QUERY = """
+    query assertion($urn: String!) {
+      assertion(urn: $urn) {
+        urn
+        info {
+          description externalUrl
+          customAssertion { type entityUrn logic field { path } }
+        }
+        tags { tags { tag { urn } } }
+        runEvents(status: COMPLETE, limit: 50) {
+          total failed succeeded
+          runEvents {
+            timestampMillis
+            result { type externalUrl nativeResults { key value } }
+          }
+        }
+      }
+    }
+    """
+
+    def get_assertion(self, urn: str) -> dict[str, Any] | None:
+        """One claim artifact and its whole verdict history, or None if it is not there."""
+        return self.execute(self.ASSERTION_QUERY, {"urn": urn}).get("assertion")
+
+    DATASET_ASSERTIONS_QUERY = """
+    query datasetAssertions($urn: String!, $start: Int!, $count: Int!) {
+      dataset(urn: $urn) {
+        assertions(start: $start, count: $count) {
+          total
+          assertions {
+            urn
+            info {
+              description externalUrl
+              customAssertion { type entityUrn logic field { path } }
+            }
+            tags { tags { tag { urn } } }
+            runEvents(status: COMPLETE, limit: 50) {
+              total failed succeeded
+              runEvents {
+                timestampMillis
+                result { type externalUrl nativeResults { key value } }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+
+    def list_dataset_assertions(
+        self, dataset_urn: str, start: int = 0, count: int = 50
+    ) -> list[dict[str, Any]]:
+        """Every claim artifact on a dataset, with its verdict history, in ONE query.
+
+        THE THESIS QUERY. This is what a second agent inherits from DataHub alone — every
+        claim ever made about this dataset, what it asserted, and every verdict it has had.
+        Note it is a relationship read off the dataset, NOT a search: search cannot scope
+        assertions to a dataset at all (no assertee field is indexed), so this is the only
+        way to ask the question. See docs/design/claim-artifact.md §5.
+        """
+        dataset = self.execute(
+            self.DATASET_ASSERTIONS_QUERY,
+            {"urn": dataset_urn, "start": start, "count": count},
+        ).get("dataset")
+        if not dataset:
+            return []
+        return list((dataset.get("assertions") or {}).get("assertions") or [])
+
+    # --- tags ---------------------------------------------------------------
+
+    CREATE_TAG = """
+    mutation createTag($input: CreateTagInput!) { createTag(input: $input) }
+    """
+    ADD_TAG = """
+    mutation addTag($input: TagAssociationInput!) { addTag(input: $input) }
+    """
+    REMOVE_TAG = """
+    mutation removeTag($input: TagAssociationInput!) { removeTag(input: $input) }
+    """
+
+    def create_tag(self, tag_id: str, name: str, description: str = "") -> str:
+        return self.execute(
+            self.CREATE_TAG,
+            {"input": {"id": tag_id, "name": name, "description": description}},
+        )["createTag"]
+
+    def add_tag(self, tag_urn: str, resource_urn: str) -> bool:
+        return bool(
+            self.execute(
+                self.ADD_TAG, {"input": {"tagUrn": tag_urn, "resourceUrn": resource_urn}}
+            )["addTag"]
+        )
+
+    def remove_tag(self, tag_urn: str, resource_urn: str) -> bool:
+        return bool(
+            self.execute(
+                self.REMOVE_TAG,
+                {"input": {"tagUrn": tag_urn, "resourceUrn": resource_urn}},
+            )["removeTag"]
+        )
 
     # --- search ------------------------------------------------------------
 
