@@ -155,10 +155,18 @@ designing from docs.
 - **Only `customType` and `tags` are filterable on an assertion.** Measured:
   `entityUrn`, `fieldPath`, `description` all return `total=0`. Per-dataset listing goes
   through `dataset.assertions`, **not** through search.
+- **There is no server-side dataset scoping in search at all** — nine candidate field names,
+  all `total=0` against an unscoped baseline that returns everything. So the two server-side
+  entry points are **disjoint**: `dataset.assertions` scopes but cannot filter;
+  `searchAcrossEntities` filters but cannot scope. **This shapes the whole retrieval path —
+  §5 states exactly how much is server-side and refuses to oversell it.**
 - **Assertions do not support structured properties.** So the latest verdict is filterable
   only as a **tag**.
 - `customType` filters accept **multiple values (OR)** — measured — which is what lets
   `claim_type` live there and still answer "every Attest claim".
+- **The write is three operations and cannot be atomic — but all three are idempotent**, so
+  recovery is repetition rather than a saga (§9a). This holds *only* because a timeseries row
+  is keyed by `(urn, aspect, timestampMillis)` and Attest supplies a deterministic timestamp.
 
 ---
 
@@ -231,10 +239,15 @@ service.approve(run_id, decisions)
   └─ (unchanged) accepted = {decisions where accept} & {still awaits_human}
   └─ for each accepted claim:
        writeback.write_claim_artifact(...)          # NEW - replaces write_verdict
-         1. upsertCustomAssertion(urn=claim_id, ...)   # idempotent; the claim
-         2. reportAssertionResult(urn=claim_id, ...)   # append; the verdict   [RETRY: landmine 4]
-         3. swap verdict tag (removeTag old, addTag new)  # the filterable latest verdict
+         1. upsertCustomAssertion(urn=claim_id, ...)   # the claim        [idempotent]
+         2. reportAssertionResult(urn=claim_id, ...)   # the verdict      [idempotent IFF
+            timestampMillis = run.created_at, NEVER now() -- see 9a]      [RETRY: landmine 4]
+         3. swap verdict tag (removeTag old, addTag new)  # latest verdict [idempotent]
   └─ (unchanged) store.record_decision(...) keyed by CLAIM INDEX
+
+POST /audit/{run_id}/writeback                      # NEW - repairs a partial write
+  └─ reads the STORED record; re-runs 1-3 for already-accepted claims.
+     Idempotent, so repetition is the recovery. Touches no graph, approves nothing. §9a.
 ```
 
 Everything that makes the write-back trustworthy is untouched and is *load-bearing here*:
@@ -293,11 +306,92 @@ query { searchAcrossEntities(input: {
   info { customAssertion { entityUrn logic } } } } } } }
 ```
 
-Filter by **verdict** (tag) and **claim type** (customType) — both measured. **Reviewer and
-time are NOT filterable** (§2); they are *retrievable* per claim from the run events, so
-"filter by reviewer" is a client-side filter over a dataset's or a verdict's claims, not a
-server-side one. **Stating that plainly is the point** — the honest boundary, named, rather
-than a promise the index will not keep.
+### How much is server-side? — measured, and deliberately not oversold
+
+The thesis is **"retrievable from DataHub"**, and that is true. **"Queryable in DataHub"**
+would be an overclaim, and the difference matters, so here is the exact line.
+
+**The two server-side entry points are DISJOINT and do not compose:**
+
+| Entry point | Scopes to a dataset | Filters verdict | Filters claim type | Filters reviewer / time |
+| --- | --- | --- | --- | --- |
+| `dataset.assertions(urn)` | **yes (server)** | no | no | no |
+| `searchAcrossEntities([ASSERTION])` | **no** | **yes (server, tag)** | **yes (server, customType)** | no |
+
+**There is no server-side dataset scoping for assertions.** Nine candidate field names —
+`entityUrn`, `asserteeUrn`, `datasetUrn`, `entity`, `dataset`, `.keyword` variants, `urn`,
+`assertee` — every one returns `total=0` while the unscoped baseline returns them all. That
+is a genuine absence in the index, not a name I failed to guess. Measured in the spike, §7.
+
+So for the compound question — *"all contradicted ownership claims on this dataset caught
+this week"* — **1 of 4 predicates is server-side:**
+
+| Predicate | Where |
+| --- | --- |
+| on this dataset | **DataHub** (`dataset.assertions`) — the most selective one |
+| contradicted | Attest (client-side over the response) |
+| ownership | Attest |
+| this week | Attest |
+
+Drop the dataset and it inverts — *"every contradicted ownership claim this week, catalog-wide"*
+is **2 of 3 server-side** (`customType` + `tags`), with time client-side.
+
+**What keeps this honest rather than embarrassing:** the client-side part is a filter over a
+**single already-narrowed response**, not a scan and not N+1. Both entry points return the
+run events **inline** — measured — so one GraphQL round trip yields dataset, verdict,
+reviewer, and timestamp for every candidate, and the filtering is a list comprehension over
+≤50 rows. There is no pagination loop and no per-claim fetch.
+
+**The honest summary, and the plan will not say more than this:** *DataHub does the scoping;
+Attest does most of the filtering.* The data is entirely in the catalog and comes back in
+one query — but the index will not answer "contradicted ownership on this dataset this week"
+by itself, and pretending otherwise would be exactly the kind of unfounded claim this project
+exists to catch.
+
+**The thesis question is unaffected, and it is worth separating.** *"Show me what the next
+agent inherits from DataHub alone"* needs **no filtering at all** — it is
+`dataset.assertions(urn)`, one query, fully server-side, complete answer. The weaker part is
+*filtering*, not *inheriting*. Those are different claims and only one of them is compromised.
+
+`GET /claims` therefore reports which predicates it pushed down, in the response. A caller
+that cannot see where the filtering happened cannot judge what it costs.
+
+### Does the third verdict survive the round trip legibly?
+
+Yes — verbatim. But there is a trap next to it, and the spike measures both (§6):
+
+| State | `runEvents.total` | `succeeded` | `failed` | `result.type` | `attest.verdict` |
+| --- | --- | --- | --- | --- | --- |
+| Supported | 1 | 1 | 0 | `SUCCESS` | `"Supported"` |
+| Contradicted | 1 | 0 | 1 | `FAILURE` | `"Contradicted"` |
+| **Insufficient-Coverage** | 1 | **0** | **0** | `ERROR` | `"Insufficient-Coverage"` |
+| **half-written** (upsert ok, report failed) | **0** | **0** | **0** | — | **absent** |
+
+**Insufficient-Coverage reads back as the literal string `Insufficient-Coverage`.** The
+three-verdict distinction survives; it is not merely parked in a neutral bucket.
+
+**The trap: Insufficient-Coverage and a half-written claim BOTH read `succeeded=0 failed=0`.**
+A reader consulting only DataHub's rollup counts cannot tell *"the catalog is silent about
+this claim"* from *"Attest never finished writing it"* — two completely different facts with
+two completely different fixes, and the first is a valid final verdict while the second is a
+bug. **The discriminator is `runEvents.total`** (≥1 vs 0), equivalently the presence of
+`attest.verdict`. This is written down because it is the exact shape of the mistake this
+project exists to catch: absence read as an answer.
+
+**The rule for every reader, including the UI:**
+`attest.verdict` present ⟺ the claim has a verdict, and its value IS the verdict.
+`attest.verdict` absent ⟺ the write never completed. Never infer a verdict from
+`result.type` or from the rollup counts.
+
+**The one real loss, named:** in **DataHub's own UI**, an Insufficient-Coverage claim renders
+as an *error*, because `ERROR` is the only native type that avoids asserting a direction and
+`result.error` is silently discarded (landmine 2), so it cannot even be labelled
+`INSUFFICIENT_DATA`. Attest's own surfaces are unaffected — they read `attest.verdict`.
+**Mitigation:** the assertion `description` leads with the current verdict
+(`"Insufficient-Coverage — <claim>"`) and is refreshed on each write, so DataHub's native UI
+shows something true in the one place the native type lies. That is presentation, exactly as
+`polarity.py` is presentation: the authoritative verdict is carried verbatim and the lossy
+projection never feeds back into it.
 
 ### From Attest's API (the UI and the convenience path)
 
@@ -417,14 +511,10 @@ This is a **write-back and retrieval** change. It touches nothing that decides a
    already handles this — the approval stands, the catalog does not know, the store records
    which) or moving the write-back off the request thread. Recommend the former: it reuses a
    contract that already exists and does not invent an async path.
-2. **Three operations where there was one.** `write_verdict` was one atomic mutation by
-   design — *"a verdict written as five separate mutations can half-fail, leaving a dataset
-   carrying Attest's verdict but not the run id."* The artifact write is **necessarily** three
-   (upsert, report, tag) and **cannot** be atomic. A partial failure leaves a claim with no
-   verdict, or a verdict with a stale tag. `WriteResult` must name *which step* failed;
-   "written" becomes a per-step outcome, not a boolean. **This is the biggest honesty risk in
-   the build** — the same shape as `CorrectionOutcome` naming six outcomes rather than a
-   success flag.
+2. **Three operations where there was one — RESOLVED BY MEASUREMENT, see §9a.** It does not
+   need a saga. The three writes are all idempotent, so a partial failure is repaired by
+   repeating it. The remaining work is making the partial state *visible* and *re-runnable*,
+   which is four small things and one hard rule.
 3. **Someone sets `fieldPath`.** It looks exactly right, the write succeeds, the read looks
    perfect, and it *sometimes* works. This needs a test that breaks it, in the project's
    tradition — assert the artifact is written without `fieldPath`, because the runtime
@@ -439,6 +529,147 @@ This is a **write-back and retrieval** change. It touches nothing that decides a
    Not a v1 problem; name it before it is one.
 6. **The verdict tag needs bootstrapping**, like the structured properties do today —
    `createTag` for three verdict tags, idempotently, in `ensure_definitions`' successor.
+
+---
+
+## 9a. The non-atomic write-back, decided
+
+The old `write_verdict` was **one atomic mutation, deliberately**: *"a verdict written as
+five separate mutations can half-fail, leaving a dataset carrying Attest's verdict but not
+the run id."* The artifact write is **necessarily three** — upsert (the claim must exist
+before a result can be reported against it), report (the verdict), tag (the filterable
+latest verdict) — and **cannot** be made atomic. That is a real integrity risk and it is
+the one thing in this design worth deciding consciously.
+
+**It does not need a saga, and the reason is measured, not argued.**
+
+### The finding that dissolves it: all three writes are idempotent
+
+A timeseries row is keyed by **`(urn, aspect, timestampMillis)`**. Report the same event at
+the same timestamp three times and you get **one** run event, not three (spike §5):
+
+```
+[5] IDEMPOTENCE — is a partial write re-runnable, or does it need a saga?
+  reported the SAME verdict at the SAME timestamp (1784100000000) three times
+    -> 1 run event at that ts; attempt=3 verdict=Contradicted
+  PASS  3 identical reports collapse to ONE run event (retry is SAFE)
+```
+
+So: **upsert** is idempotent by definition, **tag** is idempotent by set semantics, and
+**report** is idempotent by key. Re-running the entire write-back is a no-op on whatever
+already landed. **Recovery is repetition.** No compensating transactions, no outbox, no
+ordering state machine — none of the Session 14 saga territory.
+
+### THE RULE THIS BUYS, AND IT IS LOAD-BEARING
+
+> **`timestampMillis` MUST be the run's stored `created_at`. NEVER `now()`.**
+
+With `now()`, every retry mints a new key, **appends a duplicate run event**, and corrupts
+the append-only history — a retry inventing an audit that never happened, inside the log
+that exists to record what did. It is invisible until the retry path runs, every test
+passes, and the corruption is indistinguishable from a real re-audit. This is the
+None-is-not-zero receipt bug's exact shape (§2d), and it is why the rule is stated as a
+rule rather than left to whoever writes the call.
+
+`checked_at` is already stored and already passed to `write_verdict` today, so this costs
+nothing — it only has to not be thrown away.
+
+### The three questions, answered
+
+**(a) Upsert succeeds, report fails — is the claim visibly incomplete, or silently
+verdict-less?** **Visibly incomplete.** Measured (spike §6): the artifact exists with
+`runEvents.total = 0` and **no `attest.verdict`**. The retrieval path renders it as
+`INCOMPLETE`, never as a claim without an opinion. And since Attest writes only on approval,
+`total = 0` ⟺ half-written — there is no benign cause to confuse it with.
+
+The trap sits right here and §5 names it: an Insufficient-Coverage claim **also** reads
+`succeeded=0 failed=0`. `runEvents.total` is what separates "the catalog is silent" from
+"the write never finished". A reader on the rollup counts conflates a valid verdict with a
+bug.
+
+**Ordering is chosen so partial states degrade downward, not falsely:**
+
+| Fails at | Catalog state | How it reads |
+| --- | --- | --- |
+| upsert | nothing exists | no artifact — absent, nothing false |
+| report | claim, no verdict | **INCOMPLETE** — visible, honest |
+| tag | claim + verdict, stale/absent tag | per-dataset read is **correct**; the cross-catalog query misses it |
+
+The tag failure is the subtle one: the claim is right, the *index* is stale. **The tag is a
+derived search accelerator, never the truth** — the authoritative verdict is in the run
+event, so a stale tag degrades *findability*, not correctness. The store records that the
+tag step failed, and the retry repairs it.
+
+**(b) Is a failed write retryable by re-running the same approval?**
+
+**No — and this is a real pre-existing finding, not something this design introduces.**
+Read off `service.approve`:
+
+```python
+awaiting = {c.index for c in stored.claims if c.correction.awaits_human}   # line 287
+accepted = {d.claim_index for d in decisions if d.accept} & awaiting       # line 288
+```
+
+Once a claim is decided it is no longer `awaits_human`, so a re-approve **excludes** it and
+writes nothing. If it was the last proposal the run went `COMPLETE`, and line 241 then
+refuses the call outright (`NotResumable` → 409). **Today, a failed write-back strands:**
+the store honestly records `ok=False`, the approval stands, the catalog never learns, and
+**there is no supported path to try again.** That is tolerable with one atomic mutation that
+rarely half-fails. With three operations and a retryable index lag (landmine 4) it is not.
+
+So the minimum includes **one small new thing**: a retry path that is **not** the approval
+path.
+
+```
+POST /audit/{run_id}/writeback     # re-run the write-back for accepted claims
+```
+
+It reads the **stored record**, finds claims that were accepted, and re-runs the three
+idempotent calls. **It does not touch the graph, the checkpointer, or the human checkpoint,
+and it must not** — the human decision already happened and is recorded; re-executing a
+recorded decision's side effect is not a new decision. There is no second path to approving
+anything, which is the thing that must never have one (§2d).
+
+**This does not weaken "nothing is written until a human approves it."** The endpoint can
+only write what a human already accepted, read from the append-only record. It cannot accept
+anything, and a claim that was never accepted is not reachable from it. A `FLAGGED` run is
+refused here exactly as it is in `approve`.
+
+Because every step is idempotent, it may simply re-run **all** accepted claims rather than
+tracking which step failed — correctness does not depend on the bookkeeping. It filters to
+recorded failures only to save network calls.
+
+**(c) Does retrieval distinguish fully-written from half-written?** **Yes**, measured, and
+it is free: `runEvents.total = 0` / `attest.verdict` absent. `GET /claims/{id}` returns an
+explicit `status: complete | incomplete`, and the UI renders `incomplete` as a visible
+pending state with the retry available — not as a claim that mysteriously has no verdict.
+
+### The minimum, and it is less than an outbox
+
+1. **`timestampMillis` = the run's `created_at`, never `now()`.** The rule everything rests
+   on. Needs a test that breaks it: report twice, assert one event.
+2. **`WriteResult` names the step** — `upsert | report | tag` — and the outcome. "Written"
+   becomes a per-step result, not a boolean. Same shape as `CorrectionOutcome` naming six
+   outcomes rather than a success flag: a boolean would hide exactly the failure modes this
+   feature introduces.
+3. **`POST /audit/{run_id}/writeback`** — re-runs the idempotent write from the stored
+   record. Not the approval path, and cannot approve.
+4. **Retrieval renders no-verdict as INCOMPLETE.** Free; only has to not be skipped.
+
+**That is the honest bar the author asked for: partial failure is visible and re-runnable,
+not invisible and stranded.** It is achievable at this scope, and it is strictly smaller
+than the transactional work ruled out in Session 14 — because the server's own key semantics
+do the work a saga would otherwise have to.
+
+### What is still not guaranteed, said plainly
+
+**There is no atomicity and this design does not pretend to add it.** A crash between report
+and tag leaves a stale index until someone retries, and **nothing detects that automatically**
+— no reconciler, no sweeper. The failure is *recorded* (the store says which step failed) and
+*repairable* (one call), but it is not *self-healing*. A production deployment would want a
+periodic reconcile comparing each claim's latest run event against its verdict tag; this is a
+hackathon build, and it says so rather than shipping a sweeper nobody exercises. Naming the
+boundary is what makes the rest credible.
 
 ---
 
