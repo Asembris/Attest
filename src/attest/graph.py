@@ -51,6 +51,18 @@ unattended correction is *unreviewed* — never accepted, and never quietly writ
 `ReviewStatus.PENDING` is the resting state, and a run that nobody looks at proposes
 changes to nobody.
 
+**And PENDING has to stay reachable, or it is not a resting state — it is a grave
+(Session 14).** The checkpoint is a LOOP: the only edge out of it is the one that finds
+nothing pending. Decide two proposals of three and the run parks again holding the third,
+still resumable, still awaiting a decision that can still be made. Until Session 14 the
+node ran once and fell through to the report unconditionally, so a partial decision — or an
+empty one, which the API documents as legal and means "a person looked and settled nothing"
+— settled the run as COMPLETE and deleted its checkpoint. The undecided proposals stayed
+PENDING exactly as promised, and became permanently un-decidable: a COMPLETE run is not
+resumable. "Nothing is accepted by default" is only an accountability guarantee for as long
+as accepting it LATER is still possible; otherwise it is a refusal to decide, dressed up as
+one.
+
 --------------------------------------------------------------------------------
 Why the typed audit ledger sits beside the graph state, not inside it
 --------------------------------------------------------------------------------
@@ -356,7 +368,19 @@ class Pipeline:
             self._more_claims,
             {"more": RESOLVE, "review": CHECKPOINT, "finish": ASSEMBLE},
         )
-        g.add_edge(CHECKPOINT, ASSEMBLE)
+        # THE CHECKPOINT IS A LOOP, NOT A GATE (Session 14). A run leaves it only when
+        # every proposal has been decided; anything still PENDING sends it straight back,
+        # where `interrupt_before` parks it again to wait for the rest. An unconditional
+        # edge to ASSEMBLE here meant a partial approval — or an empty one, which the API
+        # documents as legal — ran on to END, settled as COMPLETE, and had its checkpoint
+        # deleted, stranding the undecided proposals in PENDING forever. The API promises
+        # that an unnamed proposal stays pending; a promise that terminates the only path
+        # to deciding it is not a promise.
+        g.add_conditional_edges(
+            CHECKPOINT,
+            self._review_settled,
+            {"await": CHECKPOINT, "finish": ASSEMBLE},
+        )
         g.add_edge(ASSEMBLE, END)
 
         # interrupt_before is what makes the checkpoint a PAUSE rather than a flag: the run
@@ -636,6 +660,10 @@ class Pipeline:
         The graph is interrupted BEFORE this node, so it does not run until someone calls
         `resume`. What it does is apply their decisions — and a proposal nobody decided on
         stays PENDING, which is the whole point.
+
+        A proposal that is already settled is skipped, so a second visit cannot re-decide
+        it: `awaits_human` is false the moment a review lands. A correction is settled once,
+        and the node that settles it is the one that enforces that.
         """
         ledger = self._ledger(state)
         decisions = state.get("decisions") or {}
@@ -704,9 +732,26 @@ class Pipeline:
             return "more"
         # Park for a human only if there is actually something to sign off. A run with no
         # corrections should not demand attention it does not need.
+        return "review" if self._awaits_human(state) else "finish"
+
+    def _review_settled(self, state: AuditState) -> Literal["await", "finish"]:
+        """THE WAY OUT OF THE CHECKPOINT, and the only one: every proposal decided.
+
+        Deliberately the same question `_more_claims` asks before parking in the first
+        place. A run may not settle while it still holds a proposal nobody has ruled on —
+        so a partial decision (or an empty one) goes back round and parks again, and the
+        run stays exactly as resumable as it was before someone looked at it.
+        """
+        return "await" if self._awaits_human(state) else "finish"
+
+    def _awaits_human(self, state: AuditState) -> bool:
+        """Is any proposal in this run still waiting on a person?
+
+        One predicate, read by the edge INTO the checkpoint and the edge OUT of it, so the
+        condition that parks a run and the condition that releases it cannot drift apart.
+        """
         ledger = self._ledger(state)
-        pending = any(a.correction.awaits_human for a in ledger.audits)
-        return "review" if pending else "finish"
+        return any(a.correction.awaits_human for a in ledger.audits)
 
     # --- the public API -------------------------------------------------------
 
@@ -747,6 +792,12 @@ class Pipeline:
 
         A proposal not named in `decisions` stays PENDING. There is no "approve all"
         default, and its absence is the design: see the module docstring.
+
+        And a run only FINISHES when there is nothing left pending. Decide some of the
+        proposals and the run parks again with the rest still on offer, so this may be
+        called as many times as it takes — the returned report says AWAITING_REVIEW until
+        the last one is settled. Deciding nothing at all is the degenerate case of that,
+        and it leaves the run exactly where it was rather than ending it.
         """
         config = self._config(thread_id)
         chosen = {str(d.claim_index): d.accept for d in decisions or []}
