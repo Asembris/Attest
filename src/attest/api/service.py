@@ -288,6 +288,11 @@ class AuditService:
         accepted = {d.claim_index for d in decisions if d.accept} & awaiting
 
         results: list[WriteResult] = []
+        # Keyed by CLAIM, not by URN: two accepted claims can name one dataset, and keying
+        # the outcome by URN would let the second write's result be reported as the first
+        # decision's. A decision log that attributes a write to the wrong decision is a
+        # false entry in the one record that exists to say who decided what.
+        written: dict[int, WriteResult] = {}
         for claim in settled.claims:
             if claim.index not in accepted:
                 continue
@@ -295,16 +300,14 @@ class AuditService:
                 # The human named a claim that had nothing to accept. Not an error, and not
                 # a write: there is no proposal here to approve.
                 continue
-            results.append(self._write_back(claim, settled))
+            result = self._write_back(claim, settled)
+            results.append(result)
+            written[claim.index] = result
 
         # Every decision is logged, accepted or rejected, with what the catalog did about
         # it. The store is append-only here on purpose (store.py).
-        written = {r.target_urn: r for r in results}
         for decision in decisions:
-            claim = next(
-                (c for c in settled.claims if c.index == decision.claim_index), None
-            )
-            result = written.get(claim.target_urn) if claim else None
+            result = written.get(decision.claim_index)
             self.store.record_decision(
                 run_id,
                 decision,

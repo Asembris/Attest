@@ -523,6 +523,41 @@ def test_a_second_call_does_not_re_write_a_claim_the_first_already_settled(tmp_p
     assert body["audit"]["claims"][1]["correction"]["review"] == "accepted"
 
 
+def test_a_decision_is_logged_with_its_own_write_result_not_another_claims(tmp_path):
+    """The decision log is keyed by CLAIM, not by dataset. Two claims can name one dataset.
+
+    Keyed by URN, the write result for the accepted claim is handed to every decision about
+    that dataset — so the REJECTED claim below is recorded as having been written to the
+    catalog. It was not. That is a false entry in the append-only record of who decided
+    what, and it is the record that exists precisely because DataHub cannot be trusted to
+    hold this history (store.py).
+    """
+    service, catalog = build(tmp_path, *TWO_PROPOSALS)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": TWO_CLAIMS}).json()["run_id"]
+        c.post(
+            f"/audit/{run_id}/approve",
+            json={
+                "decisions": [
+                    {"claim_index": 0, "accept": True, "reviewer": "dana"},
+                    {"claim_index": 1, "accept": False, "reviewer": "dana"},
+                ]
+            },
+        )
+
+    logged = {a.claim_index: a for a in service.store.approvals(run_id)}
+    assert len(logged) == 2
+
+    assert logged[0].accept is True
+    assert "written to" in logged[0].writeback
+
+    assert logged[1].accept is False
+    assert logged[1].writeback == "skipped", (
+        "a rejected decision was logged with the write result of a DIFFERENT claim that "
+        "happened to name the same dataset. Nothing was written for this decision."
+    )
+
+
 def test_a_failed_write_back_is_reported_as_a_failure_not_a_success(tmp_path):
     """The human decided; the catalog did not hear. Both facts, both reported.
 
