@@ -310,6 +310,37 @@ class DataHubClient:
             },
         )["createStructuredProperty"]
 
+    UPDATE_STRUCTURED_PROPERTY = """
+    mutation updateStructuredProperty($input: UpdateStructuredPropertyInput!) {
+      updateStructuredProperty(input: $input) { urn }
+    }
+    """
+
+    def update_structured_property(
+        self, urn: str, display_name: str = "", description: str = ""
+    ) -> dict[str, Any]:
+        """Change what an ALREADY-DEFINED property says about itself.
+
+        `createStructuredProperty` refuses a property that exists, so without this a
+        definition written once was frozen forever — and every later correction to its text
+        lived in the code, described a surface nobody could see, and failed silently.
+        Measured in Session 16: `attest.verdict`'s live description in the catalog was the
+        string `"test"`, from whichever early run created it, while writeback.py had
+        carried three careful sentences past two sessions that thought they had fixed it.
+
+        Only the fields given are sent: `updateStructuredProperty` takes a partial input, so
+        omitting `newAllowedValues`/`newEntityTypes` leaves them alone rather than clearing
+        them.
+        """
+        payload: dict[str, Any] = {"urn": urn}
+        if display_name:
+            payload["displayName"] = display_name
+        if description:
+            payload["description"] = description
+        return self.execute(self.UPDATE_STRUCTURED_PROPERTY, {"input": payload})[
+            "updateStructuredProperty"
+        ]
+
     # --- claim artifacts (assertions) --------------------------------------
     #
     # A claim artifact is a CUSTOM Assertion plus its appended run events. The assertion is
