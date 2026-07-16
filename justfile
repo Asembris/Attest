@@ -41,6 +41,14 @@ probe:
 spike-claims:
     python spikes/claim_artifact_probe.py
 
+# Can the official DataHub MCP server serve a faithful DatasetSnapshot (the Session 17
+# spike)? Diffs every seeded dataset MCP-vs-GraphQL, then shows the same gap as verdicts.
+# Exits NON-ZERO, and is MEANT to: it is the receipt for why the catalog read is not on
+# MCP, so a green run here would mean the finding had expired and the decision is worth
+# revisiting. Needs `pip install mcp` and uvx; downloads the MCP server on first run.
+spike-mcp:
+    python spikes/mcp_reader_probe.py
+
 # Is the catalog actually up? Checks the pinned version, not just the port.
 health:
     @(Invoke-RestMethod http://localhost:8080/config).versions.'acryldata/datahub'.version
