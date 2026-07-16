@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, BarChart3, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react';
 import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from '../api/types';
-import { verdictCounts, proposals as findProposals } from '../api/types';
+import { verdictCounts, awaitingPublication } from '../api/types';
 import ReceiptsStrip from './ReceiptsStrip';
 import ClaimCard from './ClaimCard';
 import AuditInternals from './AuditInternals';
@@ -27,18 +27,28 @@ export default function AuditResults({
   onShowBenchmark: () => void;
 }) {
   const counts = verdictCounts(record);
-  const proposals = findProposals(record);
-  const reviewMode = record.status === 'awaiting-review' && proposals.length > 0;
+  // WHAT THE RUN IS ACTUALLY PARKED ON: every claim whose VERDICT is still unpublished —
+  // not just the ones with a correction proposal. This counted `proposals` until Session 16
+  // and had been wrong since Option A landed: the checkpoint parks while any claim's
+  // publication is pending, and only a correction ever produces a proposal. So a four-claim
+  // run with one proposal submitted one decision, re-parked on the other three, and could
+  // never reach `complete` — while this bar reported it settled.
+  const pending = awaitingPublication(record);
+  const reviewMode = record.status === 'awaiting-review' && pending.length > 0;
 
-  const [decisions, setDecisions] = useState<Record<number, boolean>>({});
-  // The review gate counts ONLY decidable proposals — corrections that re-verified clean
-  // and are still PENDING (findProposals). A non-decidable outcome (stood-firm, refused,
-  // exhausted) and every Supported / Insufficient-Coverage claim has no Approve/Reject
-  // control at all, so it must never count toward the total; otherwise Submit would wait on
-  // a decision that can never be made. `decided` is measured over `proposals`, not over the
-  // whole `decisions` map, so the count can never outrun what is actually approvable.
-  const decided = proposals.filter((p) => decisions[p.index] !== undefined).length;
-  const allDecided = decided === proposals.length;
+  // Two decisions per claim, never one flag. `undefined` is "no opinion", which is not "no":
+  // an unnamed claim stays pending and the run stays parked, decidable on a later call.
+  const [decisions, setDecisions] = useState<
+    Record<number, { publish?: boolean; accept_correction?: boolean }>
+  >({});
+
+  // The gate is PUBLICATION, and only publication. A correction is optional to rule on —
+  // there may not be one, and "no opinion on the fix" is a legitimate position — but a claim
+  // whose verdict nobody decided is a claim the run is still waiting on. Measured over
+  // `pending` rather than over the whole decisions map, so the count cannot outrun what is
+  // actually decidable.
+  const decided = pending.filter((c) => decisions[c.index]?.publish !== undefined).length;
+  const allDecided = decided === pending.length;
 
   // Bug 2: the DataHub indicator reflects THIS run's actual catalog reachability, not the
   // mount-time health probe (which is fetched once and sticks — a transient warm-up failure
@@ -51,12 +61,25 @@ export default function AuditResults({
   const datahubStatus = catalogReached ? 'reachable' : health?.datahub ?? '—';
 
   function submit() {
-    const payload: DecisionRequest[] = proposals.map((p) => ({
-      claim_index: p.index,
-      accept: decisions[p.index],
-      reviewer: 'attest-ui',
-    }));
+    // One decision per claim still awaiting publication. `accept_correction` is only sent
+    // when a view was actually taken on it — omitting it means "no opinion", and sending
+    // `false` would RECORD a rejection nobody made, in an append-only log.
+    const payload: DecisionRequest[] = pending.map((c) => {
+      const d = decisions[c.index] ?? {};
+      return {
+        claim_index: c.index,
+        publish: d.publish,
+        ...(d.accept_correction === undefined
+          ? {}
+          : { accept_correction: d.accept_correction }),
+        reviewer: 'attest-ui',
+      };
+    });
     onApprove(payload);
+  }
+
+  function decide(index: number, patch: { publish?: boolean; accept_correction?: boolean }) {
+    setDecisions((d) => ({ ...d, [index]: { ...d[index], ...patch } }));
   }
 
   return (
@@ -134,12 +157,15 @@ export default function AuditResults({
             <div className="flex items-center gap-2 text-sm text-insufficient mb-1">
               <GitBranch size={15} />
               <span className="font-medium">
-                {proposals.length} correction{proposals.length === 1 ? '' : 's'} awaiting your decision
+                {pending.length} verdict{pending.length === 1 ? '' : 's'} awaiting your decision
               </span>
             </div>
             <p className="text-xs text-ink-300 mb-4">
-              Decide each proposal below. Approving writes the verdict back to DataHub; nothing is
-              written until you submit. The run is parked at a durable checkpoint until then.
+              Every claim needs a publish decision, whatever its verdict — a Supported finding
+              is how the catalog learns that someone looked, and a verdict Attest never
+              records is indistinguishable from a claim it never checked. Where the agent
+              proposed a fix you can rule on that separately. Nothing is written until you
+              submit; the run is parked at a durable checkpoint until then.
             </p>
             <div className="flex items-center gap-3">
               <button
@@ -150,7 +176,7 @@ export default function AuditResults({
                 {approving ? 'Submitting…' : 'Submit decisions'}
               </button>
               <span className="text-xs text-ink-400">
-                {decided}/{proposals.length} decided
+                {decided}/{pending.length} decided
               </span>
             </div>
             {approveError && (
@@ -168,13 +194,21 @@ export default function AuditResults({
               key={claim.index}
               claim={claim}
               index={i}
-              reviewable={
-                reviewMode &&
-                claim.correction.outcome === 'corrected' &&
-                claim.correction.review === 'pending'
-              }
-              decision={decisions[claim.index]}
-              onDecide={(accept) => setDecisions((d) => ({ ...d, [claim.index]: accept }))}
+              // Reviewable per CLAIM now, not per proposal: every claim whose verdict is
+              // still pending gets a control, which is what Option A means.
+              reviewable={reviewMode && claim.publication.status === 'pending'}
+              publish={decisions[claim.index]?.publish}
+              onPublish={(publish) => decide(claim.index, { publish })}
+              acceptCorrection={decisions[claim.index]?.accept_correction}
+              onAcceptCorrection={(accept) => decide(claim.index, { accept_correction: accept })}
+              // KNOWN GAP, and named rather than half-fixed: this matches by TARGET URN, so
+              // two claims about one dataset both show the last write's result. The backend
+              // has this right — it keys its decision log by claim index precisely because
+              // keying by URN attributed a write to the wrong decision — but the wire type
+              // carries `claim_urn` and no claim index, and the UI cannot derive the URN
+              // (it is a sha256 over the claim's canonical JSON; re-implementing that
+              // identity rule in TypeScript would be a worse bug than this one). The fix is
+              // a claim index on WriteBackView, which is the write path's shape to change.
               writeback={writebacks?.find((w) => w.target_urn === claim.target_urn) ?? null}
             />
           ))}
