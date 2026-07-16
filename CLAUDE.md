@@ -214,12 +214,13 @@ checkpoint does not soften because there is now an HTTP surface.**
   moves to Postgres by changing the connection. Anything you would filter BY (verdict,
   claim type, URN, outcome, review status, timestamp) is a real indexed column; only
   read-whole payloads are JSON blobs.
-- [writeback.py](src/attest/writeback.py) — on approval, the verdict is written back as
-  **five separate typed structured properties** (`attest.verdict`, `.claim_type`,
-  `.checked_at`, `.source_agent`, `.audit_run`), in ONE mutation. Not a text blob: the goal
-  is that "every contradicted ownership claim this week" is a real DataHub query.
-  `attest.audit_run` is the join key back into the store, which is what makes last-write-wins
-  survivable — the catalog holds the latest verdict, and points at the run that produced it.
+- [writeback.py](src/attest/writeback.py) — on approval, each claim is written back as its
+  own **claim artifact**: a CUSTOM DataHub **Assertion** at a URN Attest derives from the
+  claim's content, plus one appended `assertionRunEvent` per verdict. **See §10 — this
+  replaced the five dataset-level structured properties as the audit record.** The five
+  properties are still written as a *glance badge* on the dataset, and they stay
+  last-write-wins, which is now honest rather than lossy: the subject-bearing record is the
+  artifact, and the badge points at it.
 - **There is deliberately no `attest.confidence`.** Attest's verdicts come from
   deterministic code; there IS no confidence, and the third verdict already carries the only
   uncertainty in the system (about the *catalog's coverage*, not about the answer). Writing
@@ -660,8 +661,9 @@ src/attest/
   replay.py            The record, read backwards: a parked run's typed ledger, rebuilt.
   store.py             The audit history. SQLite, plain SQL, Postgres-shaped. Append-only
                        approvals — DataHub is the catalog, NOT the event store.
-  writeback.py         Approved verdict -> DataHub structured properties. Queryable, and
-                       written only when a human says so. No fabricated confidence field.
+  writeback.py         Approved verdict -> ONE DataHub claim artifact per claim (a CUSTOM
+                       Assertion + appended run events). Idempotent, so a partial write is
+                       repaired by repeating it. Written only when a human publishes it.
   llm.py               The only module that calls a model.
   decompose.py         Agent prose -> typed claims. A URN must be quoted, never minted.
   explain.py           Verdict + evidence -> prose. Three gates; falls back to the template.
@@ -706,6 +708,7 @@ seed/
 just setup     # install package + dev deps
 just seed      # generate seed metadata, ingest it, and CAPTURE the offline fixtures (last step)
 just capture   # regenerate tests/fixtures/snapshots/ from the live catalog (run by `just seed`)
+just spike-claims    # prove ONE dataset holds TWO queryable claim artifacts (Session 15)
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
 just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub owns 8080/9002
@@ -855,6 +858,124 @@ exactly as honest as the anti-drift pin, which ships in the same session.**
   not by path, so it picks up both `test_live` and the pin. `just preflight` = `lint test
   live` covers all three tiers.
 
+**10. The claim-level artifact, and the publication gate (Session 15). The write-back had to
+start obeying the rule the checkers obey.**
+
+The design is [docs/design/claim-artifact.md](docs/design/claim-artifact.md); the proof it
+was designed against is [spikes/claim_artifact_probe.py](spikes/claim_artifact_probe.py)
+(`just spike-claims`, 18 checks, exits non-zero on any failure). Everything below was
+measured against the pinned Core v1.5.0.6 **before** it was designed.
+
+- **THE PROBLEM, in one question.** *"Two claims about one dataset are approved. Show me what
+  the next agent inherits from DataHub alone."* The honest answer was **an opaque run UUID**.
+  Structured properties are last-write-wins, so two claims about one dataset overwrote each
+  other and the survivor was a verdict with **no subject** — `attest.verdict = "Contradicted"`
+  cannot say WHICH claim was contradicted. Challenge 1's thesis is "writes results back so the
+  next person or agent inherits the knowledge", and it was not true.
+- **One claim = one CUSTOM Assertion + N appended run events.** The assertion is the CLAIM
+  (stable: what is asserted, about what, at what grain); each run event is the VERDICT at a
+  point in time. Attest supplies the assertion's URN, so distinct claims land at distinct
+  URNs and coexist. `dataset.assertions(urn)` is the thesis query.
+- **`assertionRunEvent` is a TIMESERIES aspect: it APPENDS.** So "was this ever contradicted
+  before someone fixed the tag" is answerable from DataHub alone. §2c's *"DataHub is the
+  catalog, not the event store"* was true of **structured properties** and overgeneralized to
+  DataHub. The store still exists and still holds Attest's own record (§7 of the design doc).
+- **THE VERDICT IS A STORED VALUE. It is NEVER inferred.** `nativeResults['attest.verdict']`
+  carries it verbatim; `result.type` is a **lossy projection** for DataHub's health rollup
+  (Supported→SUCCESS, Contradicted→FAILURE, Insufficient-Coverage→ERROR, which lands in
+  NEITHER the passed nor the failed bucket — correct). **Measured: an Insufficient-Coverage
+  claim and a HALF-WRITTEN one both read `succeeded=0 failed=0`.** The discriminator is
+  `runEvents.total`, equivalently whether `attest.verdict` is present. A reader on the rollup
+  counts confuses "the catalog is silent" (a verdict) with "Attest never finished" (a bug).
+- **RETRY IS SAFE BECAUSE ALL THREE WRITES ARE IDEMPOTENT, and TWO RULES ARE LOAD-BEARING.**
+  The write is necessarily three operations (upsert the claim, report the verdict, swap the
+  verdict tag) and cannot be atomic. It needs no saga: a timeseries row is keyed by
+  `(urn, aspect, timestampMillis)`, so repetition IS the recovery. That holds only while:
+  **(a) `claim_id` is handed the claim and nothing else** — no run id or clock can leak into
+  the identity, so a re-run lands on the SAME artifact; **(b) `write_claim_artifact` has NO
+  DEFAULT for `checked_at`** — it is the run's stored timestamp, and `now()` would append a
+  duplicate verdict on every retry, corrupting an append-only history with an audit that
+  never happened. Both are unreachable from the signature rather than forbidden by comment,
+  and both have a test that breaks them.
+- **`WriteResult` names the STEP that failed** (`upsert`/`report`/`tag`), not a boolean —
+  same reason `CorrectionOutcome` names six outcomes. A failed `report` leaves a claim with
+  no verdict; a failed `tag` leaves a verdict that is correct and merely not findable by
+  search. `POST /audit/{run_id}/writeback` repairs it: it re-runs the idempotent write from
+  the stored record, **approves nothing, and cannot reach an unaccepted claim.** It exists
+  because a failed write-back used to STRAND — `approve` skips a settled claim and a
+  COMPLETE run 409s.
+- **NEVER SET `fieldPath` ON A CUSTOM ASSERTION.** It makes DataHub record the assertee as a
+  *schemaField* URN while `assertionRunEvent` requires a *dataset* URN, so the artifact is
+  created, reads back perfectly, and can **never carry a verdict** — the one thing it exists
+  for. Worse, whether it fires depends on index timing, so it sometimes appears to work. The
+  grain travels in `logic`. Enforced by `client.upsert_custom_assertion` having no parameter
+  for it.
+- More measured landmines: **`result.error` is accepted and silently discarded** (so
+  `INSUFFICIENT_DATA`, which looks perfect for verdict 3, is unusable); **`deleteAssertion`
+  rejects CUSTOM** (HTTP 500 — use `openapi/v3` DELETE); **`reportAssertionResult` reads an
+  eventually-consistent index** and must be retried; **a verdict is not readable the instant
+  it is written**, so a read right after an approval can legitimately see a claim with no
+  verdict — which looks exactly like a half-written one.
+- **Only `customType` and `tags` are filterable on an assertion**, and the two server-side
+  entry points are **DISJOINT**: `dataset.assertions` scopes to a dataset but cannot filter;
+  `searchAcrossEntities` filters verdict/claim-type but cannot scope to a dataset (measured:
+  nine candidate assertee field names, all zero). **The honest line, and the plan says no
+  more than this: DataHub does the scoping; Attest does most of the filtering.** The thesis
+  question needs no filtering at all — it is one fully server-side query.
+
+**10a. OPTION A: every verdict is publishable. The write-back must obey Attest's own rule.**
+
+**The decision, and it is decided — do not re-litigate it.** Publication is its own act,
+orthogonal to the correction loop. Every audited claim parks for a human publish/reject,
+whatever its verdict; correction is one thing that can happen to a Contradicted claim, not
+the gate.
+
+- **What forced it: `STOOD_FIRM` never published.** The gate was `outcome is CORRECTED`, so
+  the ONLY verdict that ever reached the catalog was a contradiction the agent had
+  successfully self-corrected — one of five contradiction outcomes and zero of the other two
+  verdicts. So the most damning thing Attest can find — an agent claims an `ssn` column, is
+  shown the catalog, and **stands by the false claim** (the measured 2-in-6 column swap, the
+  entire reason `revise.subject()` exists) — **died silently**. A compliance auditor that
+  publishes "the agent was wrong and fixed it" while swallowing "the agent was wrong and
+  refused to" is publishing the good news and hiding the bad. That alone forced the gate to
+  change, which is also why "leave the code alone and fix the framing" was never available.
+- **THE ARGUMENT THAT DECIDES IT, and it is the one to give a judge.** Attest exists to say
+  that **absence is not an answer** — an untagged table does not mean "PII-free", it means
+  nobody looked. Under the old gate a dataset with no Attest verdict was ambiguous between
+  "we checked and it was fine" and "we never checked", and nothing in the catalog could tell
+  them apart. **That is Attest committing its own cardinal sin in its own output.** The
+  sharpest question was not "show me a Supported claim" but *"your whole thesis is that
+  silence is ambiguous — why is your write-back silent?"* There is no answer. Now there is:
+  Attest records that it reviewed, whatever the verdict. `policy.py` grants closed-world
+  reasoning only because someone recorded that they **looked** (`Verified` is a fact about
+  the REVIEW); Attest depended on that and refused to do it.
+- **`Decision` SPLITS `publish` from `accept_correction`, and one boolean must never carry
+  both.** That is the mistake `CorrectionOutcome`'s six names exist to prevent: a human can
+  publish a Contradicted verdict AND reject the fix the agent proposed for it — "you were
+  wrong, and your suggested fix is also wrong" — and the old shape could not say it. Both
+  are optional; `None` is **"no opinion", not "no"**, and anything unnamed stays PENDING and
+  re-parks the run (Session 14's rule at the new granularity).
+- **N decisions per run is INTENDED, and the loop cannot strand.** `awaits_human` is monotone
+  — every decision moves a claim out of PENDING and nothing moves back — so the checkpoint
+  exits as soon as the last claim is ruled on. The only run that still completes unattended
+  is one with **no claims**.
+- **THE SCALE TENSION, NAMED RATHER THAN QUIETLY RELAXED.** cost.py projects 1000 claims/day.
+  Nobody approves 1000 claims a day, so this pushes toward auto-publication — **which
+  CLAUDE.md forbids, and which is not built.** *A real deployment needs a policy layer for
+  bulk publication; this is a hackathon build with a human checkpoint on every claim, and it
+  says so.* Do NOT add `?auto_approve=true` or an "approve all" to close this gap. If a
+  deployment wants scale it must decide to relax the rule consciously, and write down that
+  it did.
+- **The store schema CHANGED and an older database is REFUSED at open** (`claims.publication`,
+  `approvals.publish`/`accept_correction`). Same precedent and same fix as Session 5: **`rm
+  attest.db attest-checkpoints.db` and re-run.** Both are gitignored dev state; DataHub is
+  untouched.
+- **MEASURED, live, through the real flow** (`test_live.py::test_all_three_verdicts_reach_
+  the_catalog_through_the_real_approval_flow`): one audit, four claims, all three verdicts
+  published by a human via `POST /audit/{id}/approve` and read back from DataHub — including
+  the unrevisable `ssn` claim. Nothing calls `write_claim_artifact` directly. **Two of those
+  three verdicts were unreachable before this.**
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
@@ -863,7 +984,7 @@ exactly as honest as the anti-drift pin, which ships in the same session.**
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
 | **A step's `inputs` / `outputs` across a restart** | Not persisted, so a *replayed* step carries them empty. **The boundary is ASSERTED, not just documented:** `test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs` strips the summaries out of a real run's trace and demands the record, the receipts, the summary and the trajectory verdict are all unmoved. | They are a log convenience, and nothing a reader sees may read them. If something ever does, a resumed run starts reporting something an unrestarted one does not — silently, only after a restart, with every other test green, because every other test runs in one process and never replays. That is the TLS bug's shape exactly, which is why this one is nailed down rather than trusted. Two sabotages prove the assertion bites (a receipt reading `outputs['cached']`; a trajectory rule reading `outputs['resolved']`), and the fixture uses two claims over one dataset **so the summaries are truthy** — a one-claim run leaves them falsy and would pass a sabotage it was written to catch. |
-| **Store migrations** | None. A pre-Session-5 database is refused at open, by name. **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
+| **Store migrations** | None. A database older than Session 15 is refused at open, by name. **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
 
 **Durable resume is now BUILT** (Session 5). A run parked at the human checkpoint survives
 the death of its process: the paused graph comes back from `SqliteSaver`, the typed ledger
