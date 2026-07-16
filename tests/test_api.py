@@ -937,3 +937,163 @@ def test_a_partial_publication_parks_the_run_again_rather_than_stranding_it(tmp_
 
     assert second["audit"]["status"] == "complete", "the run stranded"
     assert len(second["writebacks"]) == 1, "the second call re-wrote the first claim"
+
+
+# --- GET /claims — the inheritance half of the thesis -------------------------
+
+
+def test_an_approved_verdict_is_retrievable_from_the_catalog(tmp_path):
+    """THE THESIS, end to end, through the real endpoints and nothing else.
+
+    "Attest writes results back so the next person or agent inherits the knowledge" is two
+    claims, and Session 15 proved only the first. This is the second: a human publishes a
+    verdict at the approval endpoint, and it comes back out of `GET /claims` — read from
+    the CATALOG, carrying what it asserts, its grain, its verdict, and who signed it off.
+
+    Nothing here calls the write-back or the reader directly.
+    """
+    build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "publish": True, "reviewer": "dana"}]},
+        )
+
+        body = c.get("/claims", params={"target_urn": SF}).json()
+
+    assert len(body["claims"]) == 1
+    claim = body["claims"][0]
+    assert claim["verdict"] == "Contradicted"
+    assert claim["state"] == "complete"
+    assert claim["target_urn"] == SF
+    assert claim["claim_type"] == "ownership"
+    assert claim["asserted"], "a verdict with no subject — the gap this design closed"
+    assert claim["history"][0]["reviewer"] == "dana"
+    assert claim["history"][0]["verdict"] == "Contradicted"
+
+
+def test_the_claims_response_says_where_each_predicate_was_applied(tmp_path):
+    """Not diagnostics: the difference between two claims, one true and one false.
+
+    "Retrievable from DataHub" is true. "Fully queryable in DataHub" is not, and a response
+    that hid which half Attest did would let a reader believe the catalog answered a
+    question Attest answered.
+    """
+    build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "publish": True, "reviewer": "dana"}]},
+        )
+
+        scoped = c.get(
+            "/claims", params={"target_urn": SF, "verdict": "Contradicted"}
+        ).json()["retrieval"]
+        searched = c.get("/claims", params={"verdict": "Contradicted"}).json()["retrieval"]
+
+    assert scoped["entry_point"] == "dataset.assertions"
+    assert scoped["pushed_down"] == ["target_urn"]
+    assert scoped["filtered_locally"] == ["verdict"]
+
+    assert searched["entry_point"] == "searchAcrossEntities"
+    assert searched["pushed_down"] == ["verdict"]
+    assert "stale" in searched["note"], "the tag caveat is not surfaced to the caller"
+
+
+def _refuse_the_verdict(*args, **kwargs):
+    """The catalog accepting a claim and refusing its verdict. Landmine 4's exact shape."""
+    from attest.datahub import DataHubError
+
+    raise DataHubError(
+        "Failed to report Assertion Run Event. Assertion does not exist or is not "
+        "associated with any entity."
+    )
+
+
+def test_a_half_written_claim_reads_INCOMPLETE_and_the_retry_completes_it(tmp_path):
+    """The three-state read, end to end, on the path a human actually walks.
+
+    A verdict absent because the write BROKE is a different fact from a verdict absent
+    because the index has not caught up, and only this one is repairable. The claim must
+    say so, name the step, and be fixed by the retry — without minting a second artifact or
+    appending a duplicate verdict.
+    """
+    service, catalog = build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+
+        # HALF-WRITE IT DELIBERATELY: let the claim land, make the VERDICT fail. This is
+        # landmine 4's shape — an index that has not caught up refuses the report.
+        real_report = catalog.report_assertion_result
+        catalog.report_assertion_result = _refuse_the_verdict
+        c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "publish": True, "reviewer": "dana"}]},
+        )
+
+        broken = c.get("/claims", params={"target_urn": SF}).json()["claims"][0]
+        assert broken["state"] == "incomplete", (
+            "a claim whose verdict write failed does not read as incomplete"
+        )
+        assert broken["verdict"] is None
+        assert broken["failed_step"] == "report", "the read does not name the step to repair"
+        assert broken["audit_run"] == run_id, "the read cannot say which run to retry"
+
+        catalog.report_assertion_result = real_report
+        repaired = c.post(f"/audit/{run_id}/writeback").json()
+        assert repaired["writebacks"][0]["ok"] is True
+
+        fixed = c.get("/claims", params={"target_urn": SF}).json()
+
+    assert len(fixed["claims"]) == 1, "the retry minted a SECOND artifact"
+    assert fixed["claims"][0]["state"] == "complete"
+    assert fixed["claims"][0]["verdict"] == "Contradicted"
+    assert len(fixed["claims"][0]["history"]) == 1, (
+        "the retry appended a DUPLICATE verdict — the run's timestamp is not keying the "
+        "event, and an append-only history now records an audit that never happened"
+    )
+
+
+def test_a_lagging_claim_is_NOT_reported_as_broken(tmp_path):
+    """THE RULE. Never render INCOMPLETE from DataHub's silence when the write LANDED.
+
+    Measured: a verdict takes a median 2.1s to become readable after it is accepted, so
+    this is the NORMAL state for the first seconds after every approval. A read that called
+    it broken would be wrong loudly, on the happy path, several times a day — and would be
+    reading absence as an answer, which is the mistake this product exists to catch,
+    committed in its own read path.
+
+    Constructed deliberately: the write LANDS and the store records that it did, and the
+    catalog is then made to show no verdict — which is exactly what the index lag looks
+    like from a reader's side.
+    """
+    service, catalog = build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        run_id = c.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+        body = c.post(
+            f"/audit/{run_id}/approve",
+            json={"decisions": [{"claim_index": 0, "publish": True, "reviewer": "dana"}]},
+        ).json()
+        assert body["writebacks"][0]["ok"] is True, "the write did not land"
+
+        # The write landed and the store says so. Now the index has not caught up.
+        catalog.run_events.clear()
+
+        claim = c.get("/claims", params={"target_urn": SF}).json()["claims"][0]
+
+    assert claim["state"] == "pending-lag", (
+        "a write that LANDED is reported as half-written because the catalog has not shown "
+        "it yet — Attest reading absence as an answer, in its own read path"
+    )
+    assert claim["failed_step"] is None, "there is no step to repair: the write succeeded"
+
+
+def test_a_claim_the_catalog_does_not_have_is_a_404_not_an_empty_one(tmp_path):
+    """Nothing there, versus something there whose verdict has not landed. Two facts."""
+    build(tmp_path, *CONTRADICTED)
+    with TestClient(app) as c:
+        response = c.get("/claims/urn:li:assertion:attest-nosuchclaim")
+
+    assert response.status_code == 404

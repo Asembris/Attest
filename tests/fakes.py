@@ -14,6 +14,7 @@ built from the live catalog.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -173,6 +174,13 @@ class FakeDataHub(FakeCatalog):
         self.upserts: list[dict[str, Any]] = []
         self.tags_defined: set[str] = set()
         self.tagged: dict[str, set[str]] = {}
+        # WHAT WAS ASKED OF THE SERVER, verbatim. The retrieval path REPORTS which
+        # predicates it pushed down to DataHub, and a report nobody checks is a claim
+        # nobody checks -- so these two logs are what `test_retrieval` holds that report
+        # to. A predicate reported as pushed down must be findable in here; one reported
+        # as filtered locally must NOT be.
+        self.dataset_reads: list[dict[str, Any]] = []
+        self.searches: list[dict[str, Any]] = []
 
     def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.fail:
@@ -298,11 +306,46 @@ class FakeDataHub(FakeCatalog):
     ) -> list[dict[str, Any]]:
         if self.fail:
             raise DataHubError("GraphQL transport error: the catalog is down")
+        self.dataset_reads.append({"dataset_urn": dataset_urn})
+        # SCOPES, AND FILTERS NOTHING — modelled on the real entry point rather than made
+        # convenient. A fake that quietly accepted a verdict filter here would let the
+        # push-down report claim a server-side filter this server does not have.
         return [
             self._with_events(node)
             for node in self.assertions.values()
             if (node["info"]["customAssertion"]["entityUrn"] == dataset_urn)
         ][start : start + count]
+
+    def search_assertions(
+        self,
+        custom_types: Sequence[str] = (),
+        tags: Sequence[str] = (),
+        start: int = 0,
+        count: int = 50,
+    ) -> list[dict[str, Any]]:
+        """FILTERS, AND SCOPES TO NOTHING. The mirror image of the read above.
+
+        The two entry points are disjoint on the real server (measured: no assertee field
+        is indexed, so search cannot restrict to a dataset), and they are disjoint here for
+        the same reason — a fake that let one do both would make the retrieval path's whole
+        honesty argument untestable.
+        """
+        if self.fail:
+            raise DataHubError("GraphQL transport error: the catalog is down")
+        self.searches.append(
+            {"custom_types": list(custom_types), "tags": list(tags)}
+        )
+        found = []
+        for node in self.assertions.values():
+            if custom_types and node["info"]["customAssertion"]["type"] not in custom_types:
+                continue
+            # The tag filter is over the tags the artifact CARRIES, which is what makes a
+            # stale tag miss here and be found by a dataset read — the asymmetry the
+            # retrieval note warns about.
+            if tags and not (self.tagged.get(node["urn"], set()) & set(tags)):
+                continue
+            found.append(self._with_events(node))
+        return found[start : start + count]
 
     def _with_events(self, node: dict[str, Any]) -> dict[str, Any]:
         events = sorted(

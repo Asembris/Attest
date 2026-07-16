@@ -282,7 +282,9 @@ def test_a_claims_artifact_urn_is_stored_and_is_the_one_the_write_back_uses(stor
 
     states = store.write_states()
     expected = writeback.claim_urn(record.claims[0].claim)
-    assert expected in states, "the store addresses a claim's artifact differently from the write-back"
+    assert expected in states, (
+        "the store addresses a claim's artifact differently from the write-back"
+    )
     assert states[expected].claim_urn.startswith("urn:li:assertion:attest-")
 
 
