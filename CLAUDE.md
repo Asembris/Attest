@@ -1230,6 +1230,77 @@ project exists to catch — one level up.
   guards, resume, and the cost projection as a **dated projection**, not a receipt) and
   [CONTRIBUTING.md](CONTRIBUTING.md) (commands, tiers, cadence).
 
+**14. THE BROWSER E2E (Session 19). The one hop no other test made — and the drift class that
+shipped twice, caught by a human both times.**
+
+`tests/test_e2e_browser.py`, `just e2e`. The vacuity check is `spikes/e2e_sabotage.py`
+(`just e2e-sabotage`), and it is not optional reading.
+
+- **THE GAP, precisely: `test_live.py` looks end-to-end and is not.** It drives
+  `fastapi.testclient.TestClient` — an IN-PROCESS ASGI transport. It never binds a port,
+  never loads the built bundle, never runs a `fetch`. So **no test executed
+  `frontend/src/api/client.ts` or `types.ts` at all**; the TS mirror was hand-kept in sync
+  with `record.py` by READING it. The Session 5 rule at the browser boundary: `TestClient`
+  has no fetch, no JSON round-trip through TypeScript, and no `extra="forbid"` rejection to
+  surface, so it cannot fail the way the real thing fails.
+- **BOTH BUGS THIS CATCHES REALLY SHIPPED (6903d6c), both lived a full session in `main`,
+  and both were found by a human clicking the app while the entire suite was green.** That is
+  why they are the sabotages rather than invented ones. `just e2e-sabotage` re-introduces
+  each and **exits non-zero if the E2E does not go red** — same discipline as
+  `bench-sabotage` and `spike-mcp`.
+- **THE 422 MUST BE CAUGHT AT THE WIRE, NOT WAITED OUT — and the first version got this
+  wrong.** The check written to name the 422 sat *below* a `wait_for` on the success text, so
+  under the real regression it failed as a **90-second timeout** waiting for text that was
+  never coming: a mystery hang, which is the same symptom as five other bugs. `expect_response`
+  around the click makes the 422 the FIRST thing that fails, with the server's own words
+  (`extra_forbidden`, `body.decisions.0.accept`). **Measured: ~2s instead of 90.** A diagnostic
+  that only runs on the happy path is decoration.
+- **AN EPHEMERAL PORT, NEVER :8003.** `just serve` runs `--reload`, whose child holds the
+  socket and can outlive Ctrl-C (`just port`). A test bound to 8003 would not fail against
+  that orphan — it would **silently talk to it**, a different process with a different store
+  and an older bundle, and go green about the wrong program. Unreachable, not unlikely.
+- **`DELETE /openapi/v3/entity/assertion/{urn}` RETURNS 200 AND DOES NOTHING OBSERVABLE.**
+  Measured: the artifact still reads `complete`, `history=1`, after a 200. The timeseries run
+  events survive the entity delete. So a "fresh" artifact cannot be made by deleting a used
+  URN, and the repair test's read-state would have been masked by an earlier run's verdict —
+  it would have passed once and lied forever. **The claim is made fresh by its CONTENT
+  instead** (a varying freshness window), which is CLAUDE.md's own prescription: *demo
+  read-states on fresh claims*. Same loud-then-silent shape as the TLS repair: a delete that
+  reports success and changes nothing.
+- **THE FAULT INJECTION IS OUT-OF-BAND, and `writeback.py` / `service.py` get NO scaffolding.**
+  A test-side wrapper fails the client's `report` step; product code has no env hook, no
+  test-only branch, no `if broken:`. Their correctness IS the product. The wrapper must raise
+  **`DataHubError`** — the only exception `write_claim_artifact` catches — because injecting a
+  bare `RuntimeError` does not simulate a partial write, it simulates an unhandled crash and
+  500s the approve. Got that wrong first; the test failed loudly, which is the trap working.
+- **The repair test's server is IN-PROCESS while the main test's is a SUBPROCESS, deliberately.**
+  The main test runs `python -m uvicorn attest.api.app:app` exactly as `just demo` does, so the
+  shipped command is what is proven. The repair test needs a client whose report step fails,
+  and injecting that into a subprocess means a fault hook in product code. In-process is still
+  a real server on a real socket answering a real browser; the only thing given up is process
+  separation, and what is bought is that writeback.py stays clean.
+- **PLAYWRIGHT DRIVES INSTALLED EDGE (`channel="msedge"`). No browser is downloaded.** Its
+  downloader is the bundled NODE driver, which would need `NODE_USE_SYSTEM_CA=1` on this
+  network — not downloading avoids the class entirely. Pinned in its own `e2e` extra,
+  **deliberately not in `dev`**, so CI never installs or runs it. The cost, named: the browser
+  is whatever Edge the machine has; pinning playwright does not pin Edge.
+- **`curl` IS NOT A VALID TLS PROBE ON THIS MACHINE, and it nearly wrote a false finding into
+  the plan.** `curl https://cdn.playwright.dev/` returns 000 — and so does
+  `curl https://pypi.org/simple/`, which pip had just used successfully. The failure is
+  `CRYPT_E_NO_REVOCATION_CHECK` inside Windows **schannel**, curl's own TLS stack. Probed with
+  the repo's own approach (`truststore.inject_into_ssl()` + httpx) both answer. **Probe with
+  the runtime that will do the work**, never with whatever is on PATH.
+- **The playwright import is INSIDE the fixture, never at module scope.** `pytest.importorskip`
+  at module scope runs during COLLECTION, before mark filtering, so on a runner without
+  playwright it reports a SKIP into the **offline tier** — whose whole claim is that it never
+  skips, and whose skips are made loud on purpose. A false alarm about lost coverage in a tier
+  that lost none. *Verified: offline tier 340 passed, 0 skipped.*
+- **WHAT IT DOES NOT PROVE, and the README says so:** it is ONE path — the demo path and the
+  repair path — and **not UI coverage**. It does not prove the crash-orphan window
+  (`unknown`): that needs the process to die between DataHub committing and the store
+  persisting, which is not simulatable without faking it, and faking it would prove nothing.
+  It stays a documented limitation.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
@@ -1240,6 +1311,8 @@ project exists to catch — one level up.
 | **A step's `inputs` / `outputs` across a restart** | Not persisted, so a *replayed* step carries them empty. **The boundary is ASSERTED, not just documented:** `test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs` strips the summaries out of a real run's trace and demands the record, the receipts, the summary and the trajectory verdict are all unmoved. | They are a log convenience, and nothing a reader sees may read them. If something ever does, a resumed run starts reporting something an unrestarted one does not — silently, only after a restart, with every other test green, because every other test runs in one process and never replays. That is the TLS bug's shape exactly, which is why this one is nailed down rather than trusted. Two sabotages prove the assertion bites (a receipt reading `outputs['cached']`; a trajectory rule reading `outputs['resolved']`), and the fixture uses two claims over one dataset **so the summaries are truthy** — a one-claim run leaves them falsy and would pass a sabotage it was written to catch. |
 | **Store migrations** | None. A database older than Session 16 is refused at open, by name — and since Session 16 the guard checks EVERY column, not just the first one it was written for (`_REQUIRED_COLUMNS`; add a row whenever the schema gains a column). **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
 | **A write-back result is matched to a claim by TARGET URN in the UI** | Two claims about one dataset both display the last write's result. The backend has this right — its decision log is keyed by claim INDEX, precisely because keying by URN attributed a write to the wrong decision — but `WriteBackView` carries `claim_urn` and no claim index. | The UI cannot derive the artifact URN: it is a sha256 over the claim's canonical JSON, and re-implementing that identity rule in TypeScript would be a worse bug than the one it fixes (two implementations of an identity that must never disagree). The fix is a claim index on the wire type, which is the write path's shape to change. |
+| **A failed write-back is reported on the results screen with no control to repair it** | `PublicationPanel` renders "Published, but the catalog write failed at {step}" and stops. The remedy is real and one call away, but it lives on the Published-claims screen — a human must navigate there to reach it. | Found by Session 19's E2E, which had to navigate to drive the repair. It is a UX gap, not a defect: the existing path WORKS and is now proven end to end. Adding a second entry point to the one endpoint with a catalog side effect is a change to make deliberately, not to slip in beside a test. |
+| **The repair spinner fans out across a run** | `ClaimsExplorer` passes `retrying={retrying === claim.audit_run}`, so repairing one claim shows "Repairing…" on every claim from the same audit. | Cosmetic, and the same URN-vs-index shape as the write-back row below: `retryWriteback` is genuinely run-scoped, so the state is keyed by the thing the call actually takes. The fix is a per-claim key the wire type does not carry. |
 | **No reconciler for a stale verdict tag** | A crash between `report` and `tag` leaves a correct verdict that a tag-filtered search cannot find. It is recorded (`writeback_step`), visible (`GET /claims` says so in its `note`), and repairable in one call — but nothing detects it automatically. | A production deployment would want a periodic reconcile comparing each claim's latest run event against its verdict tag. This is a hackathon build, and it says so rather than shipping a sweeper nobody exercises. |
 
 **Durable resume is now BUILT** (Session 5). A run parked at the human checkpoint survives

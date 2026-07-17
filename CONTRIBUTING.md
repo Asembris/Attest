@@ -40,6 +40,8 @@ just check           # lint + the truly-offline tier. Hermetic. What CI runs.
 just test            # offline + integration tiers, across cores (-n auto)
 just test-offline    # the truly-offline tier alone. No DataHub, no key, never skips.
 just live            # the live tier by marker: a real model + the anti-drift pin. Costs money.
+just e2e             # the BROWSER E2E: real Edge -> real API -> real DataHub -> back out.
+just e2e-sabotage    # THE VACUITY CHECK for the E2E. Non-zero if two real bugs go uncaught.
 just preflight       # lint + test + live. Before any push touching the semantic layer.
 just matrix          # the 12-cell coverage assertion alone
 just resume          # durable resume + per-run token billing
@@ -65,6 +67,18 @@ tracebacks, working pdb, and un-interleaved output.
 | **Offline** | *(default)* | Nothing — captured fixtures | None. Never skips. Gates CI. |
 | **Integration** | `integration` | DataHub Core running | Reads only. Skips **loudly**. |
 | **Live** | `live` | DataHub + `OPENAI_API_KEY` | Spends tokens; writes to your local catalog. Skips **loudly**. |
+| **Browser E2E** | `live` | ...plus `.[e2e]` and a built UI | As above, through a real browser. `just e2e` builds the UI first. |
+
+The browser E2E is part of the **live** tier by marker, so `just live` and `just preflight`
+pick it up. It needs two things the rest of that tier does not — `pip install -e ".[e2e]"`
+and a built `frontend/dist` — and **skips with a named reason when either is missing**, so a
+`just live` on a machine that has never run `just ui` is not silently one test lighter. Use
+`just e2e`, which builds the UI first and cannot skip for that reason.
+
+It drives **installed Microsoft Edge**; no browser is downloaded, so the Playwright CDN and
+the corporate-CA trap never enter the picture. `playwright` is pinned in its own `e2e` extra
+and deliberately **not** in `dev`: CI installs `dev` and must never try to install or run
+this.
 
 The offline tier runs on a bare runner and reads no network. If an "offline" test ever reaches for the
 network it **fails** in CI rather than skipping — that is the point of the gate. A suspiciously fast
@@ -117,6 +131,11 @@ Two commands exit non-zero **by design**, and both are tripwires rather than bug
 - **`just spike-mcp`** measures the DataHub MCP server as a catalog reader and fails because it
   [cannot carry a verdict](docs/mcp-evaluation.md). If it ever goes green, the finding has expired and
   the decision is worth reopening.
+- **`just e2e-sabotage`** re-introduces the two UI/API drift bugs that really shipped in
+  6903d6c — the `accept: boolean` 422 and the `proposals()` re-park — and fails if the
+  browser E2E does *not* go red for each. Both lived a full session in `main` while the whole
+  suite was green, and both were caught by a human clicking the app. If the E2E cannot catch
+  them it is not wired to what it claims to test.
 
 Same discipline as `test_fixture_drift.py`: an assertion that only ever passes is a green light wired
 to nothing.
