@@ -628,44 +628,11 @@ invariants worth not rediscovering:
   (`Did not find a registered class for d`).
 - **Attest's own code talks to DataHub via direct GraphQL over `httpx`, not the
   `acryl-datahub` SDK.** The CLI/SDK is for *ingestion only*.
-- **THE CATALOG READ IS GRAPHQL AND NOT MCP. Decided in Session 17, with evidence — do not
-  reopen it as a checkbox.** Challenge 1 names the DataHub MCP Server as the way agents get
-  catalog context, so the gap was real and the adapter was scoped: `cache.Reader` is one
-  method (`fetch_dataset(urn) -> DatasetSnapshot`) and the checkers never see the transport.
-  The spike ([spikes/mcp_reader_probe.py](spikes/mcp_reader_probe.py), `just spike-mcp`)
-  measured the named path against `mcp-server-datahub` 0.6.0 on the pinned Core and it
-  **cannot carry a verdict**. The write-up is [docs/mcp-evaluation.md](docs/mcp-evaluation.md)
-  and it is a submission asset, not an apology.
-
-  **The server RUNS against Core** — `is_oss=True`, every call answered. Compatibility was
-  never the wall. The wall is that its read tools are built to feed a language model, and
-  each optimisation for that purpose destroys something a checker needs: a Dataset's
-  `lastModified` is requested by **no tool** (freshness has no input); field tags/terms are
-  flattened to **display names** (`urn:li:tag:PII` -> `"PII"`), so a column's term cannot
-  reach the glossary hierarchy that makes it a signal; `type` is **commented out** of the
-  server's own fragment; and `clean_gql_response` strips nulls and empties. None of it is
-  configurable.
-
-  **MEASURED: 130 mismatches over 16 datasets, and 4 of 5 TRUE claims change verdict —
-  including `customer_profile.email is PII` reading back CONTRADICTED.** That last one is the
-  finding, and it is Attest's own thesis biting Attest: the tag arrives as `"PII"`, so the
-  column reads unlabelled; the table is `Verified`; `COMPLETENESS_REACHES_COLUMNS` (§6) then
-  turns an unlabelled column of a reviewed table into a **denial**. So the rule this leaves
-  behind: **a transport that is lossy for an LLM is not merely lossy for a checker, it is
-  INVERTING** — and our own completeness rule is what weaponizes the loss. Every guard in
-  this repo (faithfulness, polarity, crosscheck, trajectory) fails closed on the MODEL's
-  output; **nothing defends the catalog READ**, because the read was never a place where
-  meaning could be lost.
-
-  `just spike-mcp` **exits non-zero by design** and is the tripwire: if it ever goes green
-  the finding has expired and the decision is worth reopening. Same discipline as
-  `test_fixture_drift.py` — an assertion that only ever passes is a green light wired to
-  nothing. Three defects are drafted for upstream in [docs/upstream/](docs/upstream/).
-
-  **Do NOT "close the gap" by adding MCP as a demonstrated-but-non-verdict context path.**
-  It was considered and refused: running the inverting transport purely to say we touched it
-  is the hollow checkbox integration the finding argues against, and a second read of the
-  same catalog re-opens the §2c consistency boundary (one run, one frozen snapshot).
+- **THE CATALOG READ IS GRAPHQL AND NOT MCP, and it is a DECISION rather than a landmine —
+  see §12.** It sat here as prose until Session 19 moved it: the named integration path was
+  scoped, built against, and measured, and a measured architectural decision belongs in the
+  log's numbered sections beside the others, not in a list of things that bite. **Do not
+  reopen it as a checkbox.** `just spike-mcp` exits non-zero by design and is the tripwire.
 - **The MCP server posts usage telemetry to Mixpanel on startup** (`/mp/engage`, `/mp/track`),
   before it is asked to do anything. It only surfaced here because the TLS interception made
   it fail loudly in the logs; on a normal network it is silent. `DATAHUB_TELEMETRY_ENABLED=false`
@@ -1163,6 +1130,105 @@ second half: `GET /claims`, `GET /claims/{claim_urn}`, reading **DataHub**, neve
   with nothing touched; a deliberately half-written claim reading `incomplete` /
   `failed_step='report'` / 0 verdicts, then `POST /audit/{id}/writeback` → `complete`, **the
   same artifact URN**, and **exactly one verdict from that run, not two**.
+
+**12. THE CATALOG READ IS GRAPHQL, NOT MCP (Session 17). Measured, not preferred — and the
+finding is Attest's own thesis biting Attest.**
+
+The write-up is [docs/mcp-evaluation.md](docs/mcp-evaluation.md); the receipt is
+[spikes/mcp_reader_probe.py](spikes/mcp_reader_probe.py) (`just spike-mcp`). It is a
+submission asset, not an apology. **Do not reopen this as a checkbox.**
+
+- **THE GAP WAS REAL AND THE ADAPTER WAS SCOPED.** Challenge 1 names the DataHub MCP Server
+  as how agents get catalog context, so "we didn't use the named path" needed an answer
+  better than a preference. `cache.Reader` is one method (`fetch_dataset(urn) ->
+  DatasetSnapshot`) and the checkers never see the transport, so an MCP adapter was
+  well-defined: implement that method, change nothing else. The question was purely whether
+  the MCP response **contains the facts a `DatasetSnapshot` is made of.** It does not.
+- **THE SERVER RUNS. Compatibility was never the wall**, and that matters because it is the
+  failure everyone expects. `is_oss=True`, correct version-gating, every call answered for
+  every seeded dataset. The finding is about what those *successful* responses contain.
+- **MEASURED: 130 mismatches over 16 datasets (16/16 fail parity), and 4 of 5 TRUE claims
+  change verdict — including `customer_profile.email is PII` reading back CONTRADICTED.**
+  That row is the finding. `benchmark/README.md` names Supported↔Contradicted a
+  **correctness** failure — the worst thing this product can do — as distinct from a coverage
+  failure. Over MCP, Attest tells a compliance auditor that a column the catalog *explicitly
+  tags PII* is not PII. Not "unsure". Not.
+- **THE MECHANISM, and it is ours.** The tag arrives as the display name `"PII"`, so the
+  column reads **unlabelled**; `customer_profile` is `Verified`; `COMPLETENESS_REACHES_COLUMNS`
+  (§6) propagates that marker down and turns an unlabelled column of a reviewed table into a
+  **denial**. Every step is correct in isolation. **Our own hard-won completeness rule is what
+  weaponizes the transport's loss into a confident false denial** — because it assumes the read
+  is lossless, and until now the read was never a place where meaning could be lost.
+- **THE RULE THIS LEAVES BEHIND: a transport that is lossy for an LLM is not merely lossy for
+  a checker — it is INVERTING.** Give a language model `"PII"` instead of `urn:li:tag:PII` and
+  it does fine; it was going to read the string anyway. Give a deterministic checker the same
+  thing and the signal does not weaken, it **reverses**, because the checker's precision is
+  exactly what makes it unable to shrug.
+- **AND NOTE WHERE THE GUARDS ARE NOT.** faithfulness, polarity, crosscheck, trajectory — all
+  of them fail closed on the **MODEL's output**. **Nothing defends the catalog READ**, because
+  the read was the one thing that could be trusted to mean what it said. An LLM-shaped
+  transport puts a lossy compression stage exactly where the system has no guard, and the
+  failure it produces is silent, confident, and wrong.
+- **Four defects, verified in the server's own source, none configurable:** a Dataset's
+  `lastModified` is requested by **no tool** (so `FreshnessClaim` — one of four claim types,
+  three of twelve matrix cells — has *no input*); field tags/terms are flattened to **display
+  names**, so a column's term can never join the glossary hierarchy that makes it a signal at
+  all; `type` is **commented out** of the server's own fragment while its reader still looks
+  for it; and `clean_gql_response` collapses absent and empty. Plus two latent ones: schemas
+  truncate to a token budget (a dropped column reads as the catalog *denying* it exists —
+  Contradicted, from a token budget), and `get_entities` returns `isError: False` for a
+  missing entity.
+- **ONE OVERSTATED CLAIM WAS RETRACTED BEFORE IT SHIPPED, and that is the part worth keeping.**
+  The tempting story went: `CustomerIdentifier` has no parent nodes — deliberately outside the
+  PII node, which is exactly what makes it not-PII — so `parentNodes.nodes` is `[]`, the strip
+  deletes it, and *the evidence that a term is deliberately not-PII is precisely what gets
+  dropped*. Elegant, thematic, and **false**: `count` is a scalar, so `{count: 0, nodes: []}`
+  survives as `{count: 0}` and the term stays legible. The real `term_parents` mismatch is the
+  display-name flattening. **The absent-vs-empty collapse is real but costs evidence FIDELITY,
+  not a verdict** — Attest still reaches the right answer and can no longer say whether the
+  catalog was *silent* or *empty*. Found by checking rather than by shipping it.
+- **`just spike-mcp` EXITS NON-ZERO BY DESIGN** and is the tripwire: one server version
+  against one DataHub version, and both move. If it ever goes green the finding has expired
+  and this decision is worth reopening. Same discipline as `test_fixture_drift.py` — an
+  assertion that only ever passes is a green light wired to nothing.
+- **Do NOT "close the gap" by adding MCP as a demonstrated-but-non-verdict context path.**
+  Considered and refused: running the inverting transport purely to say we touched it is the
+  hollow checkbox integration the finding argues against, and a second read of the same
+  catalog re-opens the §2c consistency boundary (one run, one frozen snapshot).
+- **What it does NOT prove:** not that the server is defective for its intended use (the
+  compaction is a *feature* for an agent assembling prose context); not that no adapter is
+  possible in principle — only that none is possible on this server's responses without
+  inventing data the catalog did not send. Three defects are drafted upstream
+  ([docs/upstream/](docs/upstream/)); were they fixed, this should be revisited.
+
+**13. THE REPO TELLS THE CURRENT TRUTH (Session 18). Docs rebuilt to match the shipped
+feature, on receipts only.**
+
+No code changed. The README had drifted into describing a system that no longer existed, and
+a submission's front page making claims the code contradicts is the same defect class this
+project exists to catch — one level up.
+
+- **The README leads with the inheritance thesis** (per-claim write-back to DataHub, so the
+  next agent inherits it), not with a session diary. Three Mermaid diagrams depict the REAL
+  path — the trajectory 409, the publish/withhold axis, the sequential non-atomic write — and
+  four badges, each backed (CI is dynamic and labelled "offline checks"; the Core version pin
+  says **tested-against**, not enforced).
+- **Hand-typed numbers were replaced by a receipt table** linking `core.json`, `full.json`,
+  `core-sabotaged-classification.json`, `calibration.json`. Every displayed figure opens.
+- **CUT, as unreceipted:** the 14.3s console line, the 2/6 correction rate, the 2/9 and
+  9-of-9 explanation counts, the 2-fetch and 90-entity outputs, the 97.5%→100% history.
+- **CORRECTED, as contradicted by the code:** seven routes, not four; write-back is per-claim
+  content-addressed artifacts with append-only events, **not** a last-write-wins badge;
+  revision calls **Attest's own configured model**, not a callback into the source agent.
+- **SCOPED, as overstated:** polarity and faithfulness are **lexical detectors**, not proof of
+  entailment; injection cannot reach the verdict, which is **not** injection-proofness; resume
+  covers a **parked run**, not the remote writes.
+- **DISCLOSED, as real gaps:** the crash-orphan window, retrieval capped at 50 without
+  pagination, lossy Insufficient-Coverage evidence, no hosted demo — **and no
+  browser-to-DataHub end-to-end test.** That last one is Session 19's subject.
+- Depth moved to [docs/architecture.md](docs/architecture.md) (trust boundary, PII policy,
+  guards, resume, and the cost projection as a **dated projection**, not a receipt) and
+  [CONTRIBUTING.md](CONTRIBUTING.md) (commands, tiers, cadence).
 
 ## Known deferred items — document, don't fix
 
