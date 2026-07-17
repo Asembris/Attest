@@ -127,7 +127,11 @@ export default function ClaimArtifactCard({
                 {readStateBlurb(claim.state)}
               </div>
 
-              {/* THE REPAIR — incomplete only. */}
+              {/* THE REPAIR. Gated on `repairable` — the FAILED WRITE, not the read-state:
+                  a re-audited claim whose new write failed still shows its OLDER verdict and
+                  reads `complete`, and gating on the state would strand it forever. This
+                  comment said "incomplete only" until Session 19 and contradicted the line
+                  directly above it, which is the overstatement this repo exists to catch. */}
               {repairable && (
                 <div className="mb-4 flex items-center gap-3 p-3 rounded-lg bg-contradicted/10 border border-contradicted/25">
                   <div className="flex-1 min-w-0">

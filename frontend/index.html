@@ -2,7 +2,15 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <!-- An inline data: favicon, not a file. The scaffold shipped `href="/vite.svg"`, which
+         never existed here (there is no public/), so the demo 404'd on every single page
+         load — found by the browser E2E, which is the only thing that loads this page. A
+         dangling href is a claim about a file that is not there; the mark below is the
+         verdict palette, and it costs no request. -->
+    <link
+      rel="icon"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0f19'/%3E%3Ccircle cx='16' cy='9.5' r='3.2' fill='%234ade80'/%3E%3Ccircle cx='16' cy='16' r='3.2' fill='%23f87171'/%3E%3Ccircle cx='16' cy='22.5' r='3.2' fill='%23fbbf24'/%3E%3C/svg%3E"
+    />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Attest — Groundedness Auditor</title>
   </head>

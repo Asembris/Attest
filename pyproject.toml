@@ -50,6 +50,25 @@ dev = ["pytest>=8", "pytest-xdist>=3.6", "ruff==0.15.21", "attest[bench]"]
 # dependency -- nothing in src/attest imports it, and the service does not ship it. Pulled
 # into `dev` above because the offline test tier (test_benchmark.py) imports it.
 bench = ["scikit-learn>=1.5"]
+# The browser E2E (tests/test_e2e_browser.py, `just e2e`). DELIBERATELY NOT IN `dev`, and
+# that is the whole point of it being its own extra: CI installs `.[dev]` and runs `just
+# check`, which is `-m 'not live and not integration'`. The E2E is live-marked, needs a real
+# DataHub, a real model and a real browser, and must never be something CI tries to install
+# or run. `dev` deliberately does NOT depend on `attest[e2e]` -- the opposite of the `bench`
+# reasoning above, because no test in the CI-gated tier imports playwright.
+#
+# PINNED EXACT, same reasoning as ruff: playwright's driver protocol and its browser
+# expectations move between releases, and a floating floor means the same tree drives a
+# browser on one machine and dies on another with no code change.
+#
+# NO BROWSER DOWNLOAD. The test drives INSTALLED Microsoft Edge (`channel="msedge"`), so
+# `playwright install` is never run and cdn.playwright.dev is never contacted. That is not a
+# preference -- Playwright's downloader is its bundled NODE driver, which would need
+# NODE_USE_SYSTEM_CA=1 on a TLS-inspecting network (CLAUDE.md's system-CA table, row 2), and
+# the whole class of problem is avoided by not downloading anything. The cost, named: the
+# browser is then whatever Edge the machine has, and Edge auto-updates. Pinning playwright
+# does not pin the browser. Measured green against Edge 150.0.4078.65.
+e2e = ["playwright==1.61.0"]
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -150,6 +150,26 @@ test-offline *ARGS:
 live:
     python -m pytest -m live -v
 
+# THE BROWSER E2E: a real Edge drives the real UI against the real API and real DataHub, a
+# human publishes a verdict, and it is read back OUT of the catalog. The hop no other test
+# makes -- `test_live` looks end-to-end but drives TestClient, an in-process ASGI transport
+# that never binds a port and never runs a `fetch`, so nothing else in the suite executes
+# frontend/src/api/client.ts at all. That is the gap the 6903d6c drift shipped through.
+#
+# Needs: DataHub, OPENAI_API_KEY, `pip install -e ".[e2e]"`, and a BUILT UI (`just ui`) --
+# it serves frontend/dist, so a stale bundle would test yesterday's code. Drives INSTALLED
+# Edge; no browser is downloaded. Live tier: costs money, writes to your catalog.
+e2e: ui
+    python -m pytest tests/test_e2e_browser.py -m live -v
+
+# THE VACUITY CHECK FOR THE E2E. Re-introduce the two REAL bugs from 6903d6c -- the 422 and
+# the re-park -- and fail if the E2E does NOT go red for each. Both shipped, both lived a
+# full session in main, and both were caught by a human clicking the app while the entire
+# suite stayed green. If the E2E cannot catch them it is not wired to what it claims to
+# test. Restores the source and rebuilds the honest bundle even on a crash.
+e2e-sabotage:
+    python spikes/e2e_sabotage.py
+
 # Just the coverage matrix: can every claim type still reach every verdict?
 matrix:
     python -m pytest tests/test_coverage.py -v

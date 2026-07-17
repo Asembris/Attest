@@ -96,8 +96,13 @@ export async function approve(
  *  content so a re-run lands on the same artifact, and the verdict is keyed by the run's own
  *  timestamp so re-reporting collapses onto the same row rather than appending a duplicate.
  *
- *  ONLY for a claim whose `state` is `incomplete`. A `pending-lag` claim has nothing to
- *  repair — its write landed and the index simply has not shown it yet. */
+ *  For a claim with a RECORDED FAILED WRITE — which is not the same as `state === incomplete`
+ *  and the difference is load-bearing. An artifact is content-addressed, so a claim audited
+ *  before and re-audited today, whose NEW write failed, still shows the older verdict and
+ *  reads `complete`; it is repairable and gating on the state would strand it. What must
+ *  never reach this are `pending-lag` (the write landed; the index is ~2s behind; there is
+ *  nothing to repair) and `unknown` (no recorded write to re-run) — and neither can, because
+ *  both have a null `failed_step`. See ClaimArtifactCard's `repairable`. */
 export async function retryWriteback(runId: string): Promise<WriteBackResponse> {
   const res = await fetch(`/audit/${runId}/writeback`, { method: 'POST' });
   return parse<WriteBackResponse>(res);

@@ -312,6 +312,7 @@ and the run stays parked, decidable later. There is no `?auto_approve=true` and 
 | **Offline** — checkers, benchmark, coverage matrix, guards, graph, API | Nothing. Captured fixtures. | None. Free. **Never skips; gates CI.** | `just check` |
 | **Integration** — the GraphQL client against a real GMS | DataHub Core running | Reads only | `just test` |
 | **Live** — the semantic layer vs a real model, plus the anti-drift fixture pin | DataHub + `OPENAI_API_KEY` | **Spends tokens; writes to your local catalog** | `just live` |
+| **Browser E2E** — a real browser drives the whole transaction to DataHub and back | ...plus a built UI | As above, through real Edge | `just e2e` |
 
 The two halves are blind to each other's failure mode, which is why running both is a rule rather than
 a habit: `just check` proves the guard still catches hallucinations — a guard that rejected
@@ -354,7 +355,11 @@ wrong verdict has the same confident shape as a right one.
 - **A stale verdict tag has no reconciler.** A crash between `report` and `tag` leaves a correct verdict
   that a tag-filtered search cannot find. It is recorded, visible in `GET /claims`, and repairable —
   but nothing detects it automatically.
-- **No browser-to-DataHub end-to-end test.** The UI is exercised by hand.
+- **The browser E2E covers one path, not the UI.** `just e2e` drives a real browser through
+  the whole transaction — audit, publish, three catalog writes, read back out of DataHub —
+  and `just e2e-sabotage` proves it goes red by re-introducing two bugs that really shipped.
+  It is the demo path and the repair path; it is not UI coverage, and the rest of the UI is
+  still exercised by hand.
 - **No store migrations.** A database older than the current schema is refused at open, by name:
   `rm attest.db attest-checkpoints.db` and re-run. Both are gitignored dev state; DataHub is untouched.
 - **Not built:** continuous monitoring, multi-tenancy, bulk publication. A real deployment at the
