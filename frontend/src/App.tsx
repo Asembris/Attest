@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import Hero from './components/Hero';
+import AuditProgress from './components/AuditProgress';
 import AuditResults from './components/AuditResults';
 import Benchmark from './components/Benchmark';
 import ClaimsExplorer from './components/ClaimsExplorer';
@@ -37,11 +38,15 @@ export default function App() {
     setError(null);
     setWritebacks(null);
     setApproveError(null);
+    // Clear any prior record so the progress screen starts in its indeterminate phase; when
+    // the POST resolves, AuditProgress reveals the REAL record and hands off to results
+    // itself (it auto-advances, which is also what keeps the browser E2E — no Continue click
+    // — green). So there is no setView('results') here.
+    setRecord(null);
     setView('auditing');
     try {
       const result = await submitAudit(text, 'attest-ui');
       setRecord(result);
-      setView('results');
     } catch (e) {
       const detail =
         e instanceof ApiError ? e.detail : 'Could not reach the audit service. Is it running on :8003?';
@@ -89,9 +94,8 @@ export default function App() {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.3 }}
-          className="min-h-screen bg-ink-950 flex flex-col items-center justify-center"
         >
-          <AuditingState />
+          <AuditProgress record={record} onContinue={() => setView('results')} />
         </motion.div>
       )}
 
@@ -138,45 +142,5 @@ export default function App() {
         </motion.div>
       )}
     </AnimatePresence>
-  );
-}
-
-function AuditingState() {
-  const steps = [
-    'Sanitizing agent output...',
-    'Decomposing claims...',
-    'Resolving entities in the catalog...',
-    'Running deterministic checks...',
-    'Generating guarded explanations...',
-  ];
-
-  return (
-    <div className="flex flex-col items-center gap-8">
-      <div className="relative">
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 1.2, repeat: Infinity, ease: 'linear' }}
-          className="w-12 h-12 rounded-full border-2 border-ink-700 border-t-supported"
-        />
-      </div>
-      <div className="space-y-2 w-80">
-        {steps.map((s, i) => (
-          <motion.div
-            key={s}
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: i * 0.25 }}
-            className="flex items-center gap-2 text-sm text-ink-300"
-          >
-            <motion.span
-              animate={{ opacity: [0.3, 1, 0.3] }}
-              transition={{ duration: 1.5, repeat: Infinity, delay: i * 0.1 }}
-              className="w-1.5 h-1.5 rounded-full bg-supported"
-            />
-            {s}
-          </motion.div>
-        ))}
-      </div>
-    </div>
   );
 }
