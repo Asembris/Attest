@@ -1,4 +1,17 @@
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Fonts are SELF-HOSTED (woff2 via @fontsource), never fetched from a runtime CDN. The demo
+   runs per-judge-local with DataHub possibly the only reachable network, so a Google-Fonts
+   @import would silently degrade the whole editorial design to a system fallback on a judge's
+   machine. Same "no runtime CDN, the demo is local" discipline as the rest of the build.
+   Cormorant Garamond = display (serif), Figtree = body (sans), JetBrains Mono = identifiers. */
+@import '@fontsource/cormorant-garamond/400.css';
+@import '@fontsource/cormorant-garamond/500.css';
+@import '@fontsource/cormorant-garamond/600.css';
+@import '@fontsource/figtree/300.css';
+@import '@fontsource/figtree/400.css';
+@import '@fontsource/figtree/500.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+@import '@fontsource/jetbrains-mono/600.css';
 
 @tailwind base;
 @tailwind components;
@@ -15,7 +28,6 @@
 
   body {
     @apply bg-ink-950 text-ink-100 font-sans antialiased;
-    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11', 'ss01';
   }
 
   ::selection {
