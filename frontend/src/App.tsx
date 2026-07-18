@@ -5,6 +5,7 @@ import AuditResults from './components/AuditResults';
 import Benchmark from './components/Benchmark';
 import ClaimsExplorer from './components/ClaimsExplorer';
 import { health as fetchHealth, submitAudit, approve, ApiError } from './api/client';
+import { setDatahubUiUrl } from './api/types';
 import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from './api/types';
 
 // `claims` is the OTHER half of the thesis, and it is reachable from the results screen on
@@ -24,7 +25,11 @@ export default function App() {
 
   useEffect(() => {
     fetchHealth()
-      .then(setHealth)
+      .then((h) => {
+        // Adopt the backend's configured DataHub UI origin before any card deep-links to it.
+        setDatahubUiUrl(h.datahub_ui_url);
+        setHealth(h);
+      })
       .catch(() => setHealth(null));
   }, []);
 

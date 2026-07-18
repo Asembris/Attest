@@ -528,4 +528,7 @@ class AuditService:
             "status": "ok",
             "model": settings.model_default,
             "datahub": catalog,
+            # Handed to the frontend so its dataset deep-links point at the right DataHub UI
+            # without the built SPA hardcoding a host. See settings.datahub_ui_url.
+            "datahub_ui_url": settings.datahub_ui_url,
         }

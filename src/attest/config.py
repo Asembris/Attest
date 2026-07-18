@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     datahub_gms_url: str = Field(default="http://localhost:8080", alias="DATAHUB_GMS_URL")
     datahub_token: str = Field(default="", alias="DATAHUB_TOKEN")
 
+    # The DataHub *UI* origin, distinct from the GMS URL above. GMS (:8080) is the metadata
+    # API Attest reads and writes; the UI (:9002) is where a human clicks through to a
+    # dataset. The frontend deep-links to it, but the built SPA has no runtime env — so the
+    # backend hands it this value over /health rather than the frontend hardcoding :9002,
+    # which is the one host that would silently break behind a real URL. Local default;
+    # override for a deployed instance where the UI is not on localhost:9002.
+    datahub_ui_url: str = Field(default="http://localhost:9002", alias="DATAHUB_UI_URL")
+
     # Repair a TLS failure by falling back to the OS certificate store (see llm.py).
     # Only ever attempted AFTER certifi's bundle has actually failed, so it costs a
     # normal network nothing. Set false to keep certifi as the only trust source.

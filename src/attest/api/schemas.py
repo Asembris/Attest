@@ -347,3 +347,8 @@ class HealthResponse(BaseModel):
     version: str
     model: str
     datahub: str
+    datahub_ui_url: str = Field(
+        default="http://localhost:9002",
+        description="The DataHub UI origin the frontend should deep-link to. Backend-supplied "
+        "so the built SPA does not hardcode a host that breaks behind a real URL.",
+    )

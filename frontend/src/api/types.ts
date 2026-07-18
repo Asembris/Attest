@@ -307,6 +307,9 @@ export interface HealthResponse {
   version: string;
   model: string;
   datahub: string;
+  // The DataHub UI origin to deep-link to, supplied by the backend. The built SPA has no
+  // runtime env, so this is how `datahubDatasetUrl` learns the host without hardcoding :9002.
+  datahub_ui_url: string;
 }
 
 // --- derived helpers, shared by components ---------------------------------
@@ -360,8 +363,24 @@ export function corpuserId(urn: string): string {
   return urn.split(':').pop() ?? urn;
 }
 
-/** The DataHub UI page for a dataset URN — the live catalog behind the audit, on :9002 in
- *  the demo. The URN is URL-encoded whole; DataHub decodes it on the dataset route. */
+// The DataHub UI origin. Defaults to the local quickstart (:9002) so a bare load before
+// /health returns still links somewhere sane; `setDatahubUiUrl` overrides it once the
+// backend has reported its own configured value (App.tsx, on the startup health fetch).
+// A module-level value rather than prop-drilling through every card that deep-links: it is
+// one origin fixed for the life of the page, and the alternative is threading it through
+// three component trees for a single string the backend already knows.
+let datahubUiBase = 'http://localhost:9002';
+
+/** Adopt the backend's configured DataHub UI origin (from GET /health). Called once at
+ *  startup; a trailing slash is trimmed so the join below is exact. */
+export function setDatahubUiUrl(url: string): void {
+  if (url) datahubUiBase = url.replace(/\/+$/, '');
+}
+
+/** The DataHub UI page for a dataset URN — the live catalog behind the audit. The origin is
+ *  backend-supplied (see `setDatahubUiUrl`), not hardcoded, so the deep-link follows a
+ *  deployed instance instead of breaking on :9002. The URN is URL-encoded whole; DataHub
+ *  decodes it on the dataset route. */
 export function datahubDatasetUrl(urn: string): string {
-  return `http://localhost:9002/dataset/${encodeURIComponent(urn)}`;
+  return `${datahubUiBase}/dataset/${encodeURIComponent(urn)}`;
 }
