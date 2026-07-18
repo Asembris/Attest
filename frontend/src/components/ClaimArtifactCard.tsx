@@ -32,6 +32,15 @@ function shortUrn(urn: string): string {
   return parts.length >= 2 ? parts[1] : urn;
 }
 
+// One evidence value, with the ABSENCE preserved rather than blanked. `null` is the catalog
+// being SILENT — the justification for Insufficient-Coverage — and it must read as such, not
+// as an empty cell that looks like the catalog said "" or []. See VerdictEventView.evidence.
+function evidenceValue(value: unknown): string {
+  if (value === null || value === undefined) return '∅ (absent — the catalog is silent)';
+  if (typeof value === 'object') return JSON.stringify(value);
+  return String(value);
+}
+
 export default function ClaimArtifactCard({
   claim,
   index,
@@ -90,6 +99,14 @@ export default function ClaimArtifactCard({
                 the whole answer — and a null verdict is NEVER rendered as a verdict. */}
             {claim.verdict ? <VerdictBadge verdict={claim.verdict} size="sm" /> : null}
             <ReadStateBadge state={claim.state} />
+            {/* The verdict tag lags the latest verdict — detected from the catalog alone, so a
+                store=None reader sees it too. A verdict-filtered search cannot find this claim
+                until the tag is repaired, though a dataset read (like this one) can. */}
+            {claim.stale_tag && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-contradicted/10 text-contradicted font-mono-nums text-[0.7rem]">
+                <Tag size={9} /> stale tag
+              </span>
+            )}
             <span className="font-mono-nums text-xs text-ink-500">{claim.claim_type}</span>
             <span className="font-mono-nums text-xs text-ink-500">{claim.grain}</span>
             <span className="font-mono-nums text-xs text-ink-500 truncate">
@@ -240,9 +257,23 @@ export default function ClaimArtifactCard({
                                 <span className="text-ink-100">{corpuserId(event.reviewer)}</span>
                               </div>
                             )}
-                            {event.evidence && (
-                              <div className="font-mono-nums text-ink-400 break-all">
-                                {event.evidence}
+                            {event.evidence.length > 0 && (
+                              <div className="space-y-0.5">
+                                {event.evidence.map((e, j) => (
+                                  <div
+                                    key={j}
+                                    className="font-mono-nums text-ink-400 break-all text-[0.7rem]"
+                                  >
+                                    {e.field}
+                                    <span className="text-ink-500"> = </span>
+                                    {evidenceValue(e.value)}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {event.snapshot_id && (
+                              <div className="font-mono-nums text-ink-500 text-[0.7rem]">
+                                snapshot {event.snapshot_id}
                               </div>
                             )}
                             {event.audit_run && (

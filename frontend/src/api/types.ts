@@ -242,7 +242,14 @@ export interface VerdictEventView {
   audit_run: string;
   reviewer: string;
   decision: string;
-  evidence: string;
+  /** The catalog fields this verdict was decided against, STRUCTURED and absence-preserving.
+   *  `value === null` is the catalog being SILENT (the justification for
+   *  Insufficient-Coverage), kept distinct from '' and []. It used to be a flattened string
+   *  with every null row dropped — so a reader could not tell "said nothing" from "said empty". */
+  evidence: EvidenceView[];
+  /** The identity of the catalog snapshot this verdict was decided against — which state of
+   *  the world it held true for. Captured at audit time and stored, never recomputed. */
+  snapshot_id: string;
   /** DataHub's own SUCCESS/FAILURE/ERROR. A LOSSY projection for its health rollup —
    *  shown for transparency and read by nothing. The verdict above is authoritative. */
   native_type: string;
@@ -266,6 +273,11 @@ export interface ClaimView {
   /** The run to hand POST /audit/{run_id}/writeback to repair this claim. */
   audit_run: string;
   tags: string[];
+  /** The verdict TAG disagrees with the latest verdict — detected from the artifact ALONE,
+   *  so a store=None reader sees it too. The tag is a derived index written last, so a crash
+   *  between `report` and `tag` leaves a correct verdict a verdict-search cannot find.
+   *  On-read detection, not a reconciler. False when there is no verdict. */
+  stale_tag: boolean;
   history: VerdictEventView[];
 }
 
@@ -277,6 +289,11 @@ export interface RetrievalView {
   pushed_down: string[];
   filtered_locally: string[];
   considered: number;
+  /** The catalog's OWN total for this entry point's server-side scope. `total > considered`
+   *  means the listing was TRUNCATED at the limit — there are more artifacts the catalog
+   *  holds that this page did not return, and `note` says so. A claim past the limit is
+   *  absent from this listing, NOT absent from the catalog. */
+  total: number;
   note: string;
 }
 
