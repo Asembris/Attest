@@ -129,6 +129,7 @@ def health(service: Service) -> HealthResponse:
         version=__version__,
         model=state["model"],
         datahub=state["datahub"],
+        datahub_ui_url=state["datahub_ui_url"],
     )
 
 
