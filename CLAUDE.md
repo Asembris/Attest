@@ -1489,6 +1489,99 @@ a durable write-ahead intent and re-entrant idempotent replay. NOT a saga.** Dur
   unchanged (a store=None reader still cannot tell pending-lag from a permanent gap); what
   changed is that a process-death orphan is now RECOVERED rather than left for a human.
 
+**17. THE DETERMINISTIC TRUTH HOLES CLOSED (Session 23). Four places a MALFORMED, ABSENT,
+or FUTURE input could produce a confident-looking WRONG verdict — the one thing this product
+exists never to do. The least judge-visible session by design: no new capability, no new
+surface, edge-hardening of EXISTING checkers and the normalization layer. Three were open;
+one was already closed and is reported so rather than padded into a fix.** The spine under
+all of it: **malformed is not a verdict, absence is not a verdict, a bad clock is not a
+verdict** — and every fix preserves the UNKNOWN/INCOMPLETE/COMPLETE and absent-≠-empty
+distinctions. No checker gained a model import; trajectory stays green.
+
+- **HOLE 2 (highest value) — A MALFORMED CATALOG RESPONSE IS NOW AN ERROR, NEVER A VERDICT,
+  and it took two forms both live.** The fix: a structurally broken response becomes
+  `MalformedResponseError` (a `DataHubError`, so `_resolve` catches it exactly as it catches
+  entity-not-found → a `ClaimError`, out of the verdict tally, named in `errors`). The catch
+  in `client.fetch_dataset` is the NARROW set `(KeyError, AttributeError, TypeError,
+  ValueError, ValidationError)`, **never broadened to bare `Exception`** — that would swallow
+  real parse bugs.
+  - **2a, the fabrication (confident wrong verdict):** `snapshot._urns` normalized a
+    present-but-URL-less association entry (`{"owner": null}`, or an owner missing its `urn`)
+    to the empty-string URN `''` — a populated-LOOKING list of garbage. `check_ownership` then
+    read the claimed owner as "not among the owners" and returned a confident **Contradicted**
+    ("alice is not the owner; the catalog lists `''`"). REPRODUCED, then reproduced again by
+    SABOTAGE (reverting `_urns` restores the Contradicted). Now `_urns` **raises** on a
+    present-but-broken entry.
+  - **2b, the crash:** a field with no `fieldPath` (`KeyError`), a wrong-typed `lastModified`
+    (`AttributeError`), a null `urn` (`ValidationError`) propagated uncaught — `_resolve` and
+    `cache` catch only `DataHubError` — and **crashed the whole run**, taking every other
+    claim's verdict with it. Now `fetch_dataset` wraps `from_graphql` and converts them.
+  - **THE BOUNDARY, PINNED, because this is where the fix could BECOME a new hole:** a
+    legitimately **empty** association (`[]` — nobody owns it) and an **absent** one (`null`)
+    are VALID and stay **Insufficient-Coverage**. Only a present entry with no usable URN
+    raises. `[]` never enters the loop (returns `()`); absent returns `None`. Over-raising
+    there would collapse absence into malformation — the same sin one door over. A dedicated
+    test asserts `[]` → IC and does NOT raise, beside the tests that assert the broken entry
+    DOES.
+
+- **HOLE 1 — A FUTURE `lastModified` IS REJECTED, NOT SCORED FRESH.** `(now - last_modified)`
+  is negative for a future timestamp, so the old code computed a negative age, found it `<=`
+  any positive window, and returned a confident **Supported** with the nonsense reason
+  "Last modified **-48.0 hours** ago, within the asserted 24-hour window." A future time is a
+  malformed DATA point (a bad upstream clock), not a very fresh dataset. **Disposition:
+  Insufficient-Coverage with the implausible value shown as evidence — NOT `ClaimError`.**
+  The entity resolved and the claim is well-formed; this is a field-level data fault, not an
+  unaskable question, so "the claim was malformed" (ClaimError) would be false. IC+flag says
+  the true thing and stays a pure function (no new exception, trajectory inert). It extends
+  absence-≠-empty to a **third** state: `absent (value=None)` ≠ empty ≠ `implausible
+  (value=the future ISO)`, kept distinct in the evidence. **The clock-skew grace is one named
+  constant** `FUTURE_TOLERANCE_SECONDS = 300`: within it a future time is skew and the age
+  clamps to 0 (just-modified data IS fresh → Supported); beyond it, recency cannot be
+  established → IC. Justified, not magic: NTP-synced hosts stay sub-second, loosely-synced
+  ones rarely exceed minutes, minutes-to-days ahead is a fault. **The test pins the
+  constant's ROLE both sides of the boundary, not its number** — change 300→30 and it still
+  passes (boundary holds); remove the clamp and the within-grace side goes red.
+
+- **HOLE 3 — VERIFIED-ABSENCE IS NOW CONSISTENT ACROSS ALL LABELS, and the divergence was
+  narrow and conservative.** `COMPLETENESS_REACHES_COLUMNS` (§6) is declared **True**: an
+  untagged column of a `Verified` table is a reviewed-clean column. The PII path
+  (`policy.resolve_pii` via `_decide_pii`) honored it; the **generic non-PII label loop** in
+  `check_classification` checked `elif not observed:` BEFORE `elif complete:`. At TABLE grain
+  the two are mutually exclusive (a complete table carries the marker, so `observed` is
+  non-empty) so the order was inert — but at COLUMN grain `observed` is the COLUMN's labels
+  while `complete` derives from the TABLE's, so an unclassified column of a Verified table
+  short-circuited to **Insufficient-Coverage**, diverging from the PII path AND from the
+  declared policy. Fix: **reorder `complete` above `not observed` in both arms** (inert at
+  table grain, corrects column grain; the false-assurance trap is preserved because it now
+  fires only when `complete` is False — an unreviewed table). This was a divergence in the
+  CONSERVATIVE direction (IC where a verdict was licensed), not a confident-wrong-answer —
+  reported as such. **Freshness / ownership / schema correctly do NOT apply the marker**:
+  `Verified` is a CLASSIFICATION-completeness statement and says nothing about when the data
+  changed, who owns it, or which columns exist. That half is **correct-by-design and PINNED
+  with a regression test per type** (absent aspect + Verified → IC), never changed. **The
+  benchmark is unmoved** — every column-scoped classification case in it is PII, which goes
+  through the untouched `_decide_pii` path.
+
+- **HOLE 4 — DETERMINISTIC DISPLAY PROSE: CLOSED ON INSPECTION, NO FIX MANUFACTURED.** Every
+  display path reads the STORED verdict and never re-derives it: `explain.template` leads with
+  `result.verdict.value` from code; `writeback` writes `attest.verdict` verbatim and the
+  native `result.type` is a documented lossy projection never read back; `retrieval`'s
+  `read_state`/`stale_tag`/`repairable` read stored values. The one drift risk — the freshness
+  template rendering "-48.0 hours ago" — was a SYMPTOM of Hole 1, gone the moment Hole 1 was
+  fixed, not an independent defect. The Hole 1 fix therefore carries a **guard-safety
+  obligation, asserted**: the future-IC deterministic template passes `faithfulness` AND
+  `polarity` (the reason states silence only — "cannot be confirmed or denied", the SILENT
+  idiom polarity.py handles), so display prose never falls back or drifts. Padding a fourth
+  fix would have been the benchmark author's characteristic failure.
+
+- **VERIFICATION.** Sabotage-first per hole: each reproduced (or proven closed) before the
+  fix, and the ownership fabrication re-reproduced by reverting `_urns`. MEASURED — offline:
+  370 passed, 0 skipped, lint clean, the offline benchmark unmoved; integration (`test_client`
+  against real GMS v1.5.0.6): passed; live (`test_live` 12 matrix cells + guard-lets-truth-
+  through + the Session-21 gap tests + `test_fixture_drift` anti-drift pin): passed, which is
+  what proves the `_urns` hardening does not trip on real well-formed seeded data and the new
+  future-IC evidence ships past the guards.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |

@@ -405,13 +405,29 @@ run identity into the key. Two things make it tolerable rather than a hole:
    time. Both were considered and refused as padding. The honest move is to pin the two real
    guarantees and name the boundary.
 
-## Entity-not-found is not a verdict
+## Entity-not-found is not a verdict — and neither is a malformed one
 
 A claim about a dataset that does not exist surfaces as a `ClaimError`, kept out of `audits` entirely
 and counted in no verdict tally. The catalog neither disagrees with the claim nor is silent about it —
 the *question was malformed*, most likely a bad URN from upstream entity resolution. Scoring it
 Insufficient-Coverage would launder a hallucinated URN into a legitimate-looking audit result, and the
 bad URN would never be seen.
+
+The same rule reaches one layer down, to a response that is *structurally* broken rather than absent
+(Session 23). A present-but-URL-less association entry (`{"owner": null}`) once normalized to the
+empty-string URN `''` — a populated-looking list of garbage that drove a confident Contradicted — and
+a wrong-shaped response (a field with no `fieldPath`, a null `urn`) crashed the whole run. Both now
+raise `MalformedResponseError`, a `DataHubError`, so `resolve` turns them into the same `ClaimError`:
+not a verdict, not a crash. The line that must not be crossed is that a legitimately **empty** (`[]`)
+or **absent** (`null`) aspect is a valid Insufficient-Coverage, never an error — absence is not
+malformation, just as it is not disagreement.
+
+A **future** `lastModified` is the same instinct in the freshness checker: `now - last_modified` is
+negative, so a naive `age <= window` scores a bad upstream clock as *very fresh* and returns a
+confident Supported. Beyond a small clock-skew grace it is Insufficient-Coverage with the implausible
+value shown as evidence (distinct from the absent case, whose evidence is `None`); within the grace the
+age clamps to zero, because a just-modified dataset genuinely is fresh. A bad clock is not a freshness
+signal, exactly as a broken response is not a catalog reading.
 
 ## The cost projection
 
