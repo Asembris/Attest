@@ -103,14 +103,16 @@ def main() -> int:
         if s.marker not in out:
             wrong_place.append(s.name)
             print(f"    RESULT : went red, but NOT at {s.marker!r} — wrong reason")
-            for ln in [l for l in out.splitlines() if l.strip().startswith(("E ", "FAILED"))][:3]:
+            fails = [x for x in out.splitlines() if x.strip().startswith(("E ", "FAILED"))]
+            for ln in fails[:3]:
                 print(f"             {ln.strip()[:96]}")
             continue
 
         timing = ""
         if s.fast_seconds:
             ok = elapsed <= s.fast_seconds
-            timing = f"  (failed in {elapsed:.1f}s, {'FAST' if ok else 'SLOW — a hang, not a diagnosis'})"
+            verdict = "FAST" if ok else "SLOW — a hang, not a diagnosis"
+            timing = f"  (failed in {elapsed:.1f}s, {verdict})"
             if not ok:
                 wrong_place.append(s.name)
         print(f"    RESULT : caught — red at {s.marker!r}{timing}")
@@ -121,7 +123,8 @@ def main() -> int:
             print(f"  FAILED: {len(survived)} sabotage(s) SURVIVED: {survived}")
             print("  The smoke test cannot detect a failure it exists to detect.")
         if wrong_place:
-            print(f"  FAILED: {len(wrong_place)} sabotage(s) went red for the WRONG reason: {wrong_place}")
+            print(f"  FAILED: {len(wrong_place)} sabotage(s) red for the WRONG reason:")
+            print(f"          {wrong_place}")
             print("  Red at the wrong place (or too slowly) is not the diagnosis it claims.")
         print("=" * 78)
         return 1

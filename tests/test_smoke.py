@@ -39,13 +39,17 @@ pytestmark = pytest.mark.live
 # varies it per page load for a fresh artifact URN; a test wants determinism) and sits in the
 # Supported band so this never drags in the correction loop — the smoke test is about whether
 # the path ANSWERS, not about any one verdict. Overridable by the sabotage via env.
-_DEMO_SAMPLE = """Findings from the data platform review:
+_HR = "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD)"
+_USERS = "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD)"
+_RAW = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)"
 
-The dataset urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD) contains no PII.
+_DEMO_SAMPLE = f"""Findings from the data platform review:
 
-The dataset urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD) is owned by dana.wu.
+The dataset {_HR} contains no PII.
 
-The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD) was updated within the last 5000 hours."""
+The dataset {_USERS} is owned by dana.wu.
+
+The dataset {_RAW} was updated within the last 5000 hours."""
 
 
 def _sample() -> str:
