@@ -15,6 +15,18 @@ setup:
 
 # --- the catalog -------------------------------------------------------------
 
+# Bring up the pinned DataHub Core stack (v1.5.0.6) and BLOCK until GMS is healthy.
+#
+# Uses the VENDORED compose (deploy/datahub/docker-compose.yml) via the CLI's
+# --quickstart-compose-file, so bring-up does not fetch a compose file from GitHub at run
+# time -- which fails outright on a TLS-inspecting network and is a single point of failure
+# elsewhere. It gates on GMS /config, NOT on the CLI's exit code: quickstart crashes printing
+# its success checkmark on a cp1252 console (non-zero on success), and a cold boot's silent
+# 60-90s reads as a hang. So the CLI runs in the background and up.ps1 polls with a progress
+# line and a hard deadline. See deploy/datahub/up.ps1 and docs/deployment.md.
+up:
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy/datahub/up.ps1
+
 # Generate the seed metadata and ingest it into DataHub.
 #
 # The last step captures the offline test fixtures from the freshly seeded catalog, so the
@@ -30,6 +42,19 @@ seed:
 # the pin verifies.
 capture:
     python seed/capture_snapshots.py
+
+# DESTROY the catalog and rebuild it from the seed -- the definitive reset for the demo.
+#
+# A published verdict is a content-addressed artifact whose history is an append-only
+# TIMESERIES aspect. Measured: DELETE /openapi/v3/entity/assertion returns 200 and LEAVES the
+# verdict; only `datahub delete --hard` removes it. A targeted delete-script would have to
+# enumerate every artifact to be complete, and a reset that misses one is a partial lie -- so
+# this nukes the VOLUMES, where completeness is definitional. Touches only the catalog, never
+# Attest's own store; regenerates the offline fixtures (relative seed dates -> fresh
+# timestamps). Per-judge isolation is the real reset; this is the operator's rebuild. Several
+# minutes. See deploy/datahub/reset.ps1.
+reset:
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File deploy/datahub/reset.ps1
 
 # Prove DataHub's read/write path end to end (the Session 0 spike).
 probe:
