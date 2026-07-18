@@ -239,13 +239,16 @@ flowchart TD
     A["Canonical claim JSON, minus raw prose"] --> B["sha256 identity, stable across re-runs"]
     B --> W
 
+    B --> I["write-ahead intent (durable) BEFORE the first catalog write"]
+    I --> W
+
     subgraph W["The write: three sequential steps, NOT atomic"]
         direction LR
         C["1. upsert assertion"] --> D["2. append verdict event"] --> E["3. add verdict tag"]
     end
 
     W -->|"a step fails, and is caught"| R["recorded, and repairable in one call"]
-    W -->|"the process dies mid-write"| U["orphan: reads UNKNOWN. Not auto-repairable"]
+    W -->|"the process dies mid-write"| U["orphan → replayed from the intent on the next start (idempotent)"]
     W --> F["retrieval: DataHub scopes, Attest filters the rest"]
     F --> G["append-only claim history"]
     G --> H["next agent"]
@@ -254,13 +257,15 @@ flowchart TD
     classDef hub fill:#99f6e4,stroke:#0f766e,color:#111
     classDef warn fill:#fecaca,stroke:#b91c1c,color:#111
     class A input
-    class B,C,D,E,F,G,H hub
+    class B,C,D,E,F,G,H,I hub
     class U,R warn
 ```
 
 <sub>The **run event** is the verdict and is append-only. The **tag** — and the dataset badge — are
-projections written after it, never the truth. Retrieval paginates and round-trips the catalog's total,
-so a claim past the page is named as truncated, never silently absent.</sub>
+projections written after it, never the truth. The **write-ahead intent** is persisted before the first
+catalog write, so a process death mid-settlement is replayed on the next start; the writes are all
+idempotent, so replay collapses onto the same artifact and the same event. Retrieval paginates and
+round-trips the catalog's total, so a claim past the page is named as truncated, never silently absent.</sub>
 
 **Reads are GraphQL over `httpx`.** Writes are three sequential operations, and each is idempotent —
 which is why repeating the write *is* the recovery, and why no saga is needed. `WriteResult` names the
@@ -361,11 +366,19 @@ wrong verdict has the same confident shape as a right one.
   vendored pinned compose), but it runs on your machine — there is no public URL to click, and
   that is the [deliberate reset design](docs/deployment.md#the-reset-design), not a gap. It
   needs Docker and ~8 GB free RAM, and the first bring-up pulls ~12.6 GB of images.
-- **The three catalog writes are sequential, not atomic.** A caught failure is recorded, surfaced, and
-  repairable in one call. But if the **process dies** after DataHub commits the upsert and before the
-  outcome is persisted, nothing local knows a write was attempted: the claim reads `unknown`, and the
-  repair endpoint cannot find it. `unknown` is deliberately **not** reported as a failure — no evidence
-  of a write is not evidence of a failed write.
+- **The three catalog writes are sequential, not atomic — but settlement is now
+  crash-recoverable.** A caught failure is recorded, surfaced, and repairable in one call. And a
+  **process death** mid-settlement is recovered: a durable write-ahead intent is persisted *before* the
+  first catalog write, and a fresh process replays it on startup — the three writes are idempotent, so
+  replay lands on the same artifact and the same verdict event (the history stays length one). This
+  closes the orphan window from just after the checkpoint decision is consumed through the store commit,
+  including the case where the remote write *fully succeeded* but the local decision had not yet been
+  saved. Proven by a real SIGKILL at four write points and once *during* recovery (`just settle-recover`,
+  falsified by `just settle-sabotage`). **Residual:** a crash in the brief in-memory window *before* the
+  intent is persisted — after the graph consumes the decision, before any catalog write — strands the
+  run at a 409, but the catalog is untouched and the decision is simply re-made by re-auditing. It is
+  **single-settler** (one recovering process at a time), and the dataset **badge** is a best-effort
+  glance view *outside* the guarantee.
 - **A stale verdict tag has no *background* reconciler.** A crash between `report` and `tag` leaves a
   correct verdict that a tag-filtered search cannot find. It is recorded, repairable in one call, and
   now **detected on read** — from the artifact alone, so a reader with no Attest store sees it too

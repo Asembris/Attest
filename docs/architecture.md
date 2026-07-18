@@ -326,8 +326,41 @@ audit fabricating a cost figure the original refused to state.** That is None-is
 inside Attest's own receipts.
 
 **Scope this claim carefully.** Resume is strong for a run parked *before* a decision. It does **not**
-make the three remote write operations atomic, and it is not a general crash-safety property — see the
-README's [limitations](../README.md#scope-and-limitations) for the write-back orphan window.
+make the three remote write operations atomic. What happens *after* the decision — the catalog write and
+the store commit — is covered by a separate mechanism, below.
+
+### Crash-recoverable settlement
+
+Durable resume closes the window *before* the human decides. The window *after* — from the moment the
+checkpoint node consumes the decision, through the three non-atomic catalog writes, to the store commit —
+is closed by a **write-ahead intent**. Before the first catalog mutation, `approve` persists a durable
+record of exactly what this settlement will do (the settled projection, the decisions, the claims it
+publishes) and marks it unsettled. The catalog writes then run, and the settled record, the decision
+rows, and the intent's flip to *settled* all commit in **one** store transaction. A process death
+anywhere in between leaves the intent unsettled, and a fresh process replays it on startup: the three
+writes are idempotent (same content-addressed artifact, same timestamp-keyed event), so replay collapses
+onto the same history, and the store commit is atomic, so the decision log is never double-appended.
+Recovery is therefore **re-entrant** — a death *during* recovery just leaves the intent unsettled for the
+next pass.
+
+Two things make this safe rather than a second way into the catalog. It **never runs the graph or invents
+a decision** — it re-executes the side effect of a decision a human already made and the checkpoint node
+already consumed, exactly as the repair endpoint does; that is why it works even though the crashed resume
+already advanced the graph past the checkpoint. And the **hard gate stays upstream**: an intent is written
+only after the resumed report passes trajectory verification, so a flagged run can never leave one behind.
+This is deliberately **not** a distributed saga (every remote projection has a stable idempotency key, so
+at-least-once replay suffices) and **not** a concurrent-settler guarantee (it is single-process,
+single-settler, and says so).
+
+**The residual, named:** a crash in the brief, purely in-memory window *before* the intent is persisted —
+after the graph consumes the decision, before any catalog write — strands the run at a 409 with the
+catalog untouched; the decision is re-made by re-auditing. Closing that too would mean recomputing the
+settled projection *outside* the graph and colliding with the "a resumed run reports identically"
+guarantee above, for a microsecond window with no external side effect — so it is documented, not chased.
+Proven by a real SIGKILL at four catalog-write points and once during recovery
+([`tests/test_settlement_recovery.py`](../tests/test_settlement_recovery.py)), falsified by
+[`spikes/settle_sabotage.py`](../spikes/settle_sabotage.py). See the README's
+[limitations](../README.md#scope-and-limitations).
 
 ### Concurrency
 

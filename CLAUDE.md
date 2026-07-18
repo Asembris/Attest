@@ -1386,9 +1386,108 @@ is a live listing or a `store=None` reader, never Attest's own DB.**
   API, which is exactly why a wire change is not trusted until it runs (§14).
 
 - **WHAT THIS DOES NOT DO, said plainly:** no new claim type, no new endpoint, no auth, no
-  durable-outbox saga (the crash-orphan `unknown` window is unchanged — a Session 22 concern),
-  no pagination UI beyond round-tripping `total`, no background reconciler daemon. The MCP
+  durable-outbox saga (the crash-orphan `unknown` window is a Session 22 concern — now **CLOSED**,
+  see §16), no pagination UI beyond round-tripping `total`, no background reconciler daemon. The MCP
   finding (§12) is untouched: the catalog read is still GraphQL.
+
+**16. CRASH-RECOVERABLE SETTLEMENT (Session 22). The last honest gap in the CORE
+transaction — a process death between the human's decision and the catalog write — CLOSED by
+a durable write-ahead intent and re-entrant idempotent replay. NOT a saga.** Durable resume
+(§2d) survives a death BEFORE the decision; this survives one AFTER it.
+
+- **THE GAP, reproduced by an empirical kill, not read off a diagnosis.** `service.approve`
+  persisted NOTHING to Attest's store before the first DataHub write: `resume` consumed the
+  human's decision and advanced the graph **past** the checkpoint to END, then the three
+  catalog writes ran, then `store.record_decision`/`save`. A kill anywhere from the consumed
+  decision through `save(settled)` stranded the run — the graph is no longer parked (restart
+  → 409 "no paused graph"), and the repair endpoint selects PUBLISHED-projection claims, of
+  which there are none. Confirmed by killing at `write_claim_artifact`: graph `is_parked=False`,
+  store still `awaiting-review`, both recovery paths dead. The unrecoverable window was
+  **broader than the README stated** — it began before the upsert, and a *fully successful*
+  remote write could still strand the local decision.
+
+- **NARROW, and the reason is that FULL cannot reuse the proven resume path.** The intent is
+  written **after `resume` settled the projection, before the first catalog write** — closing
+  every catalog-touching crash (the remote orphan AND the local strand). FULL — making the
+  authorization durable before the checkpoint decision becomes non-resumable — was **refused**:
+  the crashed `resume` has already advanced the graph to END, so a restart is not parked and
+  cannot resume, which means FULL would have to **recompute the settled projection outside the
+  graph** and collide with the "a resumed run reports identically" guarantee (§2d). **The
+  residual (crash point 3):** a death in the brief, purely in-memory window before the intent
+  is persisted — after the graph consumes the decision, before any catalog write — strands the
+  run at a 409 with the **catalog untouched**; the decision is re-made by re-auditing. A
+  microsecond window with no external side effect, documented not chased.
+
+- **THE INTENT, and the ONE ATOMIC TRANSACTION that makes recovery re-entrant.** `store`
+  gains a `settlement_intents` table; `approve` writes one (`settled=0`) carrying the settled
+  `AuditRecord`, the decisions, and the exact claim indices this call published — opaque JSON
+  the store does not interpret. Then the catalog writes run, then **`store.settle` commits the
+  settled record, the append-only decision rows, and the intent's flip to `settled=1` in a
+  SINGLE `_write` transaction.** So a crash before the commit leaves `settled=0` and the next
+  scan replays; a crash cannot leave the record saved while the intent still looks unsettled,
+  which is what would make a replay **double-append** the decision log. `_settle_from_intent`
+  is the one place the side effects happen — **shared by `approve` and recovery**, so a
+  recovered settlement and a live one are the same code and cannot drift.
+
+- **RECOVERY IS ITSELF CRASH-SAFE, asserted and TESTED, not just claimed.** A death DURING
+  recovery — after the recovered catalog write, before `settle` commits — leaves `settled=0`,
+  so a second recovery finishes it; the content-addressed artifact and the timestamp-keyed run
+  event mean replay collapses onto the **same** history (length ONE), and the store commit is
+  atomic. `_settle_from_intent` **never runs the graph or invents a decision** — it re-executes
+  the side effect of a decision a human already made and the checkpoint node already consumed,
+  exactly as `retry_writeback` does, which is *why* it works when the graph has de-parked. The
+  **hard gate stays upstream**: an intent is written only after the resumed report passes
+  trajectory verification, so a flagged run leaves none behind.
+
+- **THE TRIGGER: a bounded startup scan, single-settler.** `service.recover_settlements` scans
+  UNSETTLED intents — durable authorizations, NEVER catalog presence (inferring authorization
+  from an artifact's existence is the mistake this project refuses) — and replays each,
+  defensively (one bad intent is logged and left for the next scan, never aborting the rest).
+  Wired into FastAPI `lifespan` (override-aware, so the offline/API suites recover over an
+  empty table — a no-op). **Single-process, single-settler, and it says so:** the concurrency
+  suite covers concurrent audits, not competing settlers.
+
+- **THE BADGE IS OUTSIDE THE GUARANTEE.** The dataset-level structured property is a FOURTH
+  mutation, best-effort; its failure never turns settlement red, and recovery does not treat it
+  as part of the three-step `WriteResult`. Stated so the guarantee does not silently imply it.
+
+- **THE HARNESS is the highest-risk artifact in the repo, and the SABOTAGE ran RED FIRST.**
+  `tests/test_settlement_recovery.py` (`just settle-recover`) stands up a **real uvicorn
+  subprocess running the shipped service**, injects a **test-side `BarrierClient`** through the
+  same DI boundary Session 19 used (`app.dependency_overrides`) — so `writeback.py`/`service.py`
+  carry **no fault hook** — which calls the real DataHub method, signals the parent over a
+  marker file, and **BLOCKS**; the parent confirms the commit landed and the request never
+  returned, then **SIGKILLs**; a **fresh process** opens the same files and recovers. **Five
+  barrier points:** before-upsert, after-upsert (the UNKNOWN window), after-report (stale tag),
+  after-tag (the local strand), and once **DURING recovery** (re-entrancy). The model is the
+  scripted fake (a crash test must not flake on a real model); the catalog is real. **The
+  vacuity check `spikes/settle_sabotage.py` (`just settle-sabotage`) no-ops `record_intent`
+  (test-side) and proves the same post-upsert kill restarts into an unrecoverable UNKNOWN
+  artifact** — run RED before any recovery green, same discipline as `bench-sabotage` /
+  `e2e-sabotage` / `spike-mcp`.
+
+- **TWO INVARIANTS THE HARNESS PINS at every barrier.** The killed child holds **NO SQLite
+  write lock** (a fresh connection takes an immediate one) — a hard kill inside a network call
+  leaves the store clean, VERIFIED not assumed, and a held lock would be a real finding, never
+  retried past. And the verdict **history stays length ONE** through every replay (idempotent).
+  Every recovery claim is read through a `store=None` reader (the second agent) or a fresh
+  store — never Attest's in-memory state.
+
+- **MEASURED, live:** a real SIGKILL at all four write points and once during recovery, each
+  recovered to `complete` / `Supported` / history 1 / run `complete` / 0 unsettled, with the
+  lock free and the absence-is-not-empty distinctions intact (after-upsert reads **UNKNOWN,
+  not INCOMPLETE**). The sabotage stays UNKNOWN with no intent.
+
+- **The store schema CHANGED, so a pre-Session-22 database is REFUSED at open** (`_REQUIRED_COLUMNS`
+  gained a `settlement_intents` row). Same precedent and fix as every schema change: `rm attest.db
+  attest-checkpoints.db` and re-run. An older DB has no in-flight intents to lose.
+
+- **This RETRACTS two earlier statements.** §11/§14's "the crash-orphan window is not
+  simulatable without faking it, and faking it would prove nothing" — it IS simulatable, by a
+  real kill, and the proof is above. And §15's "the crash-orphan `unknown` window is a Session
+  22 concern" — it is now closed for every post-decision crash. The `unknown` READ-STATE is
+  unchanged (a store=None reader still cannot tell pending-lag from a permanent gap); what
+  changed is that a process-death orphan is now RECOVERED rather than left for a human.
 
 ## Known deferred items — document, don't fix
 
