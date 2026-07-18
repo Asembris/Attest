@@ -17,6 +17,7 @@ from collections.abc import Sequence
 from typing import Any
 
 import httpx
+from pydantic import ValidationError
 
 from attest.config import settings
 from attest.datahub.snapshot import DatasetSnapshot
@@ -39,6 +40,35 @@ class EntityNotFoundError(DataHubError):
 
     def __init__(self, urn: str) -> None:
         super().__init__(f"No such entity in the catalog: {urn}")
+        self.urn = urn
+
+
+class MalformedResponseError(DataHubError):
+    """The catalog answered, but the answer was structurally broken (Session 23).
+
+    The entity exists and resolved; one part of the response is unusable — a null
+    where a nested object was required, a missing key, a wrong-typed field, an
+    association entry carrying no URN. This is the SAME CLASS as entity-not-found and
+    for the same reason: the catalog neither agrees with the claim nor is silent about
+    it, so it is not a verdict. It is a `DataHubError`, so the resolve path catches it
+    and surfaces it as a `report.ClaimError` — kept out of the verdict tally, named in
+    `errors`, never scored.
+
+    Why this must raise rather than normalize to empty: a present-but-URL-less owner
+    used to become the empty-string URN `''`, i.e. a POPULATED-looking owners list, and
+    `check_ownership` then read the claimed owner as "not among the owners" and returned
+    a confident Contradicted. Reading a broken response as data drives exactly the
+    confident wrong verdict this project exists to prevent. It is the twin of the
+    `get_dataset` / `get_structured_property` traps: a read that looks fine and is not.
+
+    NOT raised for a legitimately ABSENT aspect (None) or a PRESENT-EMPTY one (()): an
+    unowned dataset is Insufficient-Coverage, and turning that into an error would be
+    absence collapsed into malformation — the same sin one grain down.
+    """
+
+    def __init__(self, urn: str, cause: object = None) -> None:
+        detail = f": {cause}" if cause else ""
+        super().__init__(f"Malformed catalog response for {urn}{detail}")
         self.urn = urn
 
 
@@ -160,11 +190,25 @@ class DataHubClient:
 
         This is what checkers use: a missing entity must stop the check, not be
         scored as one.
+
+        A structurally broken response is caught HERE and re-raised as
+        MalformedResponseError — a DataHubError — so it takes the same off-ramp as a
+        missing entity (resolve catches DataHubError -> ClaimError) instead of either
+        crashing the run with a raw KeyError/AttributeError/ValidationError or, worse,
+        being normalized into a garbage snapshot that drives a confident verdict. The
+        catch is DELIBERATELY the narrow set of exceptions a parse of a broken shape
+        produces (a missing key, a wrong type, an association entry with no URN); it is
+        never broadened to bare Exception, which would swallow real bugs in the parse.
+        `from_graphql` raises ValueError on the present-but-URL-less association entry,
+        which is why it is in the set.
         """
         dataset = self.get_dataset(urn)
         if dataset is None:
             raise EntityNotFoundError(urn)
-        return DatasetSnapshot.from_graphql(dataset)
+        try:
+            return DatasetSnapshot.from_graphql(dataset)
+        except (KeyError, AttributeError, TypeError, ValueError, ValidationError) as exc:
+            raise MalformedResponseError(urn, exc) from exc
 
     # --- writes ------------------------------------------------------------
 
