@@ -1,5 +1,10 @@
 # Pinned to what actually resolved on Python 3.12 alongside acryl-datahub.
 # Regenerate with: pip freeze
+#
+# These are DIRECT pins. For a fully reproducible RUNTIME install — every transitive version
+# fixed too — use `requirements.lock` (pip install -r requirements.lock). This file stays as
+# the human-readable direct list and the home of the seed/ingestion pins (acryl-datahub),
+# which the runtime lock deliberately excludes.
 
 # --- Attest runtime ---
 fastapi==0.139.0
