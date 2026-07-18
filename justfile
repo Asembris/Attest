@@ -195,6 +195,22 @@ e2e: ui
 e2e-sabotage:
     python spikes/e2e_sabotage.py
 
+# CRASH-RECOVERABLE SETTLEMENT: a REAL uvicorn subprocess is SIGKILL'd mid-write (at four
+# points, and once DURING recovery), and a fresh process recovers the settlement from the
+# durable write-ahead intent alone. The hop test_e2e_browser called "not simulatable without
+# faking it" -- it is. Read back through a store=None reader and a fresh store, never Attest's
+# in-memory state. Live tier: real DataHub, writes claim artifacts to your catalog. Uses the
+# scripted fake model, so NO OPENAI_API_KEY is needed. Falsifiable by `just settle-sabotage`.
+settle-recover:
+    python -m pytest tests/test_settlement_recovery.py -m live -v
+
+# THE VACUITY CHECK FOR SETTLEMENT RECOVERY. No-op the durable intent write (test-side) and
+# demand that the same post-upsert kill restarts into an unrecoverable UNKNOWN artifact.
+# Non-zero by design if recovery completes without the intent -- which would mean the intent
+# is not load-bearing and the recovery test proves nothing. Run this RED before trusting green.
+settle-sabotage:
+    python spikes/settle_sabotage.py
+
 # THE DEPLOYMENT SMOKE TEST: bring the stack up, then prove the demo path answers.
 #
 # `up` first (idempotent -- ~1s if already healthy, a cold bring-up otherwise), so the whole
