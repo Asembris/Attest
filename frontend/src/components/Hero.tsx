@@ -47,23 +47,35 @@ export default function Hero({
   }
 
   return (
-    <div className="relative min-h-screen flex flex-col overflow-hidden">
-      {/* Ambient lattice background */}
-      <div className="absolute inset-0 opacity-60">
+    <div
+      className="relative min-h-screen flex flex-col overflow-hidden"
+      style={{
+        background:
+          'radial-gradient(120% 120% at 50% 38%, #0b0e13 0%, #070809 55%, #040405 100%)',
+      }}
+    >
+      {/* Ambient particle field */}
+      <div className="absolute inset-0">
         {!reducedMotion && (
           <Suspense fallback={null}>
             <HeroLattice />
           </Suspense>
         )}
       </div>
-      <div className="absolute inset-0 bg-grid opacity-40" />
-      <div className="absolute inset-0 bg-gradient-to-b from-ink-950/40 via-transparent to-ink-950" />
+      {/* Vignette — focuses the eye on the centre without hiding the field */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background:
+            'radial-gradient(70% 55% at 50% 46%, rgba(5,6,7,0) 40%, rgba(5,6,7,0.55) 100%)',
+        }}
+      />
 
-      {/* Nav */}
+      {/* Nav — BOTH destinations, deliberately: claims is reachable without an audit. */}
       <nav className="relative z-10 flex items-center justify-between px-6 lg:px-12 py-6">
         <div className="flex items-center gap-2">
           <ShieldCheck size={20} className="text-supported" strokeWidth={2.5} />
-          <span className="font-serif text-lg font-medium tracking-tight">Attest</span>
+          <span className="font-serif text-xl font-medium tracking-tight">Attest</span>
         </div>
         <div className="flex items-center gap-1">
           <button onClick={onShowClaims} className="btn-ghost text-sm">
@@ -78,40 +90,48 @@ export default function Hero({
       </nav>
 
       {/* Main content */}
-      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 lg:px-12 pb-16">
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 lg:px-12 pb-16 pointer-events-none">
         <motion.div
           initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.9, ease: [0.2, 0.7, 0.2, 1] }}
           className="w-full max-w-2xl text-center"
         >
           <motion.h1
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
-            className="font-serif text-display font-light text-ink-50"
+            transition={{ duration: 1.0, delay: 0.05, ease: [0.2, 0.7, 0.2, 1] }}
+            className="font-serif font-medium text-ink-50 leading-[0.9] tracking-[0.005em] text-[clamp(72px,11vw,158px)]"
+            style={{ textShadow: '0 6px 60px rgba(120,150,200,0.28)' }}
           >
             Attest
           </motion.h1>
           <motion.p
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.7, delay: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="mt-5 text-lg lg:text-xl text-ink-200 font-light text-balance"
+            transition={{ duration: 0.9, delay: 0.2, ease: [0.2, 0.7, 0.2, 1] }}
+            className="mt-5 text-lg lg:text-2xl font-light text-ink-200 tracking-[0.005em] text-balance"
           >
             Verify what your AI claims about your data.
           </motion.p>
         </motion.div>
 
-        {/* Textarea card */}
+        {/* Textarea card — glass, and it is a real editable input (the mockup showed static
+            prose; the demo needs the textarea, the URN picker and the char count). */}
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, delay: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full max-w-2xl mt-10"
+          transition={{ duration: 0.9, delay: 0.35, ease: [0.2, 0.7, 0.2, 1] }}
+          className="w-full max-w-2xl mt-12 pointer-events-auto"
         >
-          <div className="surface-card p-1.5 backdrop-blur-sm bg-ink-850/80">
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-ink-700/40">
+          <div
+            className="rounded-2xl border border-[rgba(150,168,196,0.14)] overflow-hidden backdrop-blur-md"
+            style={{
+              background: 'linear-gradient(180deg, rgba(20,24,31,0.72) 0%, rgba(12,15,20,0.80) 100%)',
+              boxShadow: '0 30px 80px -30px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.04)',
+            }}
+          >
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-[rgba(150,168,196,0.1)]">
               <span className="text-label-sm">Paste AI Agent Output</span>
               <div className="flex items-center gap-4">
                 <UrnPicker onPick={insertUrn} />
@@ -126,7 +146,7 @@ export default function Hero({
               className="w-full bg-transparent px-4 py-4 text-sm text-ink-100 leading-relaxed resize-none focus:outline-none placeholder:text-ink-400"
               placeholder="Paste the AI agent's claims about your data tables here..."
             />
-            <div className="flex items-center justify-between px-3 pb-3">
+            <div className="flex items-center justify-between px-3 pb-3 border-t border-[rgba(150,168,196,0.1)] pt-3">
               <span className="text-xs text-ink-400 px-2">
                 Claims are checked against your live DataHub catalog.
               </span>
@@ -146,11 +166,23 @@ export default function Hero({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="mt-6 flex items-center gap-2 text-sm text-contradicted max-w-2xl"
+            className="mt-6 flex items-center gap-2 text-sm text-contradicted max-w-2xl pointer-events-auto"
           >
             <AlertTriangle size={15} />
             {error}
           </motion.div>
+        )}
+
+        {/* The interaction affordance for the field behind everything. */}
+        {!reducedMotion && (
+          <motion.p
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 1.6, delay: 1 }}
+            className="mt-9 font-mono-nums text-[11px] tracking-[0.14em] uppercase text-[rgba(140,155,180,0.4)]"
+          >
+            move · hover · click the field
+          </motion.p>
         )}
       </div>
     </div>
