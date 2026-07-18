@@ -75,7 +75,7 @@ from attest.api.service import (
 from attest.config import settings
 from attest.datahub import DataHubClient
 from attest.graph import Pipeline
-from attest.record import AuditRecord
+from attest.record import AuditRecord, EvidenceView
 from attest.retrieval import ClaimQuery, RetrievedClaim
 from attest.store import AuditStore
 
@@ -307,6 +307,7 @@ def list_claims(
             pushed_down=page.retrieval.pushed_down,
             filtered_locally=page.retrieval.filtered_locally,
             considered=page.retrieval.considered,
+            total=page.retrieval.total,
             note=page.retrieval.note,
         ),
     )
@@ -352,6 +353,9 @@ def _claim_view(claim: RetrievedClaim) -> ClaimView:
         failed_step=claim.wrote.failed_step if claim.wrote else None,
         audit_run=claim.wrote.run_id if claim.wrote else "",
         tags=a.tags,
+        # Catalog-derived (the artifact's tag vs its latest verdict), so it is set even for a
+        # store=None reader. See RetrievedClaim.stale_tag.
+        stale_tag=claim.stale_tag,
         history=tuple(
             VerdictEventView(
                 at=datetime.fromtimestamp(e.at / 1000, tz=UTC),
@@ -359,7 +363,12 @@ def _claim_view(claim: RetrievedClaim) -> ClaimView:
                 audit_run=e.audit_run,
                 reviewer=e.reviewer,
                 decision=e.decision,
-                evidence=e.evidence,
+                # Structured and absence-preserving: value=None survives as null.
+                evidence=tuple(
+                    EvidenceView(field=it.field, value=it.value, note=it.note)
+                    for it in e.evidence
+                ),
+                snapshot_id=e.snapshot_id,
                 native_type=e.native_type,
             )
             for e in a.history

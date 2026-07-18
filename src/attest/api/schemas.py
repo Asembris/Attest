@@ -12,7 +12,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from attest.record import AuditRecord
+from attest.record import AuditRecord, EvidenceView
 from attest.report import Decision
 
 
@@ -221,7 +221,20 @@ class VerdictEventView(BaseModel):
     audit_run: str = ""
     reviewer: str = ""
     decision: str = ""
-    evidence: str = ""
+    evidence: tuple[EvidenceView, ...] = Field(
+        default=(),
+        description="The catalog fields this verdict was decided against — STRUCTURED, and "
+        "absence-preserving. `value` is `null` where the catalog was SILENT (the absence that "
+        "justifies Insufficient-Coverage), kept distinct from an empty string or list. It "
+        "used to be a flattened string with every null row dropped, so a reader inheriting "
+        "the artifact could not tell 'the catalog said nothing' from 'the catalog said empty'.",
+    )
+    snapshot_id: str = Field(
+        default="",
+        description="The identity of the catalog snapshot this verdict was decided against — "
+        "which state of the world it held true for. Captured at audit time and stored, never "
+        "recomputed at write-back.",
+    )
     native_type: str = Field(
         default="",
         description="DataHub's own result type. A LOSSY PROJECTION for its health rollup, "
@@ -279,6 +292,17 @@ class ClaimView(BaseModel):
         "Attest's store knows it. What POST /audit/{run_id}/writeback needs to repair it.",
     )
     tags: tuple[str, ...] = ()
+    stale_tag: bool = Field(
+        default=False,
+        description="The verdict TAG disagrees with the latest verdict — detected from the "
+        "artifact ALONE (a store=None reader sees it too). The tag is a derived search index "
+        "written last, so a crash between `report` and `tag`, or a verdict that flipped "
+        "without the tag swap landing, leaves a correct verdict that a verdict-filtered "
+        "search cannot find. On-read detection, not a background reconciler (which is "
+        "deferred): the claim is repairable via POST /audit/{run_id}/writeback when Attest's "
+        "store has the failed write. False whenever there is no verdict — a claim with none "
+        "cannot have a stale tag.",
+    )
     history: tuple[VerdictEventView, ...] = Field(
         default=(),
         description="Every verdict this claim has ever had, newest first. Append-only.",
@@ -319,6 +343,13 @@ class RetrievalView(BaseModel):
         default=0,
         description="How many artifacts the catalog returned before Attest filtered them. "
         "`considered` minus the number returned is what the local half cost.",
+    )
+    total: int = Field(
+        default=0,
+        description="The catalog's OWN total for this entry point's server-side scope. When "
+        "`total > considered` the listing was TRUNCATED at the limit — there are more "
+        "artifacts the catalog holds that this page did not return, and `note` says so. A "
+        "claim past the limit is absent from this listing, NOT absent from the catalog.",
     )
     note: str = ""
 

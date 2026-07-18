@@ -179,6 +179,11 @@ def _audit(claim: ClaimRecord) -> ClaimAudit:
         evidence=tuple(
             Evidence(field=e.field, value=e.value, note=e.note) for e in claim.evidence
         ),
+        # Carried, not defaulted: the write-back happens on the RESUMED report, so a resumed
+        # run that lost this would publish an artifact with no snapshot identity where an
+        # unrestarted one published it. What the record does not carry, a restart reports
+        # differently — the resume bar (see the module docstring).
+        snapshot_id=claim.snapshot_id,
         explanation=Explanation(
             text=claim.explanation,
             source="template" if claim.explanation_source == "template" else "model",

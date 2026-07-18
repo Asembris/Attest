@@ -336,38 +336,47 @@ class FakeDataHub(FakeCatalog):
         return self._with_events(node)
 
     def list_dataset_assertions(
-        self, dataset_urn: str, start: int = 0, count: int = 50
-    ) -> list[dict[str, Any]]:
+        self, dataset_urn: str, limit: int | None = 50
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Returns (nodes-up-to-limit, TOTAL) — the same contract the real client now has.
+
+        The `total` is the catalog's own count, round-tripped so a truncated page is never
+        read as complete (Session 21 gap 1). The real client PAGINATES to reach it; the fake
+        has every assertion in memory and slices directly — modelling the CONTRACT (a total
+        beside the nodes), not the loop, which is server machinery a fake does not have and
+        `just live` is the evidence for.
+        """
         if self.fail:
             raise DataHubError("GraphQL transport error: the catalog is down")
-        self.dataset_reads.append({"dataset_urn": dataset_urn})
+        self.dataset_reads.append({"dataset_urn": dataset_urn, "limit": limit})
         # SCOPES, AND FILTERS NOTHING — modelled on the real entry point rather than made
         # convenient. A fake that quietly accepted a verdict filter here would let the
         # push-down report claim a server-side filter this server does not have.
-        return [
+        matching = [
             self._with_events(node)
             for node in self.assertions.values()
             if (node["info"]["customAssertion"]["entityUrn"] == dataset_urn)
-        ][start : start + count]
+        ]
+        nodes = matching if limit is None else matching[:limit]
+        return nodes, len(matching)
 
     def search_assertions(
         self,
         custom_types: Sequence[str] = (),
         tags: Sequence[str] = (),
-        start: int = 0,
-        count: int = 50,
-    ) -> list[dict[str, Any]]:
+        limit: int | None = 50,
+    ) -> tuple[list[dict[str, Any]], int]:
         """FILTERS, AND SCOPES TO NOTHING. The mirror image of the read above.
 
         The two entry points are disjoint on the real server (measured: no assertee field
         is indexed, so search cannot restrict to a dataset), and they are disjoint here for
         the same reason — a fake that let one do both would make the retrieval path's whole
-        honesty argument untestable.
+        honesty argument untestable. Returns (nodes-up-to-limit, total), same as above.
         """
         if self.fail:
             raise DataHubError("GraphQL transport error: the catalog is down")
         self.searches.append(
-            {"custom_types": list(custom_types), "tags": list(tags)}
+            {"custom_types": list(custom_types), "tags": list(tags), "limit": limit}
         )
         found = []
         for node in self.assertions.values():
@@ -379,7 +388,8 @@ class FakeDataHub(FakeCatalog):
             if tags and not (self.tagged.get(node["urn"], set()) & set(tags)):
                 continue
             found.append(self._with_events(node))
-        return found[start : start + count]
+        nodes = found if limit is None else found[:limit]
+        return nodes, len(found)
 
     def _with_events(self, node: dict[str, Any]) -> dict[str, Any]:
         events = sorted(

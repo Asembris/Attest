@@ -135,6 +135,11 @@ CREATE TABLE IF NOT EXISTS claims (
     claim_json          TEXT NOT NULL,
     verdict             TEXT NOT NULL,
     reason              TEXT NOT NULL DEFAULT '',
+    -- The identity of the catalog snapshot this verdict was decided against (Session 21).
+    -- A real column because the write-back reads it at approval time from THIS record: it is
+    -- captured at audit time and must not be re-derived by re-fetching a catalog that may
+    -- have moved. See writeback.py and the snapshot-cache consistency boundary.
+    snapshot_id         TEXT NOT NULL DEFAULT '',
     explanation         TEXT NOT NULL DEFAULT '',
     explanation_source  TEXT NOT NULL DEFAULT 'template',
     faithful            INTEGER NOT NULL DEFAULT 1,
@@ -371,6 +376,13 @@ _REQUIRED_COLUMNS: tuple[tuple[str, str, str, str], ...] = (
         "whether each catalog write LANDED, and at which step it did not, as structure "
         "rather than as a rendered sentence",
     ),
+    (
+        "claims",
+        "snapshot_id",
+        "21",
+        "the identity of the catalog snapshot each verdict was decided against, so an "
+        "inherited artifact can name the ground truth it was checked on",
+    ),
 )
 
 
@@ -508,10 +520,10 @@ class AuditStore:
             for claim in record.claims:
                 db.execute(
                     "INSERT INTO claims (run_id, claim_index, claim_type, target_urn,"
-                    " raw_text, claim_json, verdict, reason, explanation,"
+                    " raw_text, claim_json, verdict, reason, snapshot_id, explanation,"
                     " explanation_source, faithful, violations, conflicts, rejected,"
                     " publication, published_by, claim_urn)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (
                         record.run_id,
                         claim.index,
@@ -521,6 +533,7 @@ class AuditStore:
                         json.dumps(claim.claim),
                         claim.verdict,
                         claim.reason,
+                        claim.snapshot_id,
                         claim.explanation,
                         claim.explanation_source,
                         int(claim.faithful),
@@ -707,6 +720,7 @@ class AuditStore:
                         )
                         for e in by_claim.get(c["claim_index"], [])
                     ),
+                    snapshot_id=c["snapshot_id"],
                     explanation=c["explanation"],
                     explanation_source=c["explanation_source"],
                     faithful=bool(c["faithful"]),

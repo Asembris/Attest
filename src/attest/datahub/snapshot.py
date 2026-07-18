@@ -18,6 +18,8 @@ a shape that does not exist.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import UTC, datetime
 from typing import Any
 
@@ -106,6 +108,23 @@ class DatasetSnapshot(BaseModel):
     # sits under. Kept at snapshot level because a column's terms and the table's terms
     # resolve against the same glossary.
     term_parents: dict[str, tuple[str, ...]] = {}
+
+    @property
+    def identity(self) -> str:
+        """A content hash of this snapshot: WHICH catalog state a verdict was decided against.
+
+        A verdict means "this held against the catalog as it stood when this run read it"
+        (architecture.md, the snapshot-cache consistency boundary). Session 21 gap 2 carries
+        that identity into the published artifact, so an inherited verdict can say which state
+        it pertains to rather than floating free of the catalog it was checked against.
+
+        Content-addressed and canonical (`sort_keys`), so the same catalog state hashes the
+        same. It is captured at audit time and STORED — never recomputed at write-back, which
+        would re-fetch a catalog that may have moved and make the stored identity a lie (§2c,
+        the same-snapshot rule the correction loop already obeys).
+        """
+        payload = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()[:16]
 
     @property
     def labels(self) -> tuple[str, ...]:

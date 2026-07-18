@@ -226,6 +226,14 @@ class Retrieval:
     # How many artifacts the catalog returned BEFORE Attest filtered them. The cost of the
     # local half, stated: `considered - len(claims)` is what Attest threw away.
     considered: int = 0
+    # The catalog's OWN total for this entry point's server-side scope, round-tripped rather
+    # than discarded (Session 21 gap 1). `total > considered` means the listing was TRUNCATED
+    # at the limit and there are more artifacts the caller did not receive — which is the
+    # difference between "here is everything" and a claim past the cap being SILENTLY absent.
+    # Silent absence is indistinguishable from "no such claim", the one collapse this project
+    # exists to refuse, so the truncation is named in `note`, never left for the caller to
+    # discover by counting.
+    total: int = 0
 
 
 @dataclass(frozen=True)
@@ -237,6 +245,29 @@ class RetrievedClaim:
     # Attest's own record of the write, when it has one. The reason `state` is not a guess,
     # and None exactly when the store has nothing to say (which is what UNKNOWN means).
     wrote: WriteState | None = None
+
+    @property
+    def stale_tag(self) -> bool:
+        """Does the verdict tag disagree with the LATEST verdict? Detected catalog-side.
+
+        Session 21 gap 3, and the whole point is that a reader with NO Attest store can see
+        it. The verdict tag is written LAST and is a derived search index, never the verdict
+        itself; a crash between `report` and `tag`, or a verdict that flipped without the tag
+        swap landing, leaves a claim whose newest run event says one thing and whose tag says
+        another. That claim has a CORRECT verdict and is missing from every tag-filtered
+        search — findable by a dataset read, invisible to a verdict search, same question two
+        answers. Here it is derived from the artifact alone: the latest verdict's expected tag
+        is not among the tags the artifact carries.
+
+        A claim with no verdict cannot have a stale tag — there is no verdict for the tag to
+        lag. So this is False whenever `verdict is None` (pending-lag, incomplete, unknown),
+        by construction. It is on-READ DETECTION, not a reconciler: it says a tag is stale, it
+        does not sweep the catalog for stale tags. A background reconciler is deferred (see the
+        README) — but a reader is no longer blind to the one in front of it, and `repairable`
+        (the store's failed `tag` write) is how it gets fixed.
+        """
+        v = self.artifact.verdict
+        return v is not None and verdict_tag_urn(v) not in self.artifact.tags
 
     @property
     def repairable(self) -> bool:
@@ -291,23 +322,20 @@ class ClaimReader:
         self.store = store
 
     def list(self, query: ClaimQuery, limit: int = 50) -> ClaimPage:
-        """Claim artifacts matching `query`, and where each predicate was applied."""
+        """Claim artifacts matching `query`, and where each predicate was applied.
+
+        `limit` bounds how many artifacts are fetched, and it is round-tripped honestly: the
+        response carries the catalog's `total`, so a listing truncated at the limit is NEVER
+        mistaken for a complete one. The entry points build their own `Retrieval` (with
+        `considered` and `total`) — the pagination happens in the client, one page at a time.
+        """
         if query.target_urn:
             artifacts, retrieval = self._by_dataset(query, limit)
         else:
             artifacts, retrieval = self._by_search(query, limit)
 
         kept = tuple(a for a in artifacts if self._matches_locally(a, query, retrieval))
-        return ClaimPage(
-            claims=self._with_state(kept),
-            retrieval=Retrieval(
-                entry_point=retrieval.entry_point,
-                pushed_down=retrieval.pushed_down,
-                filtered_locally=retrieval.filtered_locally,
-                note=retrieval.note,
-                considered=len(artifacts),
-            ),
-        )
+        return ClaimPage(claims=self._with_state(kept), retrieval=retrieval)
 
     def get(self, claim_urn: str) -> RetrievedClaim | None:
         """One claim artifact and its whole verdict history. None if the catalog has none."""
@@ -328,7 +356,7 @@ class ClaimReader:
         is the one worth spending the server on — even though it means every other
         predicate comes back to Attest. `dataset.assertions` cannot filter at all.
         """
-        nodes = self.client.list_dataset_assertions(query.target_urn, count=limit)
+        nodes, total = self.client.list_dataset_assertions(query.target_urn, limit=limit)
         artifacts = tuple(
             artifact_from_graphql(n)
             for n in nodes
@@ -336,26 +364,33 @@ class ClaimReader:
             .get("type", "")
             .startswith(CUSTOM_TYPE_PREFIX)
         )
-        return artifacts, self._declare(DATASET_ASSERTIONS, query, note=(
-            "DataHub scoped this to the dataset; Attest applied the rest. "
-            "`dataset.assertions` is a relationship read and cannot filter — there is no "
-            "server-side dataset scoping for assertions in search, so these two entry "
-            "points do not compose. Every claim on the dataset came back in one query and "
-            "the remaining predicates are a filter over that response."
-        ))
+        return artifacts, self._declare(
+            DATASET_ASSERTIONS,
+            query,
+            considered=len(nodes),
+            total=total,
+            note=(
+                "DataHub scoped this to the dataset; Attest applied the rest. "
+                "`dataset.assertions` is a relationship read and cannot filter — there is no "
+                "server-side dataset scoping for assertions in search, so these two entry "
+                "points do not compose. Every claim on the dataset up to the limit came back "
+                "in one paginated read and the remaining predicates are a filter over that "
+                "response."
+            ),
+        )
 
     def _by_search(
         self, query: ClaimQuery, limit: int
     ) -> tuple[tuple[ClaimArtifact, ...], Retrieval]:
         """Filtered by the catalog's index; scoped to nothing, because it cannot be."""
-        nodes = self.client.search_assertions(
+        nodes, total = self.client.search_assertions(
             custom_types=(
                 [custom_type_for(query.claim_type)]
                 if query.claim_type
                 else [custom_type_for(t) for t in ALL_CLAIM_TYPES]
             ),
             tags=[verdict_tag_urn(query.verdict)] if query.verdict else [],
-            count=limit,
+            limit=limit,
         )
         artifacts = tuple(artifact_from_graphql(n) for n in nodes)
 
@@ -379,13 +414,23 @@ class ClaimReader:
                 "read scoped to its dataset. A stale tag costs findability, never "
                 "correctness."
             )
-        return artifacts, self._declare(SEARCH_ASSERTIONS, query, note=note)
+        return artifacts, self._declare(
+            SEARCH_ASSERTIONS, query, considered=len(nodes), total=total, note=note
+        )
 
-    def _declare(self, entry_point: str, query: ClaimQuery, note: str) -> Retrieval:
+    def _declare(
+        self,
+        entry_point: str,
+        query: ClaimQuery,
+        note: str,
+        considered: int,
+        total: int,
+    ) -> Retrieval:
         """Split the caller's predicates by what THIS entry point is declared to push down.
 
         Reads `PUSHES_DOWN`, which is a declaration about the server — deliberately not the
-        query builder above, which would only ever agree with itself.
+        query builder above, which would only ever agree with itself. Also carries the
+        server's `total` and, when the page was truncated at the limit, says so in the note.
         """
         capable = PUSHES_DOWN[entry_point]
         named = query.named()
@@ -393,8 +438,28 @@ class ClaimReader:
             entry_point=entry_point,
             pushed_down=tuple(p for p in named if p in capable),
             filtered_locally=tuple(p for p in named if p not in capable),
-            note=note,
+            note=note + self._truncation_note(considered, total),
+            considered=considered,
+            total=total,
         )
+
+    @staticmethod
+    def _truncation_note(considered: int, total: int) -> str:
+        """Name a truncated page IN THE RESPONSE. The anti-silent-absence guarantee.
+
+        `total > considered` means the catalog holds more artifacts than this page returned —
+        the limit cut it off. Left unsaid, those artifacts read as absent, and absent is
+        indistinguishable from "no such claim". So it is said, with the count, on the response
+        itself rather than left for a caller to infer by comparing lengths.
+        """
+        if total > considered:
+            return (
+                f" NOTE: TRUNCATED — the catalog holds {total} artifacts at this entry point "
+                f"and this page returned {considered}. The rest are absent from THIS listing, "
+                f"not from the catalog: raise `limit` (or scope to a dataset) to see them. A "
+                f"claim past the limit is not a claim that does not exist."
+            )
+        return ""
 
     # --- the local half -------------------------------------------------------
 

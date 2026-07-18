@@ -102,7 +102,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -447,7 +447,7 @@ def write_claim_artifact(
     verdict: str,
     run_id: str,
     checked_at: datetime,
-    evidence: str = "",
+    evidence: Sequence[Mapping[str, Any]] = (),
     reviewer: str = "",
     decision: str = "accepted",
     source_agent: str = "",
@@ -542,7 +542,10 @@ def write_claim_artifact(
                 DECISION_KEY: decision,
                 GRAIN_KEY: grain_of(claim),
                 POLICY_KEY: POLICY_VERSION,
-                **({EVIDENCE_KEY: evidence} if evidence else {}),
+                # Structured JSON, so a value=None row (the catalog is silent) survives to a
+                # store=None reader instead of being dropped in a rendered string. See
+                # `_dump_evidence`, and Session 21 gap 2.
+                **({EVIDENCE_KEY: _dump_evidence(evidence)} if evidence else {}),
                 **({SNAPSHOT_KEY: snapshot_id} if snapshot_id else {}),
                 **({f"{NAMESPACE}.source_agent": source_agent} if source_agent else {}),
             },
@@ -635,6 +638,76 @@ def write_verdict(
     return WriteResult(ok=True, target_urn=target_urn)
 
 
+# --- evidence, structured (Session 21) ----------------------------------------
+#
+# The write-back used to flatten a verdict's evidence to a `field=value; ...` string and DROP
+# every row whose value was None. That was gap 2: an Insufficient-Coverage verdict's evidence
+# IS the absence — `Evidence(field="properties.lastModified.time", value=None)` is the catalog
+# being silent, which is the whole justification for the third verdict — and a reader
+# inheriting the artifact from DataHub alone got back a rendered string with the absence gone.
+# So the inherited artifact for the most load-bearing verdict was lamer than the one Attest
+# computed. Now the evidence travels as JSON in the run event's nativeResults, and `value=None`
+# round-trips as None, kept distinct from '' and [] — the absent-vs-empty distinction snapshot.py
+# exists to preserve, preserved all the way to a store=None reader.
+
+
+@dataclass(frozen=True)
+class EvidenceItem:
+    """One catalog field a verdict was decided against, as a reader inherits it.
+
+    `value=None` is the catalog being SILENT — the absence that justifies
+    Insufficient-Coverage — and it round-trips as None, never collapsed to '' or []. That
+    fidelity is the point of the structured round-trip; see `_dump_evidence`.
+    """
+
+    field: str
+    value: Any = None
+    note: str | None = None
+
+
+def _dump_evidence(items: Sequence[Mapping[str, Any]]) -> str:
+    """Serialize a verdict's evidence for a run event's nativeResults, absence and all.
+
+    JSON, not the old `field=value; ...` rendering. A rendered string dropped every `value is
+    None` row and flattened the rest, so a reader could not tell the catalog said NOTHING from
+    the catalog saying empty — exactly the collapse this project exists to refuse, committed in
+    its own write path. JSON `null` keeps None apart from '' and [].
+    """
+    return json.dumps(
+        [
+            {"field": e.get("field", ""), "value": e.get("value"), "note": e.get("note")}
+            for e in items
+        ],
+        sort_keys=True,
+    )
+
+
+def _parse_evidence(raw: str | None) -> tuple[EvidenceItem, ...]:
+    """Structured evidence back out of a run event. The inverse of `_dump_evidence`.
+
+    A JSON `null` value decodes to Python `None` — the absence, preserved. A pre-Session-21
+    artifact carried a rendered string here instead of JSON; that is not dropped but wrapped as
+    a single legacy item, so an older artifact stays legible rather than reading as empty.
+    """
+    if not raw:
+        return ()
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return (EvidenceItem(field="", value=raw, note="legacy rendered evidence"),)
+    if not isinstance(data, list):
+        return (EvidenceItem(field="", value=data),)
+    return tuple(
+        EvidenceItem(
+            field=str(d.get("field", "")),
+            value=d.get("value"),
+            note=d.get("note"),
+        )
+        for d in data
+        if isinstance(d, dict)
+    )
+
+
 # --- reads --------------------------------------------------------------------
 
 
@@ -647,7 +720,13 @@ class VerdictEvent:
     audit_run: str = ""
     reviewer: str = ""
     decision: str = ""
-    evidence: str = ""
+    # STRUCTURED, and absence-preserving (Session 21). A `value=None` item is the catalog
+    # being silent, kept distinct from empty all the way to a store=None reader.
+    evidence: tuple[EvidenceItem, ...] = ()
+    # The identity of the catalog snapshot this verdict was decided against — "this held
+    # against the catalog as it stood when this run read it". Captured at audit time and
+    # stored; never recomputed at write-back (a re-fetch would violate the same-snapshot rule).
+    snapshot_id: str = ""
     native_type: str = ""
 
 
@@ -709,7 +788,8 @@ def artifact_from_graphql(node: Mapping[str, Any]) -> ClaimArtifact:
                 audit_run=native.get(AUDIT_RUN_KEY, ""),
                 reviewer=native.get(REVIEWER_KEY, ""),
                 decision=native.get(DECISION_KEY, ""),
-                evidence=native.get(EVIDENCE_KEY, ""),
+                evidence=_parse_evidence(native.get(EVIDENCE_KEY)),
+                snapshot_id=native.get(SNAPSHOT_KEY, ""),
                 native_type=result.get("type") or "",
             )
         )
@@ -743,10 +823,15 @@ def read_dataset_claims(client: DataHubClient, dataset_urn: str) -> tuple[ClaimA
     This is the answer to "show me what the next agent inherits": every claim ever made
     about this dataset, what it asserted, at what grain, and every verdict it has ever had —
     with no Attest process running and no access to Attest's store.
+
+    `limit=None`: the thesis query returns EVERYTHING on the dataset, paginating past the
+    50-item page. A capped "everything" would be the silent-absence bug this helper is the
+    whole point of avoiding.
     """
+    nodes, _total = client.list_dataset_assertions(dataset_urn, limit=None)
     return tuple(
         artifact_from_graphql(node)
-        for node in client.list_dataset_assertions(dataset_urn)
+        for node in nodes
         if (
             (node.get("info") or {}).get("customAssertion") or {}
         ).get("type", "").startswith(CUSTOM_TYPE_PREFIX)

@@ -456,9 +456,18 @@ class AuditService:
             verdict=claim.verdict,
             run_id=run.run_id,
             checked_at=run.created_at,
-            evidence="; ".join(
-                f"{e.field}={e.value}" for e in claim.evidence if e.value is not None
-            ),
+            # The FULL structured evidence, absence included (Session 21 gap 2). The old
+            # `"; ".join(... if e.value is not None)` dropped every value=None row — which for
+            # an Insufficient-Coverage verdict is the entire evidence, the catalog's silence
+            # being the whole point. A store=None reader now reconstructs it field-by-field,
+            # with None preserved as None. See writeback._dump_evidence.
+            evidence=[
+                {"field": e.field, "value": e.value, "note": e.note}
+                for e in claim.evidence
+            ],
+            # Captured at audit time, stored, and passed here — never recomputed by re-fetching
+            # the catalog, which may have moved (the same-snapshot rule).
+            snapshot_id=claim.snapshot_id,
             reviewer=reviewer,
             decision="accepted",
             source_agent=run.source_agent,
