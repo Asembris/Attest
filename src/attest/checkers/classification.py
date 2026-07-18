@@ -236,6 +236,16 @@ def check_classification(
         attached = label in observed
         excluded_by = policy.contradicts(label, observed)
 
+        # `complete` is checked BEFORE `not observed` in both arms, and the order is
+        # load-bearing (Session 23, Hole 3). At TABLE grain the two are mutually exclusive
+        # — a complete table carries the Verified marker, so `observed` is non-empty — so
+        # the order is inert there. At COLUMN grain `observed` is the COLUMN's labels while
+        # `complete` derives from the TABLE's, so an unclassified column of a Verified table
+        # has empty `observed` AND `complete` True. Checking `not observed` first sent it to
+        # Insufficient-Coverage, diverging from the PII path (_decide_pii, which honors
+        # completeness) and from the declared policy.COMPLETENESS_REACHES_COLUMNS. A column
+        # the review did not tag is a column it reviewed and found clean — for EVERY label,
+        # not only PII.
         if claim.present:
             if attached:
                 verdicts.append(Verdict.SUPPORTED)
@@ -253,9 +263,6 @@ def check_classification(
                         note=f"{excluded_by.rsplit(':', 1)[-1]} positively denies {short}.",
                     )
                 )
-            elif not observed:
-                verdicts.append(Verdict.INSUFFICIENT_COVERAGE)
-                reasons.append(f"{where} is unclassified, so {short} cannot be confirmed.")
             elif complete:
                 verdicts.append(Verdict.CONTRADICTED)
                 reasons.append(
@@ -263,6 +270,9 @@ def check_classification(
                     f"classification-complete — so the omission is deliberate."
                 )
                 evidence.append(completeness_evidence)
+            elif not observed:
+                verdicts.append(Verdict.INSUFFICIENT_COVERAGE)
+                reasons.append(f"{where} is unclassified, so {short} cannot be confirmed.")
             else:
                 verdicts.append(Verdict.INSUFFICIENT_COVERAGE)
                 reasons.append(
@@ -287,13 +297,6 @@ def check_classification(
                         note=f"{excluded_by.rsplit(':', 1)[-1]} affirms the absence of {short}.",
                     )
                 )
-            elif not observed:
-                # The trap. No PII tag is NOT evidence of no PII.
-                verdicts.append(Verdict.INSUFFICIENT_COVERAGE)
-                reasons.append(
-                    f"{where} is unclassified. Absence of a {short} tag is not evidence "
-                    f"of absence of {short} — nobody has reviewed it."
-                )
             elif complete:
                 verdicts.append(Verdict.SUPPORTED)
                 reasons.append(
@@ -301,6 +304,14 @@ def check_classification(
                     f"classification-complete, so the absence is a reviewed finding."
                 )
                 evidence.append(completeness_evidence)
+            elif not observed:
+                # The trap, and it only fires when the table is NOT complete: no {short}
+                # tag on an unreviewed entity is NOT evidence of absence of {short}.
+                verdicts.append(Verdict.INSUFFICIENT_COVERAGE)
+                reasons.append(
+                    f"{where} is unclassified. Absence of a {short} tag is not evidence "
+                    f"of absence of {short} — nobody has reviewed it."
+                )
             else:
                 verdicts.append(Verdict.INSUFFICIENT_COVERAGE)
                 reasons.append(
