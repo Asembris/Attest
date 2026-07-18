@@ -52,6 +52,7 @@ manufacture a pause that did not survive.
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from collections.abc import Sequence
@@ -65,7 +66,7 @@ from attest.graph import Pipeline
 from attest.record import AuditRecord
 from attest.report import Decision, RunStatus
 from attest.retrieval import ClaimPage, ClaimQuery, ClaimReader, RetrievedClaim
-from attest.store import AuditStore
+from attest.store import Approval, AuditStore, SettlementIntent
 from attest.writeback import WriteResult
 
 log = logging.getLogger(__name__)
@@ -312,35 +313,101 @@ class AuditService:
             created_at=stored.created_at,
         )
 
-        # Write back ONLY the verdicts a human PUBLISHED, and only after they published them.
+        # THE WRITE-AHEAD INTENT (Session 22), and the reason it goes HERE. The catalog
+        # write below is three non-atomic operations, and until this session a process
+        # death anywhere from here to `store.save` stranded the whole settlement: the graph
+        # had already advanced past the checkpoint (so the run is no longer resumable), yet
+        # nothing durable recorded the human's decision, so `approve` restarted into a 409
+        # and the repair endpoint found no published claim. Persisting the decision NOW —
+        # after resume settled the projection, BEFORE the first DataHub mutation — closes
+        # that window: a startup scan replays what this intent carries, idempotently.
         #
-        # The gate is `publication`, not the correction (Session 15, Option A). It used to be
-        # `correction.awaits_human`, which meant the only verdict that ever reached the
-        # catalog was a contradiction the agent had successfully self-corrected — so a
-        # STOOD_FIRM contradiction, the most damning finding Attest can produce, was silently
-        # swallowed, and Supported and Insufficient-Coverage verdicts never reached DataHub
-        # at all. See report.PublicationStatus.
+        # Write back ONLY the verdicts a human PUBLISHED (Session 15, Option A): the gate is
+        # `publication`, not the correction, or a STOOD_FIRM contradiction — the most
+        # damning finding Attest can produce — would be silently swallowed as it was before.
         #
-        # `awaiting` is what was still on offer when THIS call arrived, read off the record
-        # as it stood BEFORE the resume. A run parks again while anything is undecided, so a
-        # caller can name a claim they already settled on an earlier call — and the
-        # checkpoint node rightly ignores it (a claim is settled once). The write-back
-        # ignores it for the same reason: a decision writes back what IT settled, and
-        # re-naming a claim decided an hour ago decides nothing now — it would only replay
-        # that claim's catalog write on every later call.
+        # `told_to_publish` is what THIS call published: publish decisions intersected with
+        # what was still awaiting a human BEFORE the resume. A run re-parks while anything is
+        # undecided, so a caller can name a claim they settled on an earlier call — the
+        # checkpoint node ignores an already-settled claim, and this ignores it for the same
+        # reason. It is carried into the intent so a replay publishes exactly what the live
+        # settlement would have, no more.
         awaiting = {c.index for c in stored.claims if c.publication.awaits_human}
-        told_to_publish = {
-            d.claim_index for d in decisions if d.publish
-        } & awaiting
+        told_to_publish = {d.claim_index for d in decisions if d.publish} & awaiting
+
+        intent = self._record_intent(settled, decisions, told_to_publish)
+        results = self._settle_from_intent(intent)
+        return settled, results
+
+    def _record_intent(
+        self,
+        settled: AuditRecord,
+        decisions: Sequence[Decision],
+        publish_indices: set[int],
+    ) -> SettlementIntent:
+        """Persist, durably and unsettled, everything a replay of this settlement needs.
+
+        Only ever called after the trajectory gate has passed on the resumed report, so an
+        intent exists only for a run the pipeline could vouch for — the hard gate stays
+        upstream of the catalog, here as everywhere.
+
+        The payload is the settled record (to save, and to source every write-back from),
+        the decisions (to append to the decision log), and the exact indices this settlement
+        published (so a replay writes back what the live call would have, not every claim the
+        record shows as published across earlier calls). Opaque to the store.
+        """
+        payload = json.dumps(
+            {
+                "settled_record": settled.model_dump(mode="json"),
+                "decisions": [
+                    {
+                        "claim_index": d.claim_index,
+                        "publish": d.publish,
+                        "accept_correction": d.accept_correction,
+                        "reviewer": d.reviewer,
+                        "note": d.note,
+                    }
+                    for d in decisions
+                ],
+                "publish_indices": sorted(publish_indices),
+            }
+        )
+        return self.store.record_intent(settled.run_id, payload)
+
+    def _settle_from_intent(
+        self, intent: SettlementIntent
+    ) -> tuple[WriteResult, ...]:
+        """Apply one settlement: the catalog writes, then the atomic store commit.
+
+        **The one place a settlement's side effects happen, called by BOTH `approve` and
+        `recover_settlements`** — so a recovered settlement and a live one are the same code
+        and cannot drift. It runs the three-step write-back for each published claim (each
+        idempotent), then commits the settled record, the decision rows, and the intent flip
+        in ONE store transaction (`store.settle`).
+
+        **This makes recovery itself crash-safe.** A death between the catalog writes and the
+        atomic commit leaves the intent settled=0, so the next scan replays: the catalog
+        writes land on the same content-addressed artifact and the same timestamp-keyed run
+        event (so the history stays length one), and the store commit is all-or-nothing (so
+        the decision log is never double-appended). Re-entrant by construction, not by a
+        bookkeeping flag.
+
+        It never runs the graph, resumes a checkpoint, or invents a decision. It re-executes
+        the side effect of a decision a human already made and the checkpoint node already
+        consumed — exactly as `retry_writeback` does, and for the same reason it is allowed
+        to.
+        """
+        payload = json.loads(intent.payload)
+        settled = AuditRecord.model_validate(payload["settled_record"])
+        decisions = [Decision(**d) for d in payload["decisions"]]
+        publish_indices = set(payload["publish_indices"])
 
         results: list[WriteResult] = []
         # Keyed by CLAIM, not by URN: two published claims can name one dataset, and keying
-        # the outcome by URN would let the second write's result be reported as the first
-        # decision's. A decision log that attributes a write to the wrong decision is a
-        # false entry in the one record that exists to say who decided what.
+        # the outcome by URN would attribute the second write's result to the first decision.
         written: dict[int, WriteResult] = {}
         for claim in settled.claims:
-            if claim.index not in told_to_publish:
+            if claim.index not in publish_indices:
                 continue
             if not claim.publication.published:
                 # The checkpoint did not publish it after all. Not an error, and not a write.
@@ -349,25 +416,81 @@ class AuditService:
             results.append(result)
             written[claim.index] = result
 
-        # Every decision is logged, accepted or rejected, with what the catalog did about
-        # it. The store is append-only here on purpose (store.py).
-        for decision in decisions:
-            result = written.get(decision.claim_index)
-            self.store.record_decision(
-                run_id,
-                decision,
-                **_write_columns(result),
+        # Every decision becomes an append-only row, with what the catalog did about it —
+        # built here so the settle transaction commits the record, the rows, and the intent
+        # flip together.
+        now = datetime.now(tz=UTC)
+        approvals = [
+            Approval(
+                approval_id=str(uuid.uuid4()),
+                run_id=settled.run_id,
+                claim_index=d.claim_index,
+                publish=d.publish,
+                accept_correction=d.accept_correction,
+                reviewer=d.reviewer,
+                note=d.note,
+                decided_at=now,
+                **_write_columns(written.get(d.claim_index)),
             )
+            for d in decisions
+        ]
+        self.store.settle(settled, approvals, intent.intent_id, settled_at=now)
 
-        self.store.save(settled)
         # Only a run with nothing left pending is over. One with proposals still undecided
-        # parked again at the checkpoint (graph.py), and forgetting it would delete the
-        # pause those proposals are waiting in — which is precisely the bug this session
-        # closed, moved down a layer.
-        if report.status is RunStatus.COMPLETE:
-            self.pipeline.forget(run_id)
+        # re-parked at the checkpoint (graph.py), and forgetting it would delete the pause
+        # those proposals are waiting in.
+        if settled.status is RunStatus.COMPLETE:
+            self.pipeline.forget(settled.run_id)
 
-        return settled, tuple(results)
+        return tuple(results)
+
+    def recover_settlements(self, cap: int = 100) -> int:
+        """Replay every settlement a process death left unfinished. THE RECOVERY TRIGGER.
+
+        Bounded, single-settler, and defensive: it scans the store's UNSETTLED intents —
+        durable authorizations, never catalog presence — and re-applies each. A verdict is
+        NOT recovered because an artifact happens to exist in the catalog; it is recovered
+        because a human authorized it and the intent says so. Inferring authorization from an
+        artifact's mere existence is exactly the mistake this project refuses.
+
+        Called once at process startup (app.py). It is a no-op when nothing is pending, which
+        is the overwhelmingly common case. A single intent that fails to replay is logged and
+        left unsettled for the next scan rather than aborting the rest — one wedged
+        settlement must not block the others, and every write it does is idempotent, so a
+        later retry is safe.
+
+        SINGLE-SETTLER. The concurrency suite covers concurrent audits, not competing
+        settlers: this assumes one process runs recovery at a time. Two processes scanning at
+        once would each replay idempotently (so the catalog stays correct), but the guarantee
+        is stated for a single settler and is not a claim about racing reconcilers.
+        """
+        intents = self.store.unsettled_intents()
+        if not intents:
+            return 0
+        log.info("settlement recovery: %d unsettled intent(s) to replay", len(intents))
+        recovered = 0
+        for intent in intents[:cap]:
+            try:
+                self._settle_from_intent(intent)
+                recovered += 1
+                log.info(
+                    "recovered settlement %s (run %s)", intent.intent_id, intent.run_id
+                )
+            except Exception:  # noqa: BLE001 - one bad intent must not block the rest
+                log.exception(
+                    "settlement recovery failed for intent %s (run %s); it stays unsettled "
+                    "and will be retried on the next scan",
+                    intent.intent_id,
+                    intent.run_id,
+                )
+        if len(intents) > cap:
+            log.warning(
+                "settlement recovery processed %d of %d unsettled intents this scan; the "
+                "rest remain for the next",
+                cap,
+                len(intents),
+            )
+        return recovered
 
     def retry_writeback(self, run_id: str) -> tuple[WriteResult, ...]:
         """Re-run the catalog write for claims a human ALREADY accepted. The recovery path.

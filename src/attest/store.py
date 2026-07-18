@@ -249,12 +249,37 @@ CREATE TABLE IF NOT EXISTS approvals (
     writeback_step TEXT
 );
 
+-- The write-ahead settlement intent (Session 22). This is what makes an approval's
+-- three-step catalog write crash-recoverable.
+--
+-- One row is written HERE, with settled=0, BEFORE the first DataHub mutation of an
+-- approval. The settled record, the decision rows, and this row's flip to settled=1 all
+-- commit in ONE transaction (`settle`), AFTER the idempotent catalog writes. So a process
+-- death anywhere in between leaves settled=0, and a startup scan (`unsettled_intents`)
+-- replays the whole thing: the catalog writes are idempotent, the store transaction is
+-- atomic, and recovery is therefore re-entrant. It carries HUMAN AUTHORIZATION forward — a
+-- decision a person already made and the checkpoint node already consumed — never one it
+-- manufactured. See api/service.py.
+--
+-- `payload` is opaque JSON owned by the service (the settled AuditRecord, the decisions,
+-- and the exact claim indices this approval published). The store persists it and does not
+-- interpret it — a run's projection is the record's business, not this table's.
+CREATE TABLE IF NOT EXISTS settlement_intents (
+    intent_id   TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    settled     INTEGER NOT NULL DEFAULT 0,
+    settled_at  TEXT,
+    payload     TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_claims_verdict ON claims (verdict, claim_type);
 CREATE INDEX IF NOT EXISTS idx_claims_publication ON claims (publication);
 CREATE INDEX IF NOT EXISTS idx_claims_urn ON claims (target_urn);
 CREATE INDEX IF NOT EXISTS idx_claims_claim_urn ON claims (claim_urn);
 CREATE INDEX IF NOT EXISTS idx_runs_created ON runs (created_at);
 CREATE INDEX IF NOT EXISTS idx_approvals_run ON approvals (run_id, claim_index);
+CREATE INDEX IF NOT EXISTS idx_intents_unsettled ON settlement_intents (settled);
 """
 
 
@@ -277,6 +302,26 @@ class Approval:
     # Kept beside the rendering rather than parsed out of it: see the schema's comment.
     writeback_ok: bool | None = None
     writeback_step: str | None = None
+
+
+@dataclass(frozen=True)
+class SettlementIntent:
+    """A durable record that a human authorized an approval, written BEFORE the catalog.
+
+    The write-ahead half of crash-recoverable settlement (Session 22). `payload` is opaque
+    JSON the service owns; the store keeps `settled` and the ids so a startup scan can find
+    the ones a process death left unfinished. `settled=0` means "authorized, not yet fully
+    applied"; `settled=1` is set in the SAME transaction that persists the settled record
+    and its decision rows. Nothing here decides anything — it carries a decision already
+    made forward across a restart. See api/service.py and store.settle.
+    """
+
+    intent_id: str
+    run_id: str
+    created_at: datetime
+    payload: str
+    settled: bool = False
+    settled_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -383,6 +428,13 @@ _REQUIRED_COLUMNS: tuple[tuple[str, str, str, str], ...] = (
         "the identity of the catalog snapshot each verdict was decided against, so an "
         "inherited artifact can name the ground truth it was checked on",
     ),
+    (
+        "settlement_intents",
+        "settled",
+        "22",
+        "the write-ahead settlement intent that makes an approval's catalog write "
+        "crash-recoverable — a table an older database does not have at all",
+    ),
 )
 
 
@@ -482,134 +534,144 @@ class AuditStore:
         outlives any particular projection of the run.
         """
         with self._write() as db:
-            for table in ("claims", "evidence", "corrections", "claim_errors", "steps"):
-                db.execute(f"DELETE FROM {table} WHERE run_id = ?", (record.run_id,))
-            db.execute("DELETE FROM runs WHERE run_id = ?", (record.run_id,))
+            self._save_within(db, record)
 
-            r = record.receipts
+    def _save_within(self, db: sqlite3.Connection, record: AuditRecord) -> None:
+        """The body of `save`, on an already-open transaction.
+
+        Extracted so `settle` (Session 22) can persist the settled record, its decision
+        rows, and the intent flip in ONE transaction — the atomicity that makes settlement
+        recovery re-entrant without ever double-appending a decision. `save` wraps this in
+        its own `_write`; `settle` calls it alongside the other two writes in a single one.
+        """
+        for table in ("claims", "evidence", "corrections", "claim_errors", "steps"):
+            db.execute(f"DELETE FROM {table} WHERE run_id = ?", (record.run_id,))
+        db.execute("DELETE FROM runs WHERE run_id = ?", (record.run_id,))
+
+        r = record.receipts
+        db.execute(
+            "INSERT INTO runs (run_id, created_at, status, source_agent, source_text,"
+            " latency_ms, input_tokens, output_tokens, usd, n_steps, trajectory_ok,"
+            " trajectory_summary, rules_checked, catalog_lookups, catalog_fetches,"
+            " catalog_entities, dropped, injection_findings)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record.run_id,
+                record.created_at.isoformat(),
+                record.status.value,
+                record.source_agent,
+                record.source_text,
+                r.latency_ms,
+                r.input_tokens,
+                r.output_tokens,
+                r.usd,  # None stays NULL: unknown, not free
+                r.steps,
+                int(r.trajectory_ok),
+                r.trajectory_summary,
+                json.dumps(list(r.rules_checked)),
+                r.catalog_lookups,
+                r.catalog_fetches,
+                r.catalog_entities,
+                json.dumps([d.model_dump(mode="json") for d in record.dropped]),
+                json.dumps(
+                    [f.model_dump(mode="json") for f in record.injection_findings]
+                ),
+            ),
+        )
+
+        for claim in record.claims:
             db.execute(
-                "INSERT INTO runs (run_id, created_at, status, source_agent, source_text,"
-                " latency_ms, input_tokens, output_tokens, usd, n_steps, trajectory_ok,"
-                " trajectory_summary, rules_checked, catalog_lookups, catalog_fetches,"
-                " catalog_entities, dropped, injection_findings)"
+                "INSERT INTO claims (run_id, claim_index, claim_type, target_urn,"
+                " raw_text, claim_json, verdict, reason, snapshot_id, explanation,"
+                " explanation_source, faithful, violations, conflicts, rejected,"
+                " publication, published_by, claim_urn)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record.run_id,
-                    record.created_at.isoformat(),
-                    record.status.value,
-                    record.source_agent,
-                    record.source_text,
-                    r.latency_ms,
-                    r.input_tokens,
-                    r.output_tokens,
-                    r.usd,  # None stays NULL: unknown, not free
-                    r.steps,
-                    int(r.trajectory_ok),
-                    r.trajectory_summary,
-                    json.dumps(list(r.rules_checked)),
-                    r.catalog_lookups,
-                    r.catalog_fetches,
-                    r.catalog_entities,
-                    json.dumps([d.model_dump(mode="json") for d in record.dropped]),
+                    claim.index,
+                    claim.claim_type,
+                    claim.target_urn,
+                    claim.raw_text,
+                    json.dumps(claim.claim),
+                    claim.verdict,
+                    claim.reason,
+                    claim.snapshot_id,
+                    claim.explanation,
+                    claim.explanation_source,
+                    int(claim.faithful),
                     json.dumps(
-                        [f.model_dump(mode="json") for f in record.injection_findings]
+                        [v.model_dump(mode="json") for v in claim.faithfulness_violations]
                     ),
+                    json.dumps([c.model_dump(mode="json") for c in claim.conflicts]),
+                    json.dumps(list(claim.rejected)),
+                    claim.publication.status.value,
+                    claim.publication.reviewer,
+                    # DERIVED from the claim, by the same function the write-back uses,
+                    # so the store and the catalog cannot disagree about where a claim
+                    # lives. Computed for EVERY claim, published or not: a claim's
+                    # artifact URN is a fact about the claim, not about the decision.
+                    writeback.claim_urn(claim.claim),
+                ),
+            )
+            for seq, e in enumerate(claim.evidence):
+                db.execute(
+                    "INSERT INTO evidence (run_id, claim_index, seq, field, value_json,"
+                    " note) VALUES (?,?,?,?,?,?)",
+                    (
+                        record.run_id,
+                        claim.index,
+                        seq,
+                        e.field,
+                        json.dumps(e.value),
+                        e.note,
+                    ),
+                )
+            c = claim.correction
+            db.execute(
+                "INSERT INTO corrections (run_id, claim_index, outcome, review,"
+                " proposal_json, attempts) VALUES (?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    claim.index,
+                    c.outcome.value,
+                    c.review.value,
+                    json.dumps(c.proposal) if c.proposal is not None else None,
+                    json.dumps([a.model_dump(mode="json") for a in c.attempts]),
                 ),
             )
 
-            for claim in record.claims:
-                db.execute(
-                    "INSERT INTO claims (run_id, claim_index, claim_type, target_urn,"
-                    " raw_text, claim_json, verdict, reason, snapshot_id, explanation,"
-                    " explanation_source, faithful, violations, conflicts, rejected,"
-                    " publication, published_by, claim_urn)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        record.run_id,
-                        claim.index,
-                        claim.claim_type,
-                        claim.target_urn,
-                        claim.raw_text,
-                        json.dumps(claim.claim),
-                        claim.verdict,
-                        claim.reason,
-                        claim.snapshot_id,
-                        claim.explanation,
-                        claim.explanation_source,
-                        int(claim.faithful),
-                        json.dumps(
-                            [v.model_dump(mode="json") for v in claim.faithfulness_violations]
-                        ),
-                        json.dumps([c.model_dump(mode="json") for c in claim.conflicts]),
-                        json.dumps(list(claim.rejected)),
-                        claim.publication.status.value,
-                        claim.publication.reviewer,
-                        # DERIVED from the claim, by the same function the write-back uses,
-                        # so the store and the catalog cannot disagree about where a claim
-                        # lives. Computed for EVERY claim, published or not: a claim's
-                        # artifact URN is a fact about the claim, not about the decision.
-                        writeback.claim_urn(claim.claim),
-                    ),
-                )
-                for seq, e in enumerate(claim.evidence):
-                    db.execute(
-                        "INSERT INTO evidence (run_id, claim_index, seq, field, value_json,"
-                        " note) VALUES (?,?,?,?,?,?)",
-                        (
-                            record.run_id,
-                            claim.index,
-                            seq,
-                            e.field,
-                            json.dumps(e.value),
-                            e.note,
-                        ),
-                    )
-                c = claim.correction
-                db.execute(
-                    "INSERT INTO corrections (run_id, claim_index, outcome, review,"
-                    " proposal_json, attempts) VALUES (?,?,?,?,?,?)",
-                    (
-                        record.run_id,
-                        claim.index,
-                        c.outcome.value,
-                        c.review.value,
-                        json.dumps(c.proposal) if c.proposal is not None else None,
-                        json.dumps([a.model_dump(mode="json") for a in c.attempts]),
-                    ),
-                )
+        for err in record.errors:
+            db.execute(
+                "INSERT INTO claim_errors (run_id, claim_index, target_urn, claim_json,"
+                " error) VALUES (?,?,?,?,?)",
+                (
+                    record.run_id,
+                    err.index,
+                    err.target_urn,
+                    json.dumps(err.claim),
+                    err.error,
+                ),
+            )
 
-            for err in record.errors:
-                db.execute(
-                    "INSERT INTO claim_errors (run_id, claim_index, target_urn, claim_json,"
-                    " error) VALUES (?,?,?,?,?)",
-                    (
-                        record.run_id,
-                        err.index,
-                        err.target_urn,
-                        json.dumps(err.claim),
-                        err.error,
-                    ),
-                )
-
-            for step in record.steps:
-                db.execute(
-                    "INSERT INTO steps (run_id, seq, name, kind, claim_index, latency_ms,"
-                    " input_tokens, output_tokens, cost_usd, models, error)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        record.run_id,
-                        step.seq,
-                        step.name,
-                        step.kind,
-                        step.claim_index,
-                        step.latency_ms,
-                        step.input_tokens,
-                        step.output_tokens,
-                        step.cost_usd,
-                        json.dumps(list(step.models)),
-                        step.error,
-                    ),
-                )
+        for step in record.steps:
+            db.execute(
+                "INSERT INTO steps (run_id, seq, name, kind, claim_index, latency_ms,"
+                " input_tokens, output_tokens, cost_usd, models, error)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    step.seq,
+                    step.name,
+                    step.kind,
+                    step.claim_index,
+                    step.latency_ms,
+                    step.input_tokens,
+                    step.output_tokens,
+                    step.cost_usd,
+                    json.dumps(list(step.models)),
+                    step.error,
+                ),
+            )
 
     def record_decision(
         self,
@@ -641,28 +703,123 @@ class AuditStore:
             writeback_step=writeback_step,
         )
         with self._write() as db:
+            self._insert_approval_within(db, approval)
+        return approval
+
+    @staticmethod
+    def _insert_approval_within(db: sqlite3.Connection, approval: Approval) -> None:
+        """Append one approval row on an already-open transaction.
+
+        Extracted so `settle` (Session 22) can write the decision rows in the SAME
+        transaction as the settled record and the intent flip. The approvals table stays
+        append-only; this only ever inserts.
+        """
+        db.execute(
+            "INSERT INTO approvals (approval_id, run_id, claim_index, publish,"
+            " accept_correction, reviewer, note, decided_at, writeback, writeback_ok,"
+            " writeback_step)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                approval.approval_id,
+                approval.run_id,
+                approval.claim_index,
+                None if approval.publish is None else int(approval.publish),
+                None
+                if approval.accept_correction is None
+                else int(approval.accept_correction),
+                approval.reviewer,
+                approval.note,
+                approval.decided_at.isoformat(),
+                approval.writeback,
+                None if approval.writeback_ok is None else int(approval.writeback_ok),
+                approval.writeback_step,
+            ),
+        )
+
+    # --- crash-recoverable settlement (Session 22) ----------------------------
+
+    def record_intent(self, run_id: str, payload: str) -> SettlementIntent:
+        """Persist a write-ahead settlement intent, unsettled, and return it.
+
+        Written BEFORE the first DataHub mutation of an approval (api/service.py). `payload`
+        is the service's opaque JSON — the settled record, the decisions, and which claims
+        this approval published — everything a replay needs and nothing the store reads.
+        """
+        intent = SettlementIntent(
+            intent_id=str(uuid.uuid4()),
+            run_id=run_id,
+            created_at=datetime.now(tz=UTC),
+            payload=payload,
+            settled=False,
+        )
+        with self._write() as db:
             db.execute(
-                "INSERT INTO approvals (approval_id, run_id, claim_index, publish,"
-                " accept_correction, reviewer, note, decided_at, writeback, writeback_ok,"
-                " writeback_step)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO settlement_intents (intent_id, run_id, created_at, settled,"
+                " settled_at, payload) VALUES (?,?,?,?,?,?)",
                 (
-                    approval.approval_id,
-                    approval.run_id,
-                    approval.claim_index,
-                    None if approval.publish is None else int(approval.publish),
-                    None
-                    if approval.accept_correction is None
-                    else int(approval.accept_correction),
-                    approval.reviewer,
-                    approval.note,
-                    approval.decided_at.isoformat(),
-                    approval.writeback,
-                    None if approval.writeback_ok is None else int(approval.writeback_ok),
-                    approval.writeback_step,
+                    intent.intent_id,
+                    intent.run_id,
+                    intent.created_at.isoformat(),
+                    0,
+                    None,
+                    intent.payload,
                 ),
             )
-        return approval
+        return intent
+
+    def unsettled_intents(self) -> tuple[SettlementIntent, ...]:
+        """Every settlement intent a process death left unfinished, OLDEST FIRST.
+
+        These are the ones a startup scan replays. Oldest first so recovery settles them in
+        the order they were authorized, which is also the order they would have committed.
+        """
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT * FROM settlement_intents WHERE settled = 0"
+                " ORDER BY created_at, intent_id"
+            ).fetchall()
+        return tuple(
+            SettlementIntent(
+                intent_id=r["intent_id"],
+                run_id=r["run_id"],
+                created_at=datetime.fromisoformat(r["created_at"]),
+                payload=r["payload"],
+                settled=bool(r["settled"]),
+                settled_at=(
+                    datetime.fromisoformat(r["settled_at"])
+                    if r["settled_at"] is not None
+                    else None
+                ),
+            )
+            for r in rows
+        )
+
+    def settle(
+        self,
+        record: AuditRecord,
+        approvals: Sequence[Approval],
+        intent_id: str,
+        settled_at: datetime | None = None,
+    ) -> None:
+        """Persist the settled record, its decision rows, and the intent flip — ATOMICALLY.
+
+        This is the one transaction that makes settlement recovery re-entrant. The catalog
+        writes happened before it and are idempotent; this commits the settled projection,
+        appends the append-only decision rows, and flips the intent to settled=1, all or
+        nothing. So a crash before this leaves settled=0 (the next scan replays), and a
+        crash cannot leave the record saved while the intent still looks unsettled — which
+        is what would make a replay double-append the decision rows.
+        """
+        when = (settled_at or datetime.now(tz=UTC)).isoformat()
+        with self._write() as db:
+            self._save_within(db, record)
+            for approval in approvals:
+                self._insert_approval_within(db, approval)
+            db.execute(
+                "UPDATE settlement_intents SET settled = 1, settled_at = ?"
+                " WHERE intent_id = ?",
+                (when, intent_id),
+            )
 
     # --- reading --------------------------------------------------------------
 

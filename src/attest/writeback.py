@@ -460,7 +460,17 @@ def write_claim_artifact(
     DOWNWARD rather than falsely:
 
         1. upsert  the claim artifact         fails -> nothing exists. Nothing false.
-        2. report  the verdict                fails -> claim with NO verdict: reads INCOMPLETE.
+        2. report  the verdict                fails -> claim with NO verdict. What that READS
+                                                       AS depends on who is looking: with
+                                                       Attest's store recording the CAUGHT
+                                                       failure it is INCOMPLETE (repairable);
+                                                       to a store=None reader, or after a
+                                                       process death that recorded nothing, it
+                                                       is UNKNOWN — absence is not a diagnosis
+                                                       (retrieval.ReadState). A process-death
+                                                       orphan is recovered from the durable
+                                                       settlement intent (service.py), not
+                                                       from this silence.
         3. tag     the latest verdict         fails -> verdict is CORRECT, merely not yet
                                                        findable by search. The tag is a
                                                        derived index, never the truth.

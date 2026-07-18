@@ -42,6 +42,8 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -112,11 +114,42 @@ def get_service() -> AuditService:
 Service = Annotated[AuditService, Depends(get_service)]
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Replay any settlement a previous process death left unfinished, ONCE, at startup.
+
+    This is the recovery trigger for the write-ahead intent (Session 22, service.py). A
+    process that dies mid-settlement — after the human's decision was consumed by the graph,
+    during or after the three-step catalog write, before the store commit — leaves a durable
+    intent flagged unsettled. A fresh process picks it up here and replays it idempotently,
+    so `just serve`/`just demo` recover on their own rather than needing someone to call the
+    repair endpoint.
+
+    **Override-aware on purpose.** The offline and API test suites swap `get_service` for a
+    fake wired to a temp store; reading the override here means those runs recover over their
+    own empty intents table (a no-op) instead of reaching for the real catalog. Defensive:
+    a recovery failure is logged and the service still starts — a stuck intent is retried on
+    the next boot, and refusing to serve because one old settlement will not replay would be
+    a worse outage than the one it is recovering from.
+
+    Single-settler: recovery assumes one process at a time (service.py).
+    """
+    factory = app.dependency_overrides.get(get_service, get_service)
+    try:
+        recovered = factory().recover_settlements()
+        if recovered:
+            log.info("startup: recovered %d unfinished settlement(s)", recovered)
+    except Exception:  # noqa: BLE001 - startup must not fail on a recovery hiccup
+        log.exception("startup settlement recovery failed; the service still starts")
+    yield
+
+
 app = FastAPI(
     title="Attest",
     version=__version__,
     summary="A groundedness auditor: verifies an agent's claims about data against "
     "DataHub's catalog as ground truth.",
+    lifespan=lifespan,
 )
 
 
@@ -187,10 +220,16 @@ def approve(
     post again with the rest. The run becomes `complete` on the call that settles the last
     proposal, and only then are its checkpoints released.
 
-    An accepted verdict is written back to the catalog as a structured property
-    (writeback.py). A rejected one writes nothing. The write-backs are reported separately
-    from the audit, because a decision is a human act that stands whatever the network then
-    did with it — an approval whose catalog write failed says so.
+    A published verdict is written back to the catalog as its own **claim artifact** — a
+    custom DataHub Assertion plus an append-only verdict event, the authoritative,
+    subject-bearing record the next agent inherits (writeback.py). The dataset-level
+    structured property is written too, as a best-effort glance BADGE that points at the
+    artifact; it is not the record and its failure does not fail the settlement. A withheld
+    verdict writes nothing. The write-backs are reported separately from the audit, because a
+    decision is a human act that stands whatever the network then did with it — an approval
+    whose catalog write failed says so, and the settlement itself is crash-recoverable
+    (Session 22): a process death mid-write is replayed from a durable intent on the next
+    start.
     """
     try:
         settled, writebacks = service.approve(
