@@ -3,7 +3,7 @@
   "name": "customer_profile",
   "platform": "snowflake",
   "description": "One row per customer. The canonical customer record; everything downstream joins to this.",
-  "last_modified": "2026-07-15T14:20:41.353000Z",
+  "last_modified": "2026-07-18T05:57:17.176000Z",
   "owners": [
     "urn:li:corpuser:alice.chen"
   ],
