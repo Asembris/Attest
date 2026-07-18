@@ -14,6 +14,12 @@ import ReadStateBadge, { readStateBlurb } from './ReadStateBadge';
 // and Contradicted in July carries both, in order, each with the run that reached it and the
 // human who signed it off. "Was this ever contradicted before someone fixed the tag" is
 // answerable here, from the catalog alone.
+//
+// Re-typeset to the design pass (the lineage rail with drawn dots), but every semantic element
+// is preserved from the working version: the four read-states, repair gated on the FAILED
+// WRITE not the state, structured absence-preserving evidence, the stale-tag chip and the
+// snapshot identity. The design-pass mockup regressed all four (evidence flattened to a
+// string, stale_tag/snapshot_id dropped) — those regressions are not ported.
 
 function when(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -39,6 +45,10 @@ function evidenceValue(value: unknown): string {
   if (value === null || value === undefined) return '∅ (absent — the catalog is silent)';
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
+}
+
+function verdictHex(v: string): string {
+  return v === 'Supported' ? '#5FB98D' : v === 'Contradicted' ? '#D96A64' : '#C2A265';
 }
 
 export default function ClaimArtifactCard({
@@ -75,26 +85,28 @@ export default function ClaimArtifactCard({
   return (
     <motion.div
       layout
-      initial={{ opacity: 0, y: 24 }}
+      initial={{ opacity: 0, y: 22 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(index * 0.06, 0.4), duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="surface-card overflow-hidden"
+      transition={{ delay: Math.min(index * 0.05, 0.35), duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-2xl border overflow-hidden transition-colors"
+      style={{
+        borderColor: expanded ? 'rgba(150,158,168,0.3)' : 'rgba(150,158,168,0.14)',
+        background: expanded ? 'rgba(150,158,168,0.04)' : 'rgba(150,158,168,0.02)',
+      }}
     >
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-start gap-4 p-5 text-left hover:bg-ink-800/40 transition-colors"
+        className="w-full flex items-start gap-4 p-5 text-left hover:bg-ink-800/30 transition-colors"
       >
-        <div className="flex items-center gap-3 pt-0.5 shrink-0">
-          <span className="font-mono-nums text-xs text-ink-400 w-6">
-            {String(index + 1).padStart(2, '0')}
-          </span>
-        </div>
+        <span className="font-mono-nums text-xs text-ink-500 w-6 pt-1 shrink-0">
+          {String(index + 1).padStart(2, '0')}
+        </span>
 
         <div className="flex-1 min-w-0">
-          <p className="text-sm lg:text-[0.95rem] text-ink-100 leading-relaxed">
+          <p className="text-sm lg:text-[0.97rem] text-ink-100 leading-relaxed">
             {claim.description || claim.claim_urn}
           </p>
-          <div className="flex items-center gap-3 mt-3 flex-wrap">
+          <div className="flex items-center gap-2.5 mt-3.5 flex-wrap">
             {/* The verdict, when the catalog has one. When it does not, the read-state is
                 the whole answer — and a null verdict is NEVER rendered as a verdict. */}
             {claim.verdict ? <VerdictBadge verdict={claim.verdict} size="sm" /> : null}
@@ -135,27 +147,25 @@ export default function ClaimArtifactCard({
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
             className="overflow-hidden"
           >
-            <div className="px-5 pb-5">
-              <div className="divider mb-4" />
+            <div className="px-5 pb-6 pl-[3.75rem]">
+              <div className="divider mb-5" />
 
               {/* What this claim's state actually means, in words. The badge is a label; a
                   reader deciding whether to act needs the sentence. */}
-              <div className="mb-4 text-xs text-ink-300 leading-relaxed">
+              <p className="mb-5 text-xs text-ink-400 leading-relaxed max-w-[82ch]">
                 {readStateBlurb(claim.state)}
-              </div>
+              </p>
 
               {/* THE REPAIR. Gated on `repairable` — the FAILED WRITE, not the read-state:
                   a re-audited claim whose new write failed still shows its OLDER verdict and
-                  reads `complete`, and gating on the state would strand it forever. This
-                  comment said "incomplete only" until Session 19 and contradicted the line
-                  directly above it, which is the overstatement this repo exists to catch. */}
+                  reads `complete`, and gating on the state would strand it forever. */}
               {repairable && (
-                <div className="mb-4 flex items-center gap-3 p-3 rounded-lg bg-contradicted/10 border border-contradicted/25">
+                <div className="mb-5 flex items-center gap-3 p-4 rounded-xl bg-contradicted/[0.08] border border-contradicted/30">
                   <div className="flex-1 min-w-0">
                     <div className="text-sm text-contradicted font-medium">
                       The write stopped at {claim.failed_step}
                     </div>
-                    <div className="text-xs text-ink-300">
+                    <div className="text-xs text-ink-300 leading-relaxed mt-0.5">
                       {stale
                         ? 'The verdict shown is real, and it is from an EARLIER audit — the latest one did not land. Re-running the write adds it.'
                         : claim.failed_step === 'tag'
@@ -178,17 +188,15 @@ export default function ClaimArtifactCard({
 
               {/* What the claim asserts — the SUBJECT that a bare structured property could
                   never carry, and the whole reason the artifact exists. */}
-              <div className="mb-4">
-                <div className="text-label-sm mb-2">Asserted</div>
+              <div className="mb-6">
+                <div className="text-label-sm mb-3">Asserted</div>
                 {Object.keys(claim.asserted).length === 0 ? (
-                  <p className="text-xs text-ink-400">
-                    This artifact carries no asserted payload.
-                  </p>
+                  <p className="text-xs text-ink-400">This artifact carries no asserted payload.</p>
                 ) : (
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     {Object.entries(claim.asserted).map(([key, value]) => (
-                      <div key={key} className="flex items-baseline gap-3 text-xs">
-                        <span className="font-mono-nums text-ink-400 w-36 shrink-0">{key}</span>
+                      <div key={key} className="flex items-baseline gap-4 text-xs">
+                        <span className="font-mono-nums text-ink-500 w-36 shrink-0">{key}</span>
                         <span className="font-mono-nums text-ink-100 break-all">
                           {typeof value === 'object' ? JSON.stringify(value) : String(value)}
                         </span>
@@ -198,9 +206,9 @@ export default function ClaimArtifactCard({
                 )}
               </div>
 
-              {/* THE HISTORY. Append-only, newest first. */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-2">
+              {/* THE HISTORY — the lineage peak. Append-only, newest first. */}
+              <div className="mb-6">
+                <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-1.5 text-label-sm">
                     <History size={11} /> Verdict history
                   </div>
@@ -214,94 +222,107 @@ export default function ClaimArtifactCard({
                   </a>
                 </div>
                 {claim.history.length === 0 ? (
-                  <p className="text-xs text-ink-400">
+                  <p className="text-xs text-ink-400 leading-relaxed max-w-[72ch]">
                     No verdict has been recorded against this claim yet. That is not a verdict
                     of "unknown" — the claim exists and the catalog holds no answer for it.
                   </p>
                 ) : (
-                  <div className="space-y-2">
-                    {claim.history.map((event, i) => (
-                      <div
-                        key={`${event.at}-${i}`}
-                        className="flex items-start gap-3 p-3 rounded-lg bg-ink-800/50 border border-ink-700/40"
-                      >
-                        {/* A rail, so a flip reads as a sequence rather than as a list. */}
-                        <div className="flex flex-col items-center pt-1 shrink-0">
-                          <div
-                            className={`w-2 h-2 rounded-full ${
-                              event.verdict === 'Supported'
-                                ? 'bg-supported'
-                                : event.verdict === 'Contradicted'
-                                  ? 'bg-contradicted'
-                                  : 'bg-insufficient'
-                            }`}
-                          />
-                          {i < claim.history.length - 1 && (
-                            <div className="w-px flex-1 min-h-4 bg-ink-700 mt-1" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <VerdictBadge verdict={event.verdict} size="sm" />
-                            {i === 0 && claim.history.length > 1 && (
-                              <span className="text-label-sm">latest</span>
-                            )}
-                            <span className="font-mono-nums text-xs text-ink-400">
-                              {when(event.at)}
-                            </span>
+                  <div className="relative pl-1">
+                    {/* the drawn rail — a flip reads as a sequence, not a list */}
+                    <motion.div
+                      initial={{ scaleY: 0 }}
+                      animate={{ scaleY: 1 }}
+                      transition={{ duration: 0.5, ease: [0.4, 0.8, 0.3, 1] }}
+                      className="absolute left-[9px] top-2 bottom-2 w-px origin-top bg-gradient-to-b from-ink-500/60 to-ink-600/20"
+                    />
+                    <div className="flex flex-col gap-2.5">
+                      {claim.history.map((event, i) => (
+                        <motion.div
+                          key={`${event.at}-${i}`}
+                          initial={{ opacity: 0, x: 8 }}
+                          animate={{ opacity: 1, x: 0 }}
+                          transition={{ delay: i * 0.09, duration: 0.4 }}
+                          className="relative flex gap-4"
+                        >
+                          <motion.span
+                            initial={{ scale: 0 }}
+                            animate={{ scale: 1 }}
+                            transition={{ delay: i * 0.09, type: 'spring', stiffness: 400, damping: 20 }}
+                            className="w-[18px] h-[18px] shrink-0 rounded-full mt-1 flex items-center justify-center"
+                            style={{
+                              background: verdictHex(event.verdict),
+                              boxShadow: `0 0 14px -2px ${verdictHex(event.verdict)}`,
+                            }}
+                          >
+                            <span className="w-1.5 h-1.5 rounded-full bg-ink-950" />
+                          </motion.span>
+                          <div className="flex-1 min-w-0 p-3.5 rounded-xl bg-ink-800/40 border border-ink-700/40">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <VerdictBadge verdict={event.verdict} size="sm" />
+                              {i === 0 && claim.history.length > 1 && (
+                                <span className="font-mono-nums text-[9.5px] tracking-[0.12em] text-ink-500 border border-ink-600/50 px-1.5 py-0.5 rounded">
+                                  LATEST
+                                </span>
+                              )}
+                              <span className="font-mono-nums text-xs text-ink-400">{when(event.at)}</span>
+                            </div>
+                            <div className="mt-2 text-xs text-ink-300 space-y-1">
+                              {event.reviewer && (
+                                <div>
+                                  Published by{' '}
+                                  <span className="text-ink-100">{corpuserId(event.reviewer)}</span>
+                                </div>
+                              )}
+                              {/* STRUCTURED evidence, absence preserved — never a flat string. */}
+                              {event.evidence.length > 0 && (
+                                <div className="space-y-0.5">
+                                  {event.evidence.map((e, j) => (
+                                    <div
+                                      key={j}
+                                      className="font-mono-nums text-ink-400 break-all text-[0.7rem]"
+                                    >
+                                      {e.field}
+                                      <span className="text-ink-500"> = </span>
+                                      {evidenceValue(e.value)}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              {/* The snapshot this verdict was decided against — WHICH state of
+                                  the world it held true for (Session 21). */}
+                              {event.snapshot_id && (
+                                <div className="font-mono-nums text-ink-500 text-[0.7rem]">
+                                  snapshot {event.snapshot_id}
+                                </div>
+                              )}
+                              {event.audit_run && (
+                                <div className="font-mono-nums text-ink-500 text-[0.7rem]">
+                                  run {event.audit_run.slice(0, 8)}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                          <div className="mt-1.5 text-xs text-ink-300 space-y-0.5">
-                            {event.reviewer && (
-                              <div>
-                                Published by{' '}
-                                <span className="text-ink-100">{corpuserId(event.reviewer)}</span>
-                              </div>
-                            )}
-                            {event.evidence.length > 0 && (
-                              <div className="space-y-0.5">
-                                {event.evidence.map((e, j) => (
-                                  <div
-                                    key={j}
-                                    className="font-mono-nums text-ink-400 break-all text-[0.7rem]"
-                                  >
-                                    {e.field}
-                                    <span className="text-ink-500"> = </span>
-                                    {evidenceValue(e.value)}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            {event.snapshot_id && (
-                              <div className="font-mono-nums text-ink-500 text-[0.7rem]">
-                                snapshot {event.snapshot_id}
-                              </div>
-                            )}
-                            {event.audit_run && (
-                              <div className="font-mono-nums text-ink-500 text-[0.7rem]">
-                                run {event.audit_run.slice(0, 8)}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                        </motion.div>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
 
-              <div className="space-y-1">
+              {/* THE ARTIFACT identity. */}
+              <div className="space-y-1.5">
                 <div className="text-label-sm mb-2">Artifact</div>
-                <div className="flex items-baseline gap-3 text-xs">
-                  <span className="font-mono-nums text-ink-400 w-36 shrink-0">claim urn</span>
+                <div className="flex items-baseline gap-4 text-xs">
+                  <span className="font-mono-nums text-ink-500 w-36 shrink-0">claim urn</span>
                   <span className="font-mono-nums text-ink-100 break-all">{claim.claim_urn}</span>
                 </div>
-                <div className="flex items-baseline gap-3 text-xs">
-                  <span className="font-mono-nums text-ink-400 w-36 shrink-0">dataset</span>
+                <div className="flex items-baseline gap-4 text-xs">
+                  <span className="font-mono-nums text-ink-500 w-36 shrink-0">dataset</span>
                   <span className="font-mono-nums text-ink-100 break-all">{claim.target_urn}</span>
                 </div>
                 {claim.tags.length > 0 && (
-                  <div className="flex items-baseline gap-3 text-xs">
-                    <span className="font-mono-nums text-ink-400 w-36 shrink-0">tags</span>
+                  <div className="flex items-baseline gap-4 text-xs">
+                    <span className="font-mono-nums text-ink-500 w-36 shrink-0">tags</span>
                     <span className="flex flex-wrap gap-1.5">
                       {claim.tags.map((t) => (
                         <span
