@@ -3,7 +3,7 @@
   "name": "support_tickets",
   "platform": "postgres",
   "description": "Customer support tickets. One row per ticket.",
-  "last_modified": "2026-07-15T14:20:41.353000Z",
+  "last_modified": "2026-07-18T05:57:17.176000Z",
   "owners": [
     "urn:li:corpuser:carol.davis"
   ],

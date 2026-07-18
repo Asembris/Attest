@@ -3,7 +3,7 @@
   "name": "legacy_accounts",
   "platform": "postgres",
   "description": null,
-  "last_modified": "2025-05-24T20:20:41.353000Z",
+  "last_modified": "2025-05-27T11:57:17.176000Z",
   "owners": null,
   "tags": [
     "urn:li:tag:Deprecated"

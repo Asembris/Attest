@@ -3,7 +3,7 @@
   "name": "device_telemetry",
   "platform": "snowflake",
   "description": "Per-device app telemetry. Never manually classified; an automated scanner found personal data in it and recorded the finding as a property.",
-  "last_modified": "2026-07-15T14:20:41.353000Z",
+  "last_modified": "2026-07-18T05:57:17.176000Z",
   "owners": [
     "urn:li:corpuser:dana.wu"
   ],
