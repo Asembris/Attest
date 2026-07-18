@@ -31,9 +31,10 @@ An E2E that cannot fail is a green light wired to nothing.
 **WHAT THIS FILE DOES NOT PROVE**, stated so nobody reads more into it:
 
   - It is ONE path through the UI — the demo path. It is not UI coverage.
-  - It does not prove the crash-orphan window (`unknown`) is handled. That needs the process
-    to die between DataHub committing and the store persisting, which is not simulatable
-    without faking it. It stays a documented limitation (README).
+  - It does not prove the crash-orphan window is handled — but that is no longer untestable.
+    `tests/test_settlement_recovery.py` (Session 22) dies the process for real, with a SIGKILL
+    at four catalog-write points and once during recovery, and proves a fresh process replays
+    the settlement from a durable intent. This file's job is the browser boundary, not that.
   - The browser is whatever Edge the machine has. Pinning playwright does not pin Edge.
 """
 
