@@ -278,3 +278,84 @@ def test_claim_about_a_nonexistent_column_is_contradicted(snapshot) -> None:
 
     assert r.verdict is Verdict.CONTRADICTED
     assert "does not exist" in r.reason
+
+
+# --- Verified-absence must be consistent across ALL labels (Session 23, Hole 3) ---
+#
+# COMPLETENESS_REACHES_COLUMNS is declared True (policy.py): a column the governance team
+# did not tag on a Verified table is a column they reviewed and found clean. The PII path
+# honored it; the generic (non-PII) label loop checked `not observed` before `complete`, so
+# at COLUMN grain (where a column's own labels are empty but the TABLE is Verified) it
+# short-circuited to Insufficient-Coverage — diverging from the PII path and from the
+# declared policy. The fix reorders the two so a non-PII column claim follows the same rule.
+
+_H3_URN = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.h3.verified,PROD)"
+_VERIFIED = "urn:li:tag:Verified"
+_NEUTRAL = "urn:li:tag:Sensitive"  # a non-PII label with no declared exclusion
+
+
+def _verified_unclassified_column():
+    from attest.datahub.snapshot import DatasetSnapshot, FieldSnapshot
+
+    return DatasetSnapshot(
+        urn=_H3_URN, tags=(_VERIFIED,), fields=(FieldSnapshot(path="c"),)
+    )
+
+
+def test_a_non_pii_column_claim_on_a_verified_table_follows_the_completeness_rule() -> None:
+    """present=True must be Contradicted (the label is absent and the review was complete);
+    present=False must be Supported (reviewed and found without it). Before the fix both were
+    Insufficient-Coverage."""
+    snap = _verified_unclassified_column()
+
+    contains = ClassificationClaim(
+        target_urn=_H3_URN, labels=(TIER1,), present=True, field_path="c",
+        raw_text="column c is Tier1",
+    )
+    free = ClassificationClaim(
+        target_urn=_H3_URN, labels=(TIER1,), present=False, field_path="c",
+        raw_text="column c is not Tier1",
+    )
+    assert check_classification(contains, snap).verdict is Verdict.CONTRADICTED
+    assert check_classification(free, snap).verdict is Verdict.SUPPORTED
+
+
+def test_pii_and_non_pii_agree_on_a_verified_unclassified_column() -> None:
+    """The consistency the fix restores: the PII label and a non-PII label reach the SAME
+    verdict on the same unclassified column of the same Verified table."""
+    snap = _verified_unclassified_column()
+    for present in (True, False):
+        verdicts = {
+            check_classification(
+                ClassificationClaim(
+                    target_urn=_H3_URN, labels=(label,), present=present,
+                    field_path="c", raw_text="c",
+                ),
+                snap,
+            ).verdict
+            for label in (PII, TIER1)
+        }
+        assert len(verdicts) == 1, f"PII and non-PII diverged for present={present}: {verdicts}"
+        assert Verdict.INSUFFICIENT_COVERAGE not in verdicts
+
+
+def test_the_reorder_does_not_break_the_unreviewed_column_trap() -> None:
+    """An unclassified column of an UNVERIFIED table is still silence, not a clean bill. The
+    reorder must not turn the false-assurance trap into a confident verdict: `complete` is
+    False here, so the run falls through to Insufficient-Coverage exactly as before."""
+    from attest.datahub.snapshot import DatasetSnapshot, FieldSnapshot
+
+    # Table carries a label (so it is not blank) but is NOT Verified -> not complete.
+    unverified = DatasetSnapshot(
+        urn=_H3_URN, tags=(TIER1,), fields=(FieldSnapshot(path="c"),)
+    )
+    free = ClassificationClaim(
+        target_urn=_H3_URN, labels=(_NEUTRAL,), present=False, field_path="c",
+        raw_text="column c is not Sensitive",
+    )
+    contains = ClassificationClaim(
+        target_urn=_H3_URN, labels=(_NEUTRAL,), present=True, field_path="c",
+        raw_text="column c is Sensitive",
+    )
+    assert check_classification(free, unverified).verdict is Verdict.INSUFFICIENT_COVERAGE
+    assert check_classification(contains, unverified).verdict is Verdict.INSUFFICIENT_COVERAGE

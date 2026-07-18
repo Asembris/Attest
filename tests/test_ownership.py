@@ -70,3 +70,16 @@ def test_owner_must_be_an_actor_urn() -> None:
             owner_urn="urn:li:dataset:(x,y,PROD)",
             raw_text="A dataset owns it.",
         )
+
+
+def test_the_completeness_marker_does_not_license_ownership_closed_world() -> None:
+    """`Verified` is a CLASSIFICATION-completeness marker; it says nothing about whether
+    OWNERSHIP is complete (Session 23, Hole 3, the correct-by-design half). An unowned
+    Verified table is Insufficient-Coverage, not Contradicted — the closed-world rule stays
+    scoped to the checker that declares it. This pin goes red if it ever leaks here."""
+    from attest.datahub.snapshot import DatasetSnapshot
+
+    urn = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.h3.own,PROD)"
+    snap = DatasetSnapshot(urn=urn, tags=("urn:li:tag:Verified",))  # Verified, no owners
+    claim = OwnershipClaim(target_urn=urn, owner_urn=ALICE, raw_text="alice owns it")
+    assert check_ownership(claim, snap).verdict is Verdict.INSUFFICIENT_COVERAGE

@@ -99,3 +99,18 @@ def test_a_multi_column_claim_is_a_conjunction(snapshot) -> None:
 
     assert r.verdict is Verdict.CONTRADICTED
     assert "passport_number" in r.reason
+
+
+def test_the_completeness_marker_does_not_license_schema_closed_world() -> None:
+    """`Verified` marks CLASSIFICATION complete, not schema (Session 23, Hole 3, the
+    correct-by-design half). A Verified table with no schema aspect is Insufficient-Coverage
+    about its columns — absence of a schema is not absence of a column. This pin goes red if
+    the closed-world marker ever leaks into this checker."""
+    from attest.datahub.snapshot import DatasetSnapshot
+
+    urn = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.h3.sch,PROD)"
+    snap = DatasetSnapshot(urn=urn, tags=("urn:li:tag:Verified",))  # Verified, no schema
+    claim = SchemaClaim(
+        target_urn=urn, columns=(ColumnAssertion(name="id"),), raw_text="has id"
+    )
+    assert check_schema(claim, snap).verdict is Verdict.INSUFFICIENT_COVERAGE
