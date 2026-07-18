@@ -29,15 +29,37 @@ from pydantic import BaseModel, ConfigDict
 def _urns(container: Any, key: str, inner: str) -> tuple[str, ...] | None:
     """Pull URNs out of DataHub's `{key: [{inner: {urn}}]}` association shape.
 
-    Returns None when the aspect is absent — which is *not* the same as an aspect
-    that is present and empty, and the caller is entitled to know which.
+    Three outcomes, and they must stay three (Session 23, Hole 2):
+
+      * absent aspect (`None`) -> `None`. The catalog is SILENT.
+      * present-but-empty list (`[]`) -> `()`. The aspect exists and lists nobody. A
+        VALID state — an unowned dataset, an untagged one — and Insufficient-Coverage.
+      * present-but-BROKEN entry (an item with no usable URN) -> RAISE. A structurally
+        broken response is neither absent nor empty, and normalizing it to the
+        empty-string URN `''` — which is what this used to do — produced a
+        populated-LOOKING list of garbage that drove a confident wrong verdict. A
+        malformed response is not data; `client.fetch_dataset` turns this ValueError
+        into a MalformedResponseError, which resolve surfaces as a ClaimError.
+
+    The empty-vs-broken line is exact: `[]` never enters the loop and returns `()`;
+    only a present entry that carries no URN raises. Absence-is-not-empty extended to
+    absence-is-not-malformed.
     """
     if container is None:
         return None
     items = container.get(key)
     if items is None:
         return None
-    return tuple((item.get(inner) or {}).get("urn", "") for item in items)
+    urns: list[str] = []
+    for item in items:
+        urn = ((item or {}).get(inner) or {}).get("urn")
+        if not urn:
+            raise ValueError(
+                f"malformed catalog response: an entry under {key!r} carries no {inner!r} "
+                f"URN ({item!r})"
+            )
+        urns.append(urn)
+    return tuple(urns)
 
 
 def _term_parents(container: Any) -> dict[str, tuple[str, ...]]:

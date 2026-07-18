@@ -1,5 +1,10 @@
 from attest.datahub.cache import CacheStats, SnapshotCache
-from attest.datahub.client import DataHubClient, DataHubError, EntityNotFoundError
+from attest.datahub.client import (
+    DataHubClient,
+    DataHubError,
+    EntityNotFoundError,
+    MalformedResponseError,
+)
 from attest.datahub.snapshot import DatasetSnapshot, FieldSnapshot
 
 __all__ = [
@@ -9,5 +14,6 @@ __all__ = [
     "DatasetSnapshot",
     "EntityNotFoundError",
     "FieldSnapshot",
+    "MalformedResponseError",
     "SnapshotCache",
 ]

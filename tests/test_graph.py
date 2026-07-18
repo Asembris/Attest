@@ -602,6 +602,48 @@ def test_an_unresolvable_entity_is_an_error_and_not_a_verdict():
     assert report.summary()["verdicts"] == {}
 
 
+def test_a_malformed_catalog_response_is_an_error_and_not_a_verdict():
+    """A structurally broken response for ONE claim surfaces as a ClaimError — the same
+    class as entity-not-found — and does NOT crash the run or take the other claims down.
+
+    This is the pipeline end of Hole 2 (Session 23): fetch_dataset raises
+    MalformedResponseError (a DataHubError), resolve catches it exactly as it catches a
+    missing entity, and the well-formed sibling is still audited.
+    """
+    from attest.datahub import MalformedResponseError
+
+    class Malforming(FakeCatalog):
+        def fetch_dataset(self, urn: str):
+            if urn == EMPTY:
+                raise MalformedResponseError(urn, "owner object was null")
+            return super().fetch_dataset(urn)
+
+    chat = FakeChat(
+        replies=[
+            claim_reply(
+                [
+                    ownership_claim(owner=CAROL, urn=SF),
+                    ownership_claim(owner=CAROL, urn=EMPTY),
+                ]
+            ),
+            explanation_reply(f"{CAROL} is listed as an owner.", "Supported", []),
+        ]
+    )
+    p = Pipeline(
+        llm=LLM(client=chat), client=Malforming(CATALOG), now=NOW, max_retries=2
+    )
+    report = p.run(f"{SF} is owned by {CAROL}. {EMPTY} is owned by {CAROL}.")
+
+    # The malformed one is an error, counted in no verdict tally.
+    assert len(report.errors) == 1
+    assert report.errors[0].claim.target_urn == EMPTY
+    assert "Malformed" in report.errors[0].error
+    # The well-formed sibling still got its verdict — the run did not crash.
+    assert len(report.audits) == 1
+    assert report.audits[0].claim.target_urn == SF
+    assert report.audits[0].verdict is Verdict.SUPPORTED
+
+
 def test_an_injection_attempt_is_surfaced_rather_than_swallowed():
     p, chat = pipeline(
         claim_reply([ownership_claim(owner=CAROL)]),
