@@ -343,6 +343,35 @@ run A is billed 480 tokens for 240 tokens of work. A concurrency fix that silent
 than the queue it replaced. (Concurrent *audits* are tested; that is not a claim that arbitrary
 concurrent approvals and process deaths are safe.)
 
+## The append-only history, and its one collision boundary
+
+A published claim is a CUSTOM Assertion plus an append-only timeseries of verdict events, so
+"was this ever contradicted before someone fixed the tag" is answerable from the catalog
+alone. That guarantee rests on two properties of the run event, both pinned against real GMS:
+
+- **A retry does not double-count.** The event is keyed by `(urn, aspect, timestampMillis)`
+  and the timestamp is the audit run's own `created_at`, so re-running a write-back — the
+  repair path — re-reports the same verdict at the same key and collapses onto the same row.
+  A retry that appended would forge a second audit in an append-only log.
+- **A real re-audit appends.** A later audit has a later `created_at`, a different key, and a
+  new event. The history is real history, not a last-write-wins field.
+
+**The residual, named rather than hidden.** Two *distinct* runs that share a start-millisecond
+**and disagree** collapse to one event, and the loser's verdict is lost. This cannot be keyed
+away server-side: `AssertionResultInput` exposes **only `timestampMillis`** — no `messageId`,
+`runId`, or `partitionSpec` (introspected on the pinned server) — so there is no field to carry
+run identity into the key. Two things make it tolerable rather than a hole:
+
+1. **It is unreachable by construction.** Two runs reach *different* verdicts only if the
+   catalog changed between them — and the deterministic core returns the same verdict for the
+   same snapshot, so a disagreement requires a catalog change *within the runs' shared
+   millisecond*. Same-verdict collisions are harmless: they are the retry dedup, generalized.
+2. **The alternatives are worse.** A write-time anomaly guard would read-before-write against
+   an eventually-consistent index to catch a sub-millisecond collision, and would still
+   birthday-collide; contorting the timestamp to carry run identity degrades its fidelity as a
+   time. Both were considered and refused as padding. The honest move is to pin the two real
+   guarantees and name the boundary.
+
 ## Entity-not-found is not a verdict
 
 A claim about a dataset that does not exist surfaces as a `ClaimError`, kept out of `audits` entirely

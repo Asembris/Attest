@@ -1301,6 +1301,95 @@ shipped twice, caught by a human both times.**
   persisting, which is not simulatable without faking it, and faking it would prove nothing.
   It stays a documented limitation.
 
+**15. THE INHERITANCE EDGES CLOSED (Session 21). Four honest limitations became shipped,
+measured behaviour — the artifact made TRUTHFUL, not broader. No new claim type, no new
+surface.** The thesis — the next agent inherits a per-claim verdict out of DataHub — is only
+as strong as its weakest retrieval/round-trip edge, and these were those edges. **Every proof
+is a live listing or a `store=None` reader, never Attest's own DB.**
+
+- **GAP 1 — RETRIEVAL PAGINATES AND ROUND-TRIPS THE TOTAL, and silent absence is the sin it
+  removes.** `dataset.assertions` and `searchAcrossEntities` both return `total` and take
+  start/count; the old code fetched ONE page and DISCARDED the total, so the 51st claim on a
+  dataset was **silently absent** — indistinguishable from "no such claim", the exact collapse
+  this project exists to refuse, committed in its own read path. Now
+  `client.list_dataset_assertions` / `search_assertions` PAGINATE to `limit` and return
+  `(nodes, total)`; `retrieval.Retrieval.total` rides back on every `/claims` response and,
+  when `total > considered`, the note says **TRUNCATED** with the count. `limit=None` fetches
+  everything (the thesis query, `read_dataset_claims`). **MEASURED live** by seeding 55
+  artifacts past the real 50-cap and watching the 51st vanish; pinned by a live test that
+  forces the page size to 2 and walks real GMS pages, and an offline test that exercises 55 via
+  the fake. The vacuity check restores the old silent cap and proves the truncation note
+  vanishes along with the honest total — the note is only honest because the total is.
+
+- **GAP 2 — INSUFFICIENT-COVERAGE EVIDENCE ROUND-TRIPS, ABSENCE AND ALL.** The write-back
+  flattened evidence to a `field=value; ...` string and **dropped every `value is None` row**
+  (`service._write_back`, `if e.value is not None`) — so an IC verdict, whose evidence IS the
+  catalog's silence, inherited back as an empty string. The absent-vs-empty distinction
+  snapshot.py exists to preserve was destroyed at the catalog boundary. Now evidence travels as
+  JSON in the run event's `nativeResults` (`writeback._dump_evidence` / `_parse_evidence`), and
+  a `value=None` decodes back as **None specifically** — distinct from `''` and `[]`. **THE ONE
+  ASSERTION THAT CANNOT BE HOLLOW: the test asserts the DECODED value IS None**, not merely
+  that evidence came back non-empty — a green on "non-empty" would pass while the absence was
+  silently gone. MEASURED live through a `store=None` reader.
+  - **GAP 2b — SNAPSHOT IDENTITY, CAPTURED AT AUDIT AND STORED, never recomputed.** A verdict
+    means "this held against the catalog AS IT STOOD when this run read it"; an inherited
+    artifact that cannot name WHICH state it was decided against is lamer than the verdict
+    Attest computed. `DatasetSnapshot.identity` (sha256 of the canonical model) is captured in
+    `graph._next_claim` from the snapshot the checker actually ran against, threaded
+    `ClaimAudit → ClaimRecord → claims.snapshot_id → replay → write_claim_artifact →
+    nativeResults[attest.snapshot_id]`, and read back into `VerdictEvent.snapshot_id`. **It is
+    captured and stored, NOT recomputed at write-back** — a re-fetch would let the catalog move
+    underneath it and make the stored identity a lie (§2c, the same-snapshot rule the correction
+    loop already obeys). The store schema gained `claims.snapshot_id`, so **a pre-Session-21
+    database is REFUSED at open** (`_REQUIRED_COLUMNS` gained a row; `rm attest.db
+    attest-checkpoints.db` and re-run). Because the write-back runs on the RESUMED report,
+    `replay.py` carries `snapshot_id` too — a restart that lost it would publish an artifact
+    with no identity where an unrestarted run published one.
+
+- **GAP 3 — A STALE VERDICT TAG IS DETECTED ON READ, from the artifact ALONE.** The tag is
+  written LAST and is a derived search index; a crash between `report` and `tag`, or a verdict
+  that flipped without the swap landing, leaves a correct verdict a tag-filtered search cannot
+  find. `RetrievedClaim.stale_tag` compares the latest verdict's expected tag to the artifact's
+  tags — **catalog-derived, so a `store=None` reader sees it too** — surfaced in `ClaimView` and
+  as a chip in the UI. It is False whenever there is no verdict (a claim with none cannot have a
+  stale tag), so pending-lag / incomplete / unknown never trip it. **This is on-READ DETECTION,
+  NOT a reconciler** — a background sweeper is still deferred (see the table) — but a reader is
+  no longer blind to the stale tag in front of it, and `repairable` (the store's failed `tag`
+  write) is how it gets fixed. The vacuity check swaps in the naive "any tag present → fresh"
+  detector and proves it misses the mismatch. MEASURED live: verdict Contradicted, tag
+  Attest-Supported, `stale_tag=True`, from real GMS with no store.
+
+- **GAP 4 — EVENT IDENTITY: the two real guarantees PINNED LIVE, the residual NAMED and
+  un-keyable.** The append-only history is keyed `(urn, aspect, timestampMillis)` with
+  `timestampMillis = run.created_at`. Two guarantees, now pinned against real GMS (they held
+  before but no LIVE test asserted them): **(a) a retry re-reported at the run's own timestamp
+  leaves ONE event** (idempotent — a retry that appended would forge an audit); **(b) a re-audit
+  at a later timestamp leaves TWO distinguishable events** (a re-audit that collapsed would
+  erase the history the artifact exists for). Both already had OFFLINE pins against the fake
+  (`test_claim_artifact.py`); Session 21 adds the live ones. **THE RESIDUAL, documented not
+  fixed:** two DISTINCT runs sharing a start-millisecond AND DISAGREEING collapse to one —
+  measured, `AssertionResultInput` exposes **only `timestampMillis`** (no messageId / runId /
+  partitionSpec — introspected on the live server), so it **cannot be keyed away server-side**
+  without inventing a fake sub-ms timestamp. The deterministic core makes it unreachable in
+  practice: two runs reach DIFFERENT verdicts only if the catalog changed between them, which
+  cannot happen inside their shared millisecond (same snapshot → same verdict). Same-verdict
+  collisions are harmless dedup. **A write-time anomaly guard was considered and REFUSED as
+  padding** — it reads-before-write against an eventually-consistent index to catch a collision
+  that requires a sub-millisecond catalog change, and still birthday-collides. See
+  docs/architecture.md.
+
+- **THE WIRE GREW STRUCTURE, and the E2E proved the browser path survives it.**
+  `VerdictEventView.evidence` went from a string to a structured `EvidenceView[]` (absence
+  preserved) plus `snapshot_id`; `ClaimView` gained `stale_tag`; `RetrievalView` gained `total`.
+  The TS mirror (`types.ts`) and `ClaimArtifactCard` were updated in lockstep, and the **browser
+  E2E passed with 0 API failures** — the one test that executes the TS mirror against the real
+  API, which is exactly why a wire change is not trusted until it runs (§14).
+
+- **WHAT THIS DOES NOT DO, said plainly:** no new claim type, no new endpoint, no auth, no
+  durable-outbox saga (the crash-orphan `unknown` window is unchanged — a Session 22 concern),
+  no pagination UI beyond round-tripping `total`, no background reconciler daemon. The MCP
+  finding (§12) is untouched: the catalog read is still GraphQL.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
@@ -1313,7 +1402,7 @@ shipped twice, caught by a human both times.**
 | **A write-back result is matched to a claim by TARGET URN in the UI** | Two claims about one dataset both display the last write's result. The backend has this right — its decision log is keyed by claim INDEX, precisely because keying by URN attributed a write to the wrong decision — but `WriteBackView` carries `claim_urn` and no claim index. | The UI cannot derive the artifact URN: it is a sha256 over the claim's canonical JSON, and re-implementing that identity rule in TypeScript would be a worse bug than the one it fixes (two implementations of an identity that must never disagree). The fix is a claim index on the wire type, which is the write path's shape to change. |
 | **A REAL UX DEFECT: a human cannot act on a failed write from where they see it** | `PublicationPanel` renders "Published, but the catalog write failed at {step}" and **stops**. The remedy exists and is one call away, but it lives on the Published-claims screen. The person who is told the catalog does not know about their decision is given no way to do anything about it *at the point they are told* — they must know to navigate elsewhere. **This is not cosmetic and not a parking-lot item.** A failure surfaced without a remedy beside it is a report that relies on the reader already knowing what to do, which is the same shape as `pending-lag` and `incomplete` sharing a control — a UI stating something true and leaving the reader unable to act correctly on it. | Deferred by Session 19 on scope, not on merit. **The E2E proved the repair PATH works; it did not prove a human can repair from where the failure surfaces** — those are different claims and only the first is evidenced. Adding a second entry point to the one endpoint with a catalog side effect is a change to make deliberately, with its own test, not to slip in beside a test that found it. A later session owns it. |
 | **The repair spinner fans out across a run** | `ClaimsExplorer` passes `retrying={retrying === claim.audit_run}`, so repairing one claim shows "Repairing…" on every claim from the same audit. | Cosmetic, and the same URN-vs-index shape as the write-back row below: `retryWriteback` is genuinely run-scoped, so the state is keyed by the thing the call actually takes. The fix is a per-claim key the wire type does not carry. |
-| **No reconciler for a stale verdict tag** | A crash between `report` and `tag` leaves a correct verdict that a tag-filtered search cannot find. It is recorded (`writeback_step`), visible (`GET /claims` says so in its `note`), and repairable in one call — but nothing detects it automatically. | A production deployment would want a periodic reconcile comparing each claim's latest run event against its verdict tag. This is a hackathon build, and it says so rather than shipping a sweeper nobody exercises. |
+| **No BACKGROUND reconciler for a stale verdict tag** (on-read detection now ships — Session 21) | A crash between `report` and `tag` leaves a correct verdict that a tag-filtered search cannot find. It is recorded (`writeback_step`), and since Session 21 **detected on read from the artifact alone** (`RetrievedClaim.stale_tag`, surfaced in `GET /claims` and the UI, visible to a `store=None` reader), and repairable in one call. What is still deferred is a **background sweeper** that scans the catalog for stale tags unprompted. | A production deployment would want a periodic reconcile comparing each claim's latest run event against its verdict tag across the whole catalog. On-read detection covers the claim a reader is actually looking at; a daemon that sweeps for ones nobody asked about is more than this build ships, and it says so rather than shipping a sweeper nobody exercises. |
 
 **Durable resume is now BUILT** (Session 5). A run parked at the human checkpoint survives
 the death of its process: the paused graph comes back from `SqliteSaver`, the typed ledger

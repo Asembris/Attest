@@ -96,8 +96,10 @@ Three properties that fall out of content-addressing, and each is load-bearing:
 Retrieval reads **DataHub**, never Attest's database: `GET /claims`, `GET /claims/{claim_urn}`. A
 reader constructed with no store at all (`ClaimReader(client, store=None)`) gets every claim, verdict,
 reviewer and history out of the catalog alone — which is the actual test that the knowledge was
-inherited rather than merely recorded. What such a reader *cannot* do is diagnose a half-finished
-write; see [limits](#scope-and-limitations).
+inherited rather than merely recorded. It paginates, so nothing is silently past a cap; and an
+Insufficient-Coverage verdict's evidence round-trips as **absence** — a `null` that stays `null`, never
+collapsed to empty — because for that verdict the catalog's silence *is* the evidence. What such a
+reader *cannot* do is diagnose a half-finished write; see [limits](#scope-and-limitations).
 
 ## Three verdicts, not a binary guess
 
@@ -257,7 +259,8 @@ flowchart TD
 ```
 
 <sub>The **run event** is the verdict and is append-only. The **tag** — and the dataset badge — are
-projections written after it, never the truth. Retrieval is capped at 50 items and does not paginate.</sub>
+projections written after it, never the truth. Retrieval paginates and round-trips the catalog's total,
+so a claim past the page is named as truncated, never silently absent.</sub>
 
 **Reads are GraphQL over `httpx`.** Writes are three sequential operations, and each is idempotent —
 which is why repeating the write *is* the recovery, and why no saga is needed. `WriteResult` names the
@@ -363,13 +366,17 @@ wrong verdict has the same confident shape as a right one.
   outcome is persisted, nothing local knows a write was attempted: the claim reads `unknown`, and the
   repair endpoint cannot find it. `unknown` is deliberately **not** reported as a failure — no evidence
   of a write is not evidence of a failed write.
-- **Retrieval is bounded at 50 items and does not paginate.** DataHub's totals are discarded, so a
-  claim past the cap can be silently absent from a listing.
-- **Insufficient-Coverage evidence does not fully round-trip** into the artifact: null/absence
-  evidence and snapshot identity are not preserved catalog-side.
-- **A stale verdict tag has no reconciler.** A crash between `report` and `tag` leaves a correct verdict
-  that a tag-filtered search cannot find. It is recorded, visible in `GET /claims`, and repairable —
-  but nothing detects it automatically.
+- **A stale verdict tag has no *background* reconciler.** A crash between `report` and `tag` leaves a
+  correct verdict that a tag-filtered search cannot find. It is recorded, repairable in one call, and
+  now **detected on read** — from the artifact alone, so a reader with no Attest store sees it too
+  (`GET /claims` reports `stale_tag`). What is still deferred is a background sweeper that scans the
+  catalog for stale tags unprompted.
+- **The append-only verdict history has one collision boundary.** A retry does not double-count and a
+  real re-audit appends — both pinned against live DataHub. But two *distinct* runs that share a
+  start-millisecond and *disagree* collapse to one event: the timeseries key is `timestampMillis` and
+  DataHub exposes no other, so run identity cannot enter it. It is unreachable in practice — two runs
+  disagree only if the catalog changed between them, which cannot happen inside one millisecond — and
+  is [documented, not papered over](docs/architecture.md#the-append-only-history-and-its-one-collision-boundary).
 - **The browser E2E covers one path, not the UI.** `just e2e` drives a real browser through
   the whole transaction — audit, publish, three catalog writes, read back out of DataHub —
   and `just e2e-sabotage` proves it goes red by re-introducing two bugs that really shipped.
