@@ -19,27 +19,30 @@ export default {
           100: '#D2D6DC',
           50: '#EDEFF2',
         },
-        // Verdict states
+        // Verdict states — the muted design-pass palette. The MEANING is frozen: three
+        // verdict tokens map 1:1 to the old ones, only the hue changed. Shade variants are
+        // recomputed around the new DEFAULT (only DEFAULT + accent-400/600 are referenced in
+        // the app today, but the scale is kept complete so a future utility resolves sanely).
         supported: {
-          DEFAULT: '#3FB984',
-          600: '#34A372',
-          400: '#5FC99A',
-          200: '#9BDEC0',
-          glow: 'rgba(63, 185, 132, 0.12)',
+          DEFAULT: '#5FB98D',
+          600: '#4FA87B',
+          400: '#7FC9A3',
+          200: '#AEDCC2',
+          glow: 'rgba(95, 185, 141, 0.12)',
         },
         contradicted: {
-          DEFAULT: '#E5484D',
-          600: '#C73D41',
-          400: '#ED6E72',
-          200: '#F2A4A6',
-          glow: 'rgba(229, 72, 77, 0.12)',
+          DEFAULT: '#D96A64',
+          600: '#C25852',
+          400: '#E4867F',
+          200: '#EFB3AE',
+          glow: 'rgba(217, 106, 100, 0.12)',
         },
         insufficient: {
-          DEFAULT: '#C99A2E',
-          600: '#AE8628',
-          400: '#D6B256',
-          200: '#E8D29A',
-          glow: 'rgba(201, 154, 46, 0.12)',
+          DEFAULT: '#C2A265',
+          600: '#A98A4F',
+          400: '#D2B57F',
+          200: '#E3D2A8',
+          glow: 'rgba(194, 162, 101, 0.12)',
         },
         // Neutral accent
         accent: {
@@ -49,8 +52,8 @@ export default {
         },
       },
       fontFamily: {
-        serif: ['"Fraunces"', 'Georgia', 'serif'],
-        sans: ['"Inter"', 'system-ui', 'sans-serif'],
+        serif: ['"Cormorant Garamond"', 'Georgia', 'serif'],
+        sans: ['"Figtree"', 'system-ui', 'sans-serif'],
         mono: ['"JetBrains Mono"', '"SF Mono"', 'monospace'],
       },
       fontSize: {
