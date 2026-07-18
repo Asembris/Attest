@@ -588,3 +588,241 @@ def test_since_matches_a_claim_with_any_verdict_in_the_window(catalog):
 
     assert len(recent.claims) == 1
     assert recent.claims[0].artifact.claim_type == "freshness"
+
+
+# --- Session 21, gap 1: pagination round-trips the total, truncation is NAMED --------
+#
+# The fake models the CONTRACT (up-to-limit nodes plus the catalog's total), not the client's
+# start/count loop — that is server machinery a fake does not have, and `just live` is the
+# evidence for it. What these prove is the shape: past the cap the reader returns everything,
+# and a page cut off at the limit says so rather than letting a claim be silently absent.
+
+
+def _publish_many(catalog: FakeDataHub, n: int) -> None:
+    """Publish `n` DISTINCT claims on one dataset. Distinct owners hash to distinct
+    content-addressed artifacts — the >50 that the 50-cap used to hide."""
+    for i in range(n):
+        publish(catalog, ownership_claim(owner=f"urn:li:corpuser:user{i:03d}"), "Supported")
+
+
+def test_a_listing_past_the_cap_returns_EVERYTHING_and_round_trips_the_total(catalog):
+    """GAP 1. Fifty was a silent cap, and silent absence reads as 'no such claim'.
+
+    Exercised PAST the cap on purpose — a pagination test that never exceeds one page proves
+    nothing. Fifty-five claims on one dataset: with the limit raised the reader returns all of
+    them, and the catalog's own total rides back so a full read is known to be full.
+    """
+    _publish_many(catalog, 55)
+
+    full = ClaimReader(catalog, store=None).list(ClaimQuery(target_urn=SF), limit=200)
+
+    assert len(full.claims) == 55, "the listing dropped claims past the old 50-cap"
+    assert full.retrieval.total == 55, "the catalog's total did not round-trip"
+    assert "TRUNCATED" not in full.retrieval.note, "a complete page was reported as truncated"
+
+
+def test_a_truncated_listing_SAYS_it_is_truncated_never_silently(catalog):
+    """GAP 1's load-bearing half: absence past the limit must be NAMED on the response.
+
+    Silent absence is indistinguishable from 'no such claim', the collapse this whole project
+    refuses. So a page cut off at the limit carries the catalog's total and says, on the
+    response itself, that there is more — the caller never has to infer it by counting.
+    """
+    _publish_many(catalog, 55)
+
+    page = ClaimReader(catalog, store=None).list(ClaimQuery(target_urn=SF), limit=50)
+
+    assert len(page.claims) == 50
+    assert page.retrieval.total == 55, "the catalog's total was discarded"
+    assert page.retrieval.considered == 50
+    assert "TRUNCATED" in page.retrieval.note, (
+        "a claim past the limit is absent from the listing and the response does not say so — "
+        "which is the silent absence gap 1 exists to remove"
+    )
+
+
+def test_discarding_the_total_hides_the_truncation__the_gap_1_vacuity_check(catalog, monkeypatch):
+    """THE VACUITY CHECK for gap 1: restore the old behaviour, prove the signal vanishes.
+
+    The bug was fetching at most a page and reporting no honest total — so a 55-claim dataset
+    read as 50 and nothing said otherwise. Sabotage the catalog read back to that (cap the
+    fetch, report total == returned) and confirm both the extra claims and the truncation note
+    disappear: the real total is exactly what surfaces the absence.
+    """
+    _publish_many(catalog, 55)
+    real = catalog.list_dataset_assertions
+
+    def capped(dataset_urn: str, limit: int | None = 50) -> tuple[list, int]:
+        nodes, _total = real(dataset_urn, limit=50)
+        return nodes, len(nodes)  # total == returned: the old silent cap
+
+    monkeypatch.setattr(catalog, "list_dataset_assertions", capped)
+
+    page = ClaimReader(catalog, store=None).list(ClaimQuery(target_urn=SF), limit=200)
+
+    assert len(page.claims) == 50, "the sabotage did not cap the fetch"
+    assert page.retrieval.total == 50, "with the cap restored, total collapses to what came back"
+    assert "TRUNCATED" not in page.retrieval.note, (
+        "the truncation note fired without a real total to compare against — the note is only "
+        "honest because the total is, and this proves the total is what drives it"
+    )
+
+
+# --- Session 21, gap 2: Insufficient-Coverage evidence round-trips, absence and all ---
+
+
+def test_IC_evidence_round_trips_through_the_catalog_with_absence_preserved(catalog):
+    """GAP 2. An Insufficient-Coverage verdict's evidence IS the absence, and it must survive.
+
+    The write-back used to flatten evidence to a string and DROP every `value is None` row —
+    so an IC verdict, whose evidence is often just the catalog's silence, inherited back as an
+    empty string. Here the structured evidence goes to the catalog and a store=None reader
+    reconstructs it field-by-field, and the absence decodes back as `None` SPECIFICALLY: not
+    '', not [], not a missing row. That is the one assertion that cannot be hollow.
+    """
+    claim = freshness_claim()
+    evidence = [
+        {"field": "properties.lastModified.time", "value": None, "note": "aspect absent"},
+        {"field": "max_age_hours", "value": 24, "note": "claimed window"},
+    ]
+    writeback.write_claim_artifact(
+        catalog,
+        claim=claim,
+        verdict="Insufficient-Coverage",
+        run_id="run-ic",
+        checked_at=NOW,
+        evidence=evidence,
+        snapshot_id="sha256:deadbeefcafe",
+        reviewer="alice@example.com",
+    )
+
+    event = ClaimReader(catalog, store=None).get(writeback.claim_urn(claim)).artifact.history[0]
+    by_field = {e.field: e for e in event.evidence}
+
+    assert set(by_field) == {"properties.lastModified.time", "max_age_hours"}
+    absent = by_field["properties.lastModified.time"]
+    # THE assertion the whole gap turns on: absence decodes back as None, distinct from empty.
+    assert absent.value is None, "the catalog is SILENT here, and that has to read as None"
+    assert absent.value != "" and absent.value != [], (
+        "None collapsed to an empty value — absence read as 'the catalog said empty', which is "
+        "the exact confusion Insufficient-Coverage exists to keep apart"
+    )
+    assert absent.note == "aspect absent", "the note explaining the absence was lost"
+    assert by_field["max_age_hours"].value == 24
+    # gap 2b: the snapshot the verdict was decided against rides back too.
+    assert event.snapshot_id == "sha256:deadbeefcafe"
+
+
+def test_collapsing_absence_to_empty_breaks_the_round_trip__the_gap_2_vacuity_check(
+    catalog, monkeypatch
+):
+    """THE VACUITY CHECK for gap 2: drop None at serialization, prove the absence stops
+    round-tripping.
+
+    Sabotage `_dump_evidence` back to the old drop-the-null behaviour and confirm no `None`
+    survives to the reader. An IC verdict whose only evidence was the absence then inherits
+    back with NO evidence at all — lamer than the one Attest computed, which is the whole gap.
+    Asserting the DECODED value is None (above) is what catches this; asserting merely that
+    'evidence came back non-empty' would pass while the absence was silently gone.
+    """
+    def drop_none(items):
+        return json.dumps(
+            [
+                {"field": e.get("field", ""), "value": e.get("value"), "note": e.get("note")}
+                for e in items
+                if e.get("value") is not None
+            ],
+            sort_keys=True,
+        )
+
+    monkeypatch.setattr(writeback, "_dump_evidence", drop_none)
+
+    claim = freshness_claim()
+    writeback.write_claim_artifact(
+        catalog,
+        claim=claim,
+        verdict="Insufficient-Coverage",
+        run_id="run-ic",
+        checked_at=NOW,
+        evidence=[{"field": "properties.lastModified.time", "value": None, "note": "absent"}],
+    )
+
+    event = ClaimReader(catalog, store=None).get(writeback.claim_urn(claim)).artifact.history[0]
+    assert all(e.value is not None for e in event.evidence), (
+        "with absence dropped at serialization, no None reaches the reader — this is precisely "
+        "what the healthy round-trip must prevent"
+    )
+    assert not any(e.field == "properties.lastModified.time" for e in event.evidence), (
+        "the only evidence row was the absence, and dropping it left the IC verdict with no "
+        "evidence at all — the lameness gap 2 removes"
+    )
+
+
+# --- Session 21, gap 3: a stale verdict tag is detected on READ, from the artifact alone ---
+
+
+def test_a_stale_tag_is_detected_from_the_artifact_alone(catalog):
+    """GAP 3. The verdict flipped; the tag did not. A store=None reader still sees it.
+
+    The tag is a derived search index written LAST, so a crash between `report` and `tag` — or
+    a verdict that flipped without the swap landing — leaves a correct verdict whose tag lags.
+    That claim is missing from every tag-filtered search and findable by a dataset read. The
+    mismatch is derivable from the artifact ALONE, which is the point: the second agent
+    inheriting this from DataHub has no Attest store to consult.
+    """
+    claim = ownership_claim()
+    urn = publish(catalog, claim, "Supported", at=NOW - timedelta(days=1))  # tag: Supported
+    # A later audit reaches Contradicted; the tag swap never lands.
+    catalog.report_assertion_result(
+        urn,
+        "FAILURE",
+        int(NOW.timestamp() * 1000),
+        {writeback.VERDICT_KEY: "Contradicted", writeback.AUDIT_RUN_KEY: "run-2"},
+    )
+
+    got = ClaimReader(catalog, store=None).get(urn)
+
+    assert got.artifact.verdict == "Contradicted", "the latest run event is the authority"
+    assert writeback.verdict_tag_urn("Supported") in got.artifact.tags, "tag is still the old one"
+    assert got.stale_tag, "tag says Supported, verdict is Contradicted — that is stale"
+
+
+def test_a_healthy_tag_is_not_stale_and_a_verdictless_claim_cannot_be(catalog):
+    """The two directions gap 3's detection must get right, or it cries wolf.
+
+    A claim whose tag matches its latest verdict is NOT stale. And a claim with no verdict
+    cannot be stale — there is no verdict for a tag to lag — so pending-lag, incomplete and
+    unknown never trip it. A false positive here would flag every fresh claim.
+    """
+    fresh = publish(catalog, ownership_claim(), "Supported")
+    verdictless = upsert(catalog, freshness_claim())
+
+    assert not ClaimReader(catalog, store=None).get(fresh).stale_tag, "a matching tag is not stale"
+    got = ClaimReader(catalog, store=None).get(verdictless)
+    assert got.artifact.verdict is None
+    assert not got.stale_tag, "a claim with no verdict cannot have a stale tag"
+
+
+def test_the_naive_detector_misses_a_stale_tag__the_gap_3_vacuity_check(catalog, monkeypatch):
+    """THE VACUITY CHECK for gap 3: a detector that only asks 'is any tag present' misses it.
+
+    The mismatch has to be against the LATEST verdict's expected tag, not merely whether the
+    artifact carries some tag. Swap in the naive version and confirm the stale claim reads
+    fresh — which is why the real detector compares the verdict to its tag.
+    """
+    claim = ownership_claim()
+    urn = publish(catalog, claim, "Supported", at=NOW - timedelta(days=1))
+    catalog.report_assertion_result(
+        urn, "FAILURE", int(NOW.timestamp() * 1000), {writeback.VERDICT_KEY: "Contradicted"}
+    )
+
+    assert ClaimReader(catalog, store=None).get(urn).stale_tag, "the real detector catches it"
+
+    # "It has some verdict and some tag, so the tag is fine." Blind to WHICH tag.
+    naive = property(lambda self: self.artifact.verdict is not None and not self.artifact.tags)
+    monkeypatch.setattr(retrieval.RetrievedClaim, "stale_tag", naive)
+
+    assert not ClaimReader(catalog, store=None).get(urn).stale_tag, (
+        "the naive detector called a stale tag fresh — which is why detection compares the "
+        "latest verdict to its expected tag, not merely whether any tag exists"
+    )

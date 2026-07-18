@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -704,7 +705,9 @@ def test_the_third_verdict_reaches_the_catalog_as_its_literal_self(client, now, 
         verdict=result.verdict.value,
         run_id="live-third-verdict",
         checked_at=now,
-        evidence="; ".join(f"{e.field}={e.value}" for e in result.evidence if e.value),
+        # STRUCTURED evidence, absence and all (Session 21 gap 2). The IC verdict's evidence
+        # is where a None value is most likely, and it must round-trip as None.
+        evidence=[{"field": e.field, "value": e.value, "note": e.note} for e in result.evidence],
         reviewer="live-test",
     )
     assert written.ok is True, f"failed at {written.failed_step}: {written.detail}"
@@ -998,3 +1001,270 @@ def test_a_published_verdict_is_RETRIEVABLE_from_the_catalog_by_a_reader_with_no
         print(
             "\n  Every field above came out of the catalog. No Attest process, no SQLite.\n"
         )
+
+
+# =====================================================================================
+# Session 21 — the four inheritance edges, each proven against REAL DataHub. The offline
+# tier proves the shapes against a fake; these prove the machinery a fake cannot have —
+# the pagination loop, the eventually-consistent index, the real timeseries key. Scratch
+# datasets, and the artifacts are content-addressed at fixed timestamps, so re-runs land on
+# the same rows rather than growing the catalog.
+# =====================================================================================
+
+SCRATCH_PAGE = "urn:li:dataset:(urn:li:dataPlatform:datahub,attest_s21_pagination,PROD)"
+SCRATCH_STALE = "urn:li:dataset:(urn:li:dataPlatform:datahub,attest_s21_staletag,PROD)"
+SCRATCH_IDENT = "urn:li:dataset:(urn:li:dataPlatform:datahub,attest_s21_identity,PROD)"
+
+
+@pytest.mark.live
+def test_gap1_pagination_returns_everything_past_a_page_and_round_trips_the_total(
+    client, now, monkeypatch, capsys
+):
+    """GAP 1, live: the client's REAL start/count loop over real GMS pages.
+
+    The offline tier proves the retrieval SHAPE against a fake, but a fake has no pages to
+    walk, so the pagination LOOP is untestable there (Session 5's rule). The investigation
+    seeded 55 artifacts past the real 50-cap and watched the 51st vanish; this pins the fix
+    cheaply and idempotently — the page size is dialled down to 2 so a handful of
+    content-addressed claims exercises the multi-page loop against real DataHub without
+    seeding fifty. Past the page the reader returns EVERYTHING, and the catalog's own total
+    rides back so a truncated page can never pass as complete.
+    """
+    n = 6
+    claims = [
+        {
+            "claim_type": "ownership",
+            "target_urn": SCRATCH_PAGE,
+            "owner_urn": f"urn:li:corpuser:s21.pageuser{i:02d}",
+            "raw_text": f"{SCRATCH_PAGE} is owned by pageuser{i:02d}",
+        }
+        for i in range(n)
+    ]
+    urns = set()
+    for c in claims:
+        w = writeback.write_claim_artifact(
+            client, claim=c, verdict="Supported", run_id="live-gap1",
+            checked_at=now, reviewer="live-test",
+        )
+        assert w.ok, f"seed failed at {w.failed_step}: {w.detail}"
+        urns.add(w.claim_urn)
+
+    # Wait for the relationship index to show all n before asserting on pagination.
+    deadline = time.monotonic() + 40
+    total = 0
+    while time.monotonic() < deadline:
+        _nodes, total = client.list_dataset_assertions(SCRATCH_PAGE, limit=100)
+        if total >= n:
+            break
+        time.sleep(1)
+    assert total >= n, f"the index shows {total} of {n} scratch artifacts"
+
+    # Force the multi-page loop: real pages of 2, over real GMS.
+    monkeypatch.setattr(type(client), "_ASSERTION_PAGE", 2)
+    reader = ClaimReader(client, store=None)
+
+    full = reader.list(ClaimQuery(target_urn=SCRATCH_PAGE), limit=100)
+    got = {c.artifact.claim_urn for c in full.claims}
+    assert urns <= got, "the multi-page loop dropped an artifact past the first page"
+    assert full.retrieval.total >= n
+    assert "TRUNCATED" not in full.retrieval.note, "a complete read was reported as truncated"
+
+    truncated = reader.list(ClaimQuery(target_urn=SCRATCH_PAGE), limit=3)
+    assert len(truncated.claims) == 3
+    assert truncated.retrieval.total >= n > 3, "the catalog's total did not round-trip"
+    assert "TRUNCATED" in truncated.retrieval.note, (
+        "a page cut off at the limit did not say so — a claim past it would be silently absent"
+    )
+
+    with capsys.disabled():
+        print("\n\n  GAP 1 — pagination over REAL DataHub (page size forced to 2):")
+        print(f"    limit=100 -> {len(full.claims)} claims, total={full.retrieval.total}, "
+              "walked multiple pages, nothing dropped")
+        print(f"    limit=3   -> {len(truncated.claims)} claims, total="
+              f"{truncated.retrieval.total}, TRUNCATED named on the response\n")
+
+
+@pytest.mark.live
+def test_gap2_IC_evidence_and_its_snapshot_round_trip_through_real_datahub(client, now, capsys):
+    """GAP 2, live: the third verdict's evidence IS the absence, and it survives round-trip.
+
+    A freshness claim on a dataset the catalog holds no lastModified for is
+    Insufficient-Coverage, and its evidence is a single row whose value is None — the
+    catalog's silence, which is the whole justification for the verdict. The write-back used
+    to flatten evidence to a string and DROP that row, so an IC verdict inherited back with no
+    evidence at all. Here the structured evidence and the snapshot identity go to REAL
+    DataHub and a store=None reader reconstructs them — the absence decoding back as None
+    SPECIFICALLY, not '' and not a missing row.
+    """
+    claim = {
+        "claim_type": "freshness",
+        "target_urn": NO_TIMESTAMP,
+        "raw_text": f"The dataset {NO_TIMESTAMP} is refreshed daily.",
+        "max_age_hours": 24.0,
+    }
+    snapshot = client.fetch_dataset(NO_TIMESTAMP)
+    result = check(FreshnessClaim(**claim), snapshot, now=now)
+    assert result.verdict is Verdict.INSUFFICIENT_COVERAGE, (
+        f"{NO_TIMESTAMP} now has a timestamp ({result.verdict}); this needs a dataset the "
+        "catalog is silent about."
+    )
+    assert any(e.value is None for e in result.evidence), (
+        "the IC freshness evidence carries no absence row — the checker changed shape"
+    )
+
+    written = writeback.write_claim_artifact(
+        client, claim=claim, verdict=result.verdict.value, run_id="live-gap2-ic",
+        checked_at=now,
+        evidence=[{"field": e.field, "value": e.value, "note": e.note} for e in result.evidence],
+        snapshot_id=snapshot.identity, reviewer="live-test",
+    )
+    assert written.ok, f"failed at {written.failed_step}: {written.detail}"
+    assert _await_verdict(client, written.claim_urn, run_id="live-gap2-ic") is not None
+
+    # store=None: the second agent, reconstructing from the catalog ALONE.
+    event = ClaimReader(client, store=None).get(written.claim_urn).artifact.history[0]
+    original = {e.field: e.value for e in result.evidence}
+    inherited = {e.field: e.value for e in event.evidence}
+    assert inherited == original, (
+        f"evidence did not round-trip field-by-field: wrote {original}, read {inherited}"
+    )
+    absent = [e for e in event.evidence if e.value is None]
+    assert absent, "no None-valued evidence survived — absence collapsed to empty on the round trip"
+    assert absent[0].value is None, "the absence must decode back as None, not '' or []"
+    assert event.snapshot_id == snapshot.identity, (
+        f"snapshot identity did not survive: wrote {snapshot.identity}, read {event.snapshot_id!r}"
+    )
+
+    with capsys.disabled():
+        print("\n\n  GAP 2 — IC evidence + snapshot, from REAL DataHub, store=None reader:")
+        for e in event.evidence:
+            shown = "None (the catalog is SILENT)" if e.value is None else repr(e.value)
+            print(f"    {e.field} = {shown}")
+        print(f"    snapshot_id = {event.snapshot_id}\n")
+
+
+@pytest.mark.live
+def test_gap3_a_stale_verdict_tag_is_detected_from_real_datahub_with_no_store(client, now, capsys):
+    """GAP 3, live: a verdict that flipped without the tag swap, detected on real GMS.
+
+    Report a claim's verdict Supported (tag: Supported), then report a LATER Contradicted
+    verdict WITHOUT swapping the tag — the crash-between-report-and-tag shape. On the real
+    server the artifact's latest verdict is Contradicted while its tag is still Supported, and
+    a store=None reader detects the mismatch from the artifact ALONE. On-read detection, not a
+    reconciler — the sweeper is deferred, but a reader is no longer blind to the stale tag in
+    front of it.
+    """
+    claim = {
+        "claim_type": "ownership",
+        "target_urn": SCRATCH_STALE,
+        "owner_urn": "urn:li:corpuser:s21.staletag",
+        "raw_text": f"{SCRATCH_STALE} is owned by staletag",
+    }
+    urn = writeback.claim_urn(claim)
+
+    # A complete write: Supported, tagged Supported.
+    w = writeback.write_claim_artifact(
+        client, claim=claim, verdict="Supported", run_id="live-gap3-a",
+        checked_at=now - timedelta(hours=1), reviewer="live-test",
+    )
+    assert w.ok, f"seed failed at {w.failed_step}: {w.detail}"
+    assert _await_verdict(client, urn, run_id="live-gap3-a") is not None
+
+    # A LATER Contradicted verdict, and the tag deliberately NOT swapped (report only).
+    client.report_assertion_result(
+        urn, "FAILURE", int(now.timestamp() * 1000),
+        {writeback.VERDICT_KEY: "Contradicted", writeback.AUDIT_RUN_KEY: "live-gap3-b"},
+    )
+    deadline = time.monotonic() + 40
+    while time.monotonic() < deadline:
+        art = writeback.read_claim_artifact(client, urn)
+        if art is not None and art.verdict == "Contradicted":
+            break
+        time.sleep(1)
+
+    got = ClaimReader(client, store=None).get(urn)
+    assert got.artifact.verdict == "Contradicted", "the latest run event is the authority"
+    assert writeback.verdict_tag_urn("Supported") in got.artifact.tags, "the tag was not left stale"
+    assert got.stale_tag, (
+        "a store=None reader did not detect the stale tag on real DataHub — the verdict is "
+        "Contradicted and the tag still says Supported"
+    )
+
+    with capsys.disabled():
+        print("\n\n  GAP 3 — stale tag, detected from REAL DataHub with no store:")
+        print(f"    latest verdict = {got.artifact.verdict}")
+        print(f"    verdict tag    = {[t for t in got.artifact.tags if 'Attest-' in t]}")
+        print(f"    stale_tag      = {got.stale_tag}\n")
+
+
+@pytest.mark.live
+def test_gap4_event_identity_retry_dedups_and_a_reaudit_appends_on_real_datahub(client, capsys):
+    """GAP 4, live: the append-only history's two load-bearing guarantees, on the REAL
+    timeseries.
+
+    Offline the fake models the timeseries key by hand; here real GMS decides. Two guarantees:
+      (a) a RETRY — the same verdict re-reported at the run's own timestamp — leaves ONE event.
+          A retry that appended would forge a second audit in an append-only log.
+      (b) a RE-AUDIT — the same verdict at a LATER timestamp — leaves a SECOND, distinguishable
+          event. A re-audit that collapsed would erase the history the artifact exists to hold.
+
+    THE RESIDUAL is documented, not tested as a bug (see docs/architecture.md): two DISTINCT
+    runs sharing a start-millisecond and DISAGREEING collapse to one, because the timeseries
+    key is (urn, aspect, timestampMillis) and `AssertionResultInput` exposes only that
+    (measured — no messageId, runId or partitionSpec). The deterministic core makes it
+    unreachable in practice — two runs reach different verdicts only if the catalog changed
+    between them, which cannot happen inside their shared millisecond.
+    """
+    claim = {
+        "claim_type": "ownership",
+        "target_urn": SCRATCH_IDENT,
+        "owner_urn": "urn:li:corpuser:s21.identity",
+        "raw_text": f"{SCRATCH_IDENT} is owned by identity",
+    }
+    urn = writeback.claim_urn(claim)
+    # FIXED timestamps: re-runs land on the same two rows (idempotent), not a growing history.
+    base = 1_800_000_000_000
+    t1 = datetime.fromtimestamp(base / 1000, tz=UTC)
+    t2 = datetime.fromtimestamp((base + 60_000) / 1000, tz=UTC)
+
+    # (a) the retry: same verdict, same timestamp, twice.
+    for _ in range(2):
+        w = writeback.write_claim_artifact(
+            client, claim=claim, verdict="Supported", run_id="live-gap4",
+            checked_at=t1, reviewer="live-test",
+        )
+        assert w.ok, f"seed failed at {w.failed_step}: {w.detail}"
+    # (b) the re-audit: same verdict, a later timestamp.
+    w2 = writeback.write_claim_artifact(
+        client, claim=claim, verdict="Supported", run_id="live-gap4",
+        checked_at=t2, reviewer="live-test",
+    )
+    assert w2.ok, f"seed failed at {w2.failed_step}: {w2.detail}"
+
+    # Wait until both timestamps are indexed.
+    deadline = time.monotonic() + 40
+    ats: list[int] = []
+    while time.monotonic() < deadline:
+        art = writeback.read_claim_artifact(client, urn)
+        ats = [e.at for e in art.history] if art else []
+        if base in ats and base + 60_000 in ats:
+            break
+        time.sleep(1)
+
+    assert ats.count(base) == 1, (
+        f"the retry appended a duplicate at the same timestamp: {ats}. The run event must be "
+        "keyed by the run's timestamp, so a re-report collapses onto the same row."
+    )
+    assert base + 60_000 in ats, "the re-audit at a later timestamp did not append a second event"
+    assert len([a for a in ats if a in (base, base + 60_000)]) == 2, (
+        "the two distinct-timestamp events did not both survive — the append-only history "
+        "collapsed a real re-audit"
+    )
+
+    with capsys.disabled():
+        print("\n\n  GAP 4 — event identity on the REAL timeseries:")
+        print("    reported Supported@base TWICE, Supported@base+60s ONCE")
+        print(f"    events at base       = {ats.count(base)}  (retry deduped -> 1)")
+        print(f"    events at base+60s   = {ats.count(base + 60_000)}  (re-audit appended -> 1)")
+        print("    residual same-ms/distinct-verdict collision: documented, un-keyable "
+              "(AssertionResultInput = timestampMillis only)\n")
