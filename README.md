@@ -166,8 +166,9 @@ denominators: [`benchmark/README.md`](benchmark/README.md).
 
 ## Try it
 
-Two honest paths. Only the first is one command — **DataHub is a separately managed stack**, and
-pretending otherwise would be the first false claim in the README.
+Runs on your machine, not a hosted URL — **DataHub Core is a multi-container stack**, and a
+per-machine instance is what makes each run's catalog its own (the reset story in
+[docs/deployment.md](docs/deployment.md)). Two honest paths.
 
 **Offline verification** — no DataHub, no API key, no cost. This is what CI runs:
 
@@ -176,17 +177,28 @@ just setup
 just check          # lint + the truly-offline tier, on captured fixtures. Never skips.
 ```
 
-**The local DataHub demo** — needs DataHub Core running (GMS on `:8080`), plus `OPENAI_API_KEY` for
-the semantic layer:
+**The local DataHub demo** — needs Docker (~8 GB free) and `OPENAI_API_KEY` for the semantic
+layer:
 
 ```bash
-just seed           # generate + ingest the seed catalog, then capture the offline fixtures
+just up             # bring up DataHub Core v1.5.0.6 from the vendored, pinned compose
+just seed           # generate + ingest the seed catalog, capture the offline fixtures
 just demo           # build the UI and serve it with the API on :8003
 ```
 
-Then `POST /audit` some agent prose, publish a verdict at the checkpoint, and read it back with
-`GET /claims`. Setup, the version pin, and the environment landmines are in
-[docs/datahub-setup.md](docs/datahub-setup.md).
+`just up` is a real command now, not a manual stack to set up by hand — it brings up DataHub
+from a **vendored** compose (no GitHub fetch) and blocks until GMS is actually healthy.
+**First bring-up pulls ~12.6 GB of images and takes a few minutes; the cold boot after that is
+~4.5 min** ([measured](docs/deployment.md#measured-cost)). Then open `http://localhost:8003`,
+`POST /audit` some agent prose, publish a verdict at the checkpoint, and read it back with `GET
+/claims`.
+
+`just smoke` makes "one command runs everything" **falsifiable**: it brings the stack up and
+asserts the demo path answers, and `just smoke-sabotage` proves it goes red — at the wire — for
+a dead stack and a dead demo path. `just reset` is the operator's definitive catalog wipe. The
+version pin and environment landmines are in [docs/datahub-setup.md](docs/datahub-setup.md);
+the deployment shape, the reset design, and the measured numbers are in
+[docs/deployment.md](docs/deployment.md).
 
 ## Why the verdict is trustworthy
 
@@ -342,7 +354,10 @@ wrong verdict has the same confident shape as a right one.
 
 **Actual gaps.** Real, and not softened:
 
-- **No hosted demo, and no authentication.** It runs locally. There is no public URL to click.
+- **Local, not hosted, and no authentication.** Bring-up is one command (`just up`, from a
+  vendored pinned compose), but it runs on your machine — there is no public URL to click, and
+  that is the [deliberate reset design](docs/deployment.md#the-reset-design), not a gap. It
+  needs Docker and ~8 GB free RAM, and the first bring-up pulls ~12.6 GB of images.
 - **The three catalog writes are sequential, not atomic.** A caught failure is recorded, surfaced, and
   repairable in one call. But if the **process dies** after DataHub commits the upsert and before the
   outcome is persisted, nothing local knows a write was attempted: the claim reads `unknown`, and the
@@ -372,6 +387,7 @@ wrong verdict has the same confident shape as a right one.
 | --- | --- |
 | [benchmark/README.md](benchmark/README.md) | The golden benchmark: 40 hand-labeled claims, methodology, denominators, and why not RAGAS/DeepEval. |
 | [docs/architecture.md](docs/architecture.md) | Trust boundaries, the PII policy, the graph, the guards, resume, and the cost projection. |
+| [docs/deployment.md](docs/deployment.md) | The deployment shape, the reset design, the measured bring-up numbers, and the smoke test. |
 | [docs/mcp-evaluation.md](docs/mcp-evaluation.md) | The measured MCP-vs-GraphQL finding, per-dataset. |
 | [docs/datahub-setup.md](docs/datahub-setup.md) | The version pin, the seed, and the environment landmines. |
 | [docs/design/claim-artifact.md](docs/design/claim-artifact.md) | The claim-artifact design, and the probe it was measured against. |
