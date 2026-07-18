@@ -16,19 +16,26 @@ copy .env.example .env      # then fill in OPENAI_API_KEY
 ```
 
 Or `just setup`. The key is needed only by the semantic layer — the checkers and the whole offline tier
-run without one.
+run without one. For a fully reproducible runtime install (every transitive version pinned), use
+`pip install -r requirements.lock` — see [docs/deployment.md](docs/deployment.md#reproducible-installs).
 
-DataHub Core must be running locally for the integration and live tiers (quickstart; GMS on `:8080`,
-UI on `:9002`; metadata auth is disabled locally, so no token). See
-[docs/datahub-setup.md](docs/datahub-setup.md).
+DataHub Core must be running locally for the integration and live tiers (GMS on `:8080`, UI on
+`:9002`; metadata auth is disabled locally, so no token). `just up` brings it up from a vendored,
+pinned compose and blocks until GMS is healthy; `just reset` wipes and rebuilds it. The version pin
+and environment landmines are in [docs/datahub-setup.md](docs/datahub-setup.md); the deployment shape
+and measured bring-up numbers are in [docs/deployment.md](docs/deployment.md).
 
 ## Commands
 
 ```
 just setup           # install the package + dev deps
+just up              # bring up DataHub Core v1.5.0.6 from the vendored compose, health-gated
+just reset           # DESTROY the catalog (volumes and all) and rebuild it from the seed
 just seed            # generate seed metadata, ingest it, and capture the offline fixtures
 just capture         # regenerate tests/fixtures/snapshots/ from the live catalog (run by `just seed`)
 just health          # is the pinned DataHub version actually running?
+just smoke           # bring the stack up, then assert the demo path answers (live tier)
+just smoke-sabotage  # THE VACUITY CHECK for the smoke test. Non-zero by design.
 
 just serve           # the API on :8003. Docs at /docs. (8080/9002 belong to DataHub)
 just demo            # build the UI and serve it WITH the API from one process on :8003
@@ -136,6 +143,10 @@ Two commands exit non-zero **by design**, and both are tripwires rather than bug
   browser E2E does *not* go red for each. Both lived a full session in `main` while the whole
   suite was green, and both were caught by a human clicking the app. If the E2E cannot catch
   them it is not wired to what it claims to test.
+- **`just smoke-sabotage`** points the deployment smoke test at a dead GMS (must go red at the
+  reachability gate, *fast* — not a downstream timeout) and at an unseeded URN (must go red at
+  the demo-answers assertion), and fails if either survives or reds for the wrong reason. It is
+  what makes the README's "one command runs everything" claim falsifiable.
 
 Same discipline as `test_fixture_drift.py`: an assertion that only ever passes is a green light wired
 to nothing.
