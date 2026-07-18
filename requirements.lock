@@ -1,0 +1,78 @@
+# Attest RUNTIME lock — the full, pinned transitive closure of the service.
+#
+# This is what a deployed or clone-and-run instance installs, and it is the reproducibility
+# guarantee `requirements.txt` (direct pins only) could not give: every transitive version
+# is fixed too, so the same tree resolves to the same bytes on any machine. Without it, a
+# transitive dep floats and a deployed instance drifts while every local test stays green —
+# the "green on my machine" trap this repo keeps closing.
+#
+# SCOPE, stated so nobody assumes more:
+#   * RUNTIME ONLY. This is `pip install .` (the service). It does NOT include the dev tier
+#     (pytest, ruff, sklearn), the seed/ingestion tooling (acryl-datahub, a very large tree
+#     of its own), or the e2e extra (Playwright). Those are installed on top and keep their
+#     own pins: ruff and playwright are pinned EXACT in pyproject; the seed pins live in
+#     requirements.txt. Keeping the e2e extra OUT of this lock is deliberate — CI and the
+#     default install must never pull Playwright (see pyproject `[e2e]`).
+#   * VERSIONS ARE THE TESTED ONES, not a fresh resolution. Captured from the working venv
+#     where the suite passes, so the lock records what actually works — not whatever the
+#     resolver would pick from the floors today (which drifted newer: fastapi 0.139.2,
+#     pydantic 2.13.4, measured 2026-07-18).
+#   * NO HASHES. Version-pinned, not hash-pinned — a real improvement over floating floors
+#     without adding pip-tools to the tree. A production deployment that needs supply-chain
+#     hash verification would regenerate this with `pip-compile --generate-hashes`.
+#
+# Regenerate: install `.` into a clean venv and freeze its non-editable closure, then pin
+# each name to the version in the tested venv. See docs/deployment.md.
+#
+# Install:  pip install -r requirements.lock  (runtime)   then  .[dev] / .[e2e] as needed.
+
+aiosqlite==0.22.1
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.14.1
+certifi==2026.6.17
+charset-normalizer==3.4.9
+click==8.4.2
+colorama==0.4.6
+distro==1.9.0
+fastapi==0.139.0
+h11==0.16.0
+httpcore==1.0.9
+httpx==0.28.1
+idna==3.18
+jiter==0.16.0
+jsonpatch==1.33
+jsonpointer==3.1.1
+langchain-core==1.4.9
+langchain-protocol==0.0.18
+langgraph==1.2.9
+langgraph-checkpoint==4.1.1
+langgraph-checkpoint-sqlite==3.1.0
+langgraph-prebuilt==1.1.0
+langgraph-sdk==0.4.2
+langsmith==0.10.2
+openai==2.45.0
+orjson==3.11.9
+ormsgpack==1.12.2
+packaging==25.0
+pydantic==2.11.10
+pydantic-settings==2.14.2
+pydantic_core==2.33.2
+python-dotenv==1.2.2
+PyYAML==6.0.3
+requests==2.34.2
+requests-toolbelt==1.0.0
+sniffio==1.3.1
+sqlite-vec==0.1.9
+starlette==1.3.1
+tenacity==9.1.4
+tqdm==4.68.4
+truststore==0.10.4
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+urllib3==2.7.0
+uuid_utils==0.17.0
+uvicorn==0.51.0
+websockets==15.0.1
+xxhash==3.8.1
+zstandard==0.25.0
