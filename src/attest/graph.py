@@ -640,6 +640,11 @@ class Pipeline:
                         proposal=ledger.proposal,
                         review=ReviewStatus.PENDING,
                     ),
+                    # The identity of the snapshot the checker actually ran against, captured
+                    # HERE at audit time (Session 21). `ledger.snapshot` is still this claim's
+                    # — `reset_claim` runs when the NEXT claim resolves — so this is the exact
+                    # catalog state the verdict was decided on, the only honest source for it.
+                    snapshot_id=ledger.snapshot.identity if ledger.snapshot else "",
                 )
             )
 

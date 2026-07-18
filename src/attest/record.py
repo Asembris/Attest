@@ -187,6 +187,11 @@ class ClaimRecord(BaseModel):
     verdict: str
     reason: str
     evidence: tuple[EvidenceView, ...] = ()
+    # The identity of the catalog snapshot this verdict was decided against (Session 21).
+    # Persisted, because the write-back happens at approval time from THIS record and must
+    # not re-fetch the catalog to recover it — a moved catalog would make the stored identity
+    # a lie. What the record does not carry, a resumed run cannot write back. See writeback.py.
+    snapshot_id: str = ""
 
     explanation: str = ""
     # "model" or "template". A reader is entitled to know whether the prose in front of
@@ -349,6 +354,7 @@ def from_report(
                     EvidenceView(field=e.field, value=e.value, note=e.note)
                     for e in a.evidence
                 ),
+                snapshot_id=a.snapshot_id,
                 explanation=a.explanation.text,
                 explanation_source=a.explanation.source,
                 faithful=a.explanation.faithfulness.ok,

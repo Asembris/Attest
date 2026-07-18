@@ -191,6 +191,11 @@ class ClaimAudit:
     explanation: Explanation
     correction: Correction
     publication: Publication = field(default_factory=Publication)
+    # The identity of the catalog snapshot this verdict was decided against (Session 21).
+    # Captured here, at audit time, from the snapshot the checker actually ran against — the
+    # only honest source, because a write-back re-fetch would let the catalog move underneath
+    # it. Carried into the published artifact so an inherited verdict names its ground truth.
+    snapshot_id: str = ""
 
     @property
     def conflicts(self) -> tuple[Conflict, ...]:
@@ -216,6 +221,7 @@ class ClaimAudit:
         result: CheckResult,
         explanation: Explanation,
         correction: Correction,
+        snapshot_id: str = "",
     ) -> ClaimAudit:
         return cls(
             index=index,
@@ -225,6 +231,7 @@ class ClaimAudit:
             evidence=result.evidence,
             explanation=explanation,
             correction=correction,
+            snapshot_id=snapshot_id,
         )
 
 

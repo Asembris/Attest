@@ -514,24 +514,54 @@ class DataHubClient:
     }
     """
 
+    # The server-side page size for the pagination loops below. `dataset.assertions` and
+    # `searchAcrossEntities` both take start/count and BOTH return `total` — which is the
+    # whole fix for gap 1 (Session 21): the total was always in the response, and discarding
+    # it made a claim past the first page SILENTLY absent, indistinguishable from "no such
+    # claim". That collapse — absence read as an answer — is the exact sin this project
+    # exists to catch. So these paginate to `limit` and return the server's `total` beside
+    # the nodes, and a caller with `len(nodes) < total` KNOWS the listing was truncated.
+    _ASSERTION_PAGE = 50
+
     def list_dataset_assertions(
-        self, dataset_urn: str, start: int = 0, count: int = 50
-    ) -> list[dict[str, Any]]:
-        """Every claim artifact on a dataset, with its verdict history, in ONE query.
+        self, dataset_urn: str, limit: int | None = 50
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Claim artifacts on a dataset, up to `limit`, PLUS the catalog's own total.
 
         THE THESIS QUERY. This is what a second agent inherits from DataHub alone — every
         claim ever made about this dataset, what it asserted, and every verdict it has had.
         Note it is a relationship read off the dataset, NOT a search: search cannot scope
         assertions to a dataset at all (no assertee field is indexed), so this is the only
         way to ask the question. See docs/design/claim-artifact.md §5.
+
+        Paginates start/count until it has `limit` nodes or the dataset is exhausted, and
+        returns `(nodes, total)`. `limit=None` fetches every claim on the dataset — the
+        honest reading of "everything the next agent inherits". The `total` is round-tripped
+        so a truncated page (`len(nodes) < total`) is never mistaken for a complete one.
         """
-        dataset = self.execute(
-            self.DATASET_ASSERTIONS_QUERY,
-            {"urn": dataset_urn, "start": start, "count": count},
-        ).get("dataset")
-        if not dataset:
-            return []
-        return list((dataset.get("assertions") or {}).get("assertions") or [])
+        nodes: list[dict[str, Any]] = []
+        total = 0
+        start = 0
+        while limit is None or len(nodes) < limit:
+            count = (
+                self._ASSERTION_PAGE
+                if limit is None
+                else min(self._ASSERTION_PAGE, limit - len(nodes))
+            )
+            dataset = self.execute(
+                self.DATASET_ASSERTIONS_QUERY,
+                {"urn": dataset_urn, "start": start, "count": count},
+            ).get("dataset")
+            if not dataset:
+                break
+            block = dataset.get("assertions") or {}
+            total = block.get("total", total)
+            page = list(block.get("assertions") or [])
+            nodes.extend(page)
+            start += len(page)
+            if not page or start >= total:
+                break
+        return nodes, total
 
     SEARCH_ASSERTIONS = """
     query searchAssertions($orFilters: [AndFilterInput!], $start: Int!, $count: Int!) {
@@ -572,9 +602,8 @@ class DataHubClient:
         self,
         custom_types: Sequence[str] = (),
         tags: Sequence[str] = (),
-        start: int = 0,
-        count: int = 50,
-    ) -> list[dict[str, Any]]:
+        limit: int | None = 50,
+    ) -> tuple[list[dict[str, Any]], int]:
         """Claim artifacts across the WHOLE catalog, filtered in the index.
 
         The second of the two server-side entry points, and it is DISJOINT from the first:
@@ -592,8 +621,9 @@ class DataHubClient:
         "every Attest claim" is one query naming all four claim types, and "contradicted
         ownership claims" is one query naming one of each.
 
-        The run events come back INLINE, so this is one round trip rather than a fan-out:
-        whatever Attest filters afterwards, it filters over a response it already has.
+        Paginates start/count to `limit` like `list_dataset_assertions`, and returns
+        `(nodes, total)` so a truncated result set is never read as a complete one. The run
+        events come back INLINE, so each page is one round trip rather than a fan-out.
         """
         conditions: list[dict[str, Any]] = []
         if custom_types:
@@ -604,15 +634,28 @@ class DataHubClient:
         # how you say it -- an empty AND matches nothing. Omit the filter entirely.
         or_filters = [{"and": conditions}] if conditions else None
 
-        result = self.execute(
-            self.SEARCH_ASSERTIONS,
-            {"orFilters": or_filters, "start": start, "count": count},
-        )["searchAcrossEntities"]
-        return [
-            r["entity"]
-            for r in (result.get("searchResults") or [])
-            if r.get("entity")
-        ]
+        nodes: list[dict[str, Any]] = []
+        total = 0
+        start = 0
+        while limit is None or len(nodes) < limit:
+            count = (
+                self._ASSERTION_PAGE
+                if limit is None
+                else min(self._ASSERTION_PAGE, limit - len(nodes))
+            )
+            result = self.execute(
+                self.SEARCH_ASSERTIONS,
+                {"orFilters": or_filters, "start": start, "count": count},
+            )["searchAcrossEntities"]
+            total = result.get("total", total)
+            search_results = result.get("searchResults") or []
+            nodes.extend(r["entity"] for r in search_results if r.get("entity"))
+            # Advance by what the server returned, not by kept entities, so a result with no
+            # entity node cannot stall the loop.
+            start += len(search_results)
+            if not search_results or start >= total:
+                break
+        return nodes, total
 
     # --- tags ---------------------------------------------------------------
 
