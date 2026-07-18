@@ -195,6 +195,21 @@ e2e: ui
 e2e-sabotage:
     python spikes/e2e_sabotage.py
 
+# THE DEPLOYMENT SMOKE TEST: bring the stack up, then prove the demo path answers.
+#
+# `up` first (idempotent -- ~1s if already healthy, a cold bring-up otherwise), so the whole
+# "one command brings everything up AND the demo answers" claim is one command. Live tier:
+# needs a real model and writes nothing to the catalog (POST /audit only parks). Falsifiable
+# by `just smoke-sabotage`.
+smoke: up
+    python -m pytest tests/test_smoke.py -m live -q
+
+# THE VACUITY CHECK FOR THE SMOKE TEST. Break it two ways -- a dead GMS (must go red at the
+# reachability gate, FAST) and an unseeded URN (must go red at the demo-answers assertion) --
+# and fail if either stays green or goes red for the wrong reason. Non-zero by design.
+smoke-sabotage:
+    python spikes/smoke_sabotage.py
+
 # Just the coverage matrix: can every claim type still reach every verdict?
 matrix:
     python -m pytest tests/test_coverage.py -v
