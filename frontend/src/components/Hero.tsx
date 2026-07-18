@@ -20,7 +20,9 @@ export default function Hero({
   onShowClaims: () => void;
   error?: string | null;
 }) {
-  const [text, setText] = useState(sampleAgentOutput);
+  // Computed once per mount so each page load gets a fresh freshness window — a distinct
+  // content-addressed artifact URN, so every visitor's read-back starts clean. See mockData.
+  const [text, setText] = useState(() => sampleAgentOutput());
   const taRef = useRef<HTMLTextAreaElement>(null);
   const [reducedMotion] = useState(
     () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
