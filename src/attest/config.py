@@ -64,9 +64,11 @@ class Settings(BaseSettings):
     # normal network nothing. Set false to keep certifi as the only trust source.
     ssl_os_truststore: bool = Field(default=True, alias="ATTEST_SSL_TRUSTSTORE")
 
-    # Attest's own audit history: every run, its evidence, and every human decision.
-    # DataHub holds the LATEST verdict per dataset; it cannot hold the history, because
-    # structured properties are last-write-wins. See store.py.
+    # Attest's own audit history: every run, its receipts, its evidence, and every human
+    # decision. Since Session 15 DataHub DOES hold a per-claim verdict history (the claim
+    # artifact's append-only run events); what it cannot hold is the RUN-level trail — the
+    # receipts, the decision log, who was shown what — and the dataset-level structured
+    # property (the glance badge) is still last-write-wins. See store.py.
     store_path: str = Field(default="attest.db", alias="ATTEST_STORE_PATH")
 
     # LangGraph's checkpoints: the PAUSED GRAPH of a run parked at the human checkpoint.

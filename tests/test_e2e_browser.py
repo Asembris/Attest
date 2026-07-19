@@ -25,8 +25,8 @@ is the Session 5 rule at the browser boundary: a fake cannot fail in a way the r
 fails through machinery the fake does not have, and `TestClient` has no fetch, no JSON
 round-trip through TypeScript, and no `extra="forbid"` rejection to surface.
 
-`tests/test_e2e_sabotage.py` re-introduces both bugs and proves this file goes RED for each.
-An E2E that cannot fail is a green light wired to nothing.
+`spikes/e2e_sabotage.py` (`just e2e-sabotage`) re-introduces both bugs and proves this file
+goes RED for each. An E2E that cannot fail is a green light wired to nothing.
 
 **WHAT THIS FILE DOES NOT PROVE**, stated so nobody reads more into it:
 

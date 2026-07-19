@@ -88,15 +88,18 @@ Three properties that fall out of content-addressing, and each is load-bearing:
   A dataset-level verdict field cannot do this — the second claim overwrites the first, and the
   survivor is a verdict with no subject. That was the defect this design was built to fix.
 - **Re-phrasing the sentence does not mint a second artifact.** `raw_text` is excluded from the
-  identity, so *"customer_profile is PII-free"* is the same claim, and its verdict **appends** to the
-  same history. Verified against the shipped code, not asserted here.
+  identity, and the order-independent array fields (`labels`, `columns`) are sorted before hashing —
+  so *"customer_profile is PII-free"* is the same claim however it is worded or ordered, and its
+  verdict **appends** to the same history. Verified against the shipped code, not asserted here.
 - **Re-running the write is safe.** The id is derived from the claim and nothing else — no run id, no
   clock — so a retry lands on the same artifact rather than duplicating it.
 
 Retrieval reads **DataHub**, never Attest's database: `GET /claims`, `GET /claims/{claim_urn}`. A
 reader constructed with no store at all (`ClaimReader(client, store=None)`) gets every claim, verdict,
 reviewer and history out of the catalog alone — which is the actual test that the knowledge was
-inherited rather than merely recorded. It paginates, so nothing is silently past a cap; and an
+inherited rather than merely recorded. The claim listing paginates and round-trips the catalog's
+total, and a verdict history past the 50-event read cap is *named* rather than silently truncated (its
+own pagination is deferred) — so nothing is silently past a cap. An
 Insufficient-Coverage verdict's evidence round-trips as **absence** — a `null` that stays `null`, never
 collapsed to empty — because for that verdict the catalog's silence *is* the evidence. What such a
 reader *cannot* do is diagnose a half-finished write; see [limits](#scope-and-limitations).
@@ -172,20 +175,26 @@ Runs on your machine, not a hosted URL — **DataHub Core is a multi-container s
 per-machine instance is what makes each run's catalog its own (the reset story in
 [docs/deployment.md](docs/deployment.md)). Two honest paths.
 
+**Prerequisites:** [`just`](https://github.com/casey/just), Python 3.12+, and — for the demo
+path only — Docker with ~8 GB free. Everything else is installed by `just setup`.
+
 **Offline verification** — no DataHub, no API key, no cost. This is what CI runs:
 
 ```bash
-just setup
-just check          # lint + the truly-offline tier, on captured fixtures. Never skips.
+python -m venv .venv
+.venv\Scripts\activate       # Windows;  source .venv/bin/activate on macOS/Linux
+just setup                   # installs the package + dev deps AND the datahub CLI / seed deps
+just check                   # lint + the truly-offline tier, on captured fixtures. Never skips.
 ```
 
 **The local DataHub demo** — needs Docker (~8 GB free) and `OPENAI_API_KEY` for the semantic
-layer:
+layer. After `just setup` above:
 
 ```bash
-just up             # bring up DataHub Core v1.5.0.6 from the vendored, pinned compose
-just seed           # generate + ingest the seed catalog, capture the offline fixtures
-just demo           # build the UI and serve it with the API on :8003
+copy .env.example .env       # then set OPENAI_API_KEY in it  (cp .env.example .env on macOS/Linux)
+just up                      # bring up DataHub Core v1.5.0.6 from the vendored, pinned compose
+just seed                    # generate + ingest the seed catalog, capture the offline fixtures
+just demo                    # build the UI and serve it with the API on :8003
 ```
 
 `just up` is a real command now, not a manual stack to set up by hand — it brings up DataHub

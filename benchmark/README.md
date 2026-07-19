@@ -416,8 +416,8 @@ model.
 
 ## Why not RAGAS or DeepEval?
 
-Neither is used, and that is a decision rather than an omission. See the [main
-README](../README.md#why-not-ragas-or-deepeval) for the full reasoning. In short: both
+Neither is used, and that is a decision rather than an omission. The full reasoning is right
+here — the [main README](../README.md)'s Documentation table points back to this section. Both
 frameworks score an **LLM-generated answer** against retrieved context. Attest's verdicts are
 not LLM-generated — they come from date math, set membership and string comparison — so there
 is no generated answer to score. **Precision/recall against hand-labeled ground truth is the
