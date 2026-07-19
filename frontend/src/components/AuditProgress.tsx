@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
 import type { AuditRecord, ClaimRecord, CorrectionOutcome, Verdict } from '../api/types';
@@ -28,14 +28,6 @@ import { CountUp } from './reveal';
 //      clicks Continue — green.
 
 const STAGES = ['Sanitize', 'Decompose', 'Per-claim loop', 'Sign-off'];
-// The completion beat: long enough to WATCH the per-claim walker replay (claims stagger
-// ~0.5s each) plus a dwell on the finished picture, scaled to the claim count and capped. A
-// Continue button skips it; the timer fires either way, which is what keeps the no-click
-// browser E2E reaching the results checkpoint. This is a deliberate beat, not a flash.
-function autoAdvanceMs(claimCount: number): number {
-  return Math.min(7500, 4200 + claimCount * 700);
-}
-
 const VERDICT_DOT: Record<Verdict, string> = {
   Supported: 'bg-supported',
   Contradicted: 'bg-contradicted',
@@ -74,17 +66,13 @@ export default function AuditProgress({
     return () => clearInterval(iv);
   }, [done]);
 
-  // Auto-advance to results a beat after the record lands. Ref-captured so a new onContinue
-  // identity from the parent does not reset the timer mid-reveal.
-  const contRef = useRef(onContinue);
-  contRef.current = onContinue;
-  useEffect(() => {
-    if (!record) return;
-    const t = setTimeout(() => contRef.current(), autoAdvanceMs(record.claims.length));
-    return () => clearTimeout(t);
-  }, [record]);
+  // NO AUTO-ADVANCE. On completion the replay HOLDS and stays scrollable; the ONLY way to
+  // the results checkpoint is the Continue button in the pinned bar below. A timer a human
+  // never sees is not a real path forward — so the browser E2E now clicks Continue too,
+  // exercising the same move a person makes rather than waiting on a clock.
 
   return (
+    <>
     <div className="min-h-screen grid grid-cols-1 lg:grid-cols-[1fr_340px]" style={{ background: 'radial-gradient(130% 100% at 30% 0%, #101216 0%, #0A0B0D 55%, #08090B 100%)' }}>
       {/* ===== MAIN ===== */}
       <main className="px-6 lg:px-14 py-12 lg:py-14 overflow-hidden">
@@ -150,7 +138,9 @@ export default function AuditProgress({
           ))}
         </div>
 
-        {done ? <RevealBody record={record!} onContinue={onContinue} /> : <WorkingBody />}
+        {done ? <RevealBody record={record!} /> : <WorkingBody />}
+        {/* clears the fixed Continue bar so the last claim card is never hidden behind it */}
+        {done && <div className="h-24" aria-hidden />}
       </main>
 
       {/* ===== RECEIPTS RAIL ===== */}
@@ -164,6 +154,29 @@ export default function AuditProgress({
         </div>
       </aside>
     </div>
+
+    {/* THE ONLY WAY FORWARD, pinned to the viewport so a completed run announces "your move"
+        without a scroll. Appears only on completion; the replay above stays scrollable under
+        it. Constrained to the main column on large screens so it never covers the rail. */}
+    {done && (
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.2, duration: 0.4 }}
+        className="fixed bottom-0 left-0 right-0 lg:right-[340px] z-20 border-t border-ink-700/40 bg-ink-950/90 backdrop-blur-md"
+      >
+        <div className="px-6 lg:px-14 py-4 flex items-center gap-4">
+          <button onClick={onContinue} className="btn-primary text-sm">
+            Continue to results
+            <ArrowRight size={16} />
+          </button>
+          <span className="font-mono-nums text-[11px] text-ink-500">
+            run complete · nothing has reached your catalog — the checkpoint is on the next screen
+          </span>
+        </div>
+      </motion.div>
+    )}
+    </>
   );
 }
 
@@ -222,7 +235,7 @@ function PendingReceipts() {
 
 // ---- reveal (record present) -----------------------------------------------
 
-function RevealBody({ record, onContinue }: { record: AuditRecord; onContinue: () => void }) {
+function RevealBody({ record }: { record: AuditRecord }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -233,20 +246,10 @@ function RevealBody({ record, onContinue }: { record: AuditRecord; onContinue: (
       <div className="font-mono-nums text-[11px] tracking-[0.16em] text-ink-400 mb-5">
         HOW EACH VERDICT WAS REACHED
       </div>
-      <div className="flex flex-col gap-3 mb-7">
+      <div className="flex flex-col gap-3">
         {record.claims.map((c, i) => (
           <ClaimWalk key={c.index} claim={c} index={i} />
         ))}
-      </div>
-
-      <div className="flex items-center gap-4 mt-8">
-        <button onClick={onContinue} className="btn-primary text-sm">
-          Continue to results
-          <ArrowRight size={16} />
-        </button>
-        <span className="font-mono-nums text-[11px] text-ink-500">
-          nothing has reached your catalog — the checkpoint is on the next screen
-        </span>
       </div>
     </motion.div>
   );
