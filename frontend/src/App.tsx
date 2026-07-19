@@ -39,9 +39,10 @@ export default function App() {
     setWritebacks(null);
     setApproveError(null);
     // Clear any prior record so the progress screen starts in its indeterminate phase; when
-    // the POST resolves, AuditProgress reveals the REAL record and hands off to results
-    // itself (it auto-advances, which is also what keeps the browser E2E — no Continue click
-    // — green). So there is no setView('results') here.
+    // the POST resolves, AuditProgress reveals the REAL record, replays the run, and HOLDS on
+    // completion until the human clicks "Continue to results" — which fires onContinue (below)
+    // -> setView('results'). The browser E2E clicks that button. So the transition to results
+    // is on the click, not here.
     setRecord(null);
     setView('auditing');
     try {

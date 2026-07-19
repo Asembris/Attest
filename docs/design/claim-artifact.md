@@ -1,6 +1,10 @@
 # The claim-level DataHub artifact
 
-**Status:** proposed, awaiting approval. No feature code written.
+**Status:** SHIPPED (Session 15); this is the design it was built from. The write path
+([writeback.py](../../src/attest/writeback.py)) and the read path
+([retrieval.py](../../src/attest/retrieval.py)) implement it, and the inheritance thesis is
+now true and proven live. This document is kept as the design record — where the numbers
+and the landmines below were measured — not as an open proposal.
 **Spike:** [`spikes/claim_artifact_probe.py`](../../spikes/claim_artifact_probe.py) (`just spike-claims`)
 **Server:** every number and quoted error below is measured against DataHub Core **v1.5.0.6**, pinned.
 
@@ -9,8 +13,9 @@
 ## 1. The problem, stated honestly
 
 Attest's load-bearing thesis is Challenge 1's *"writes results back so the next person or
-agent inherits the knowledge."* **That is currently not true**, and the sharpest question in
-the room exposes it in one move:
+agent inherits the knowledge."* **This section describes the state BEFORE this design shipped,
+when the thesis was not yet true** (it is now — see the Status above). The sharpest question in
+the room exposed it in one move:
 
 > "Two claims about one dataset are approved. Show me what the next agent inherits from
 > DataHub alone."
