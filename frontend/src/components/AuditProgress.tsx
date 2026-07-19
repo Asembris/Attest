@@ -28,7 +28,13 @@ import { CountUp } from './reveal';
 //      clicks Continue — green.
 
 const STAGES = ['Sanitize', 'Decompose', 'Per-claim loop', 'Sign-off'];
-const AUTO_ADVANCE_MS = 3400;
+// The completion beat: long enough to WATCH the per-claim walker replay (claims stagger
+// ~0.5s each) plus a dwell on the finished picture, scaled to the claim count and capped. A
+// Continue button skips it; the timer fires either way, which is what keeps the no-click
+// browser E2E reaching the results checkpoint. This is a deliberate beat, not a flash.
+function autoAdvanceMs(claimCount: number): number {
+  return Math.min(7500, 4200 + claimCount * 700);
+}
 
 const VERDICT_DOT: Record<Verdict, string> = {
   Supported: 'bg-supported',
@@ -74,7 +80,7 @@ export default function AuditProgress({
   contRef.current = onContinue;
   useEffect(() => {
     if (!record) return;
-    const t = setTimeout(() => contRef.current(), AUTO_ADVANCE_MS);
+    const t = setTimeout(() => contRef.current(), autoAdvanceMs(record.claims.length));
     return () => clearTimeout(t);
   }, [record]);
 
@@ -127,8 +133,8 @@ export default function AuditProgress({
             <div key={label} className="flex items-center flex-1">
               <motion.span
                 className={`w-2 h-2 rounded-full shrink-0 mr-2.5 ${done ? 'bg-ink-100' : 'bg-ink-500'}`}
-                animate={done ? { opacity: 1 } : { opacity: [0.3, 1, 0.3] }}
-                transition={done ? {} : { duration: 1.4, repeat: Infinity, delay: i * 0.18 }}
+                animate={done ? { opacity: 1, scale: [0.4, 1.2, 1] } : { opacity: [0.3, 1, 0.3] }}
+                transition={done ? { delay: i * 0.14, duration: 0.4 } : { duration: 1.4, repeat: Infinity, delay: i * 0.18 }}
               />
               <span
                 className={`font-mono-nums text-[11px] tracking-[0.1em] uppercase whitespace-nowrap ${
@@ -217,41 +223,21 @@ function PendingReceipts() {
 // ---- reveal (record present) -----------------------------------------------
 
 function RevealBody({ record, onContinue }: { record: AuditRecord; onContinue: () => void }) {
-  const corrected = record.claims.filter((c) => CORRECTION[c.correction.outcome] !== null);
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45 }}
-      className="max-w-[720px]"
+      transition={{ duration: 0.4 }}
+      className="max-w-[760px]"
     >
-      <div className="flex flex-col gap-2.5 mb-6">
+      <div className="font-mono-nums text-[11px] tracking-[0.16em] text-ink-400 mb-5">
+        HOW EACH VERDICT WAS REACHED
+      </div>
+      <div className="flex flex-col gap-3 mb-7">
         {record.claims.map((c, i) => (
-          <motion.div
-            key={c.index}
-            initial={{ opacity: 0, x: 8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.1 + i * 0.09, duration: 0.4 }}
-            className="flex items-center justify-between gap-4 px-5 py-4 rounded-xl border border-ink-700/40 bg-ink-800/25"
-          >
-            <div className="flex items-center gap-3.5 min-w-0">
-              <span className="font-mono-nums text-xs text-ink-500 w-6 shrink-0">
-                {String(i + 1).padStart(2, '0')}
-              </span>
-              <span className="text-sm text-ink-200 truncate">{c.raw_text}</span>
-            </div>
-            <span className={`shrink-0 inline-flex items-center gap-2 font-mono-nums text-[11px] tracking-[0.04em] ${verdictText(c.verdict)}`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${VERDICT_DOT[c.verdict]}`} />
-              {c.verdict === 'Insufficient-Coverage' ? 'Insufficient coverage' : c.verdict}
-            </span>
-          </motion.div>
+          <ClaimWalk key={c.index} claim={c} index={i} />
         ))}
       </div>
-
-      {/* correction outcomes, from the REAL record — prominent for stood-firm / refused */}
-      {corrected.map((c) => (
-        <CorrectionReveal key={c.index} claim={c} />
-      ))}
 
       <div className="flex items-center gap-4 mt-8">
         <button onClick={onContinue} className="btn-primary text-sm">
@@ -266,7 +252,129 @@ function RevealBody({ record, onContinue }: { record: AuditRecord; onContinue: (
   );
 }
 
-function CorrectionReveal({ claim }: { claim: ClaimRecord }) {
+// One claim, replayed as the pipeline WALK that reached its verdict: resolve → check →
+// explain → faithfulness → (self-correct). Every node's colour and sublabel is a MEASURED
+// fact from the record — the verdict, the explanation source, whether the guard let the prose
+// ship, the correction outcome. Nothing here is a scripted beat; a run with no correction
+// renders no self-correct node and no callout.
+type WalkNode = { label: string; sub: string; kind: string; dot: string };
+
+function verdictHex(v: Verdict): string {
+  return v === 'Supported' ? '#5FB98D' : v === 'Contradicted' ? '#D96A64' : '#C2A265';
+}
+
+function walkNodes(c: ClaimRecord): WalkNode[] {
+  const nodes: WalkNode[] = [
+    { label: 'Resolve', kind: 'io', sub: 'catalog', dot: '#7B8390' },
+    {
+      label: 'Check',
+      kind: 'deterministic',
+      sub: c.verdict === 'Insufficient-Coverage' ? 'insufficient' : c.verdict.toLowerCase(),
+      dot: verdictHex(c.verdict),
+    },
+    {
+      label: 'Explain',
+      kind: 'model',
+      sub: c.explanation_source === 'model' ? 'model-authored' : 'safe template',
+      dot: c.explanation_source === 'model' ? '#6E8FBF' : '#C2A265',
+    },
+    {
+      label: 'Faithfulness',
+      kind: 'deterministic',
+      sub: c.faithful ? 'evidence-checked' : 'template fallback',
+      dot: c.faithful ? '#5FB98D' : '#C2A265',
+    },
+  ];
+  if (c.correction.outcome !== 'not-attempted') {
+    const firm = CORRECTION[c.correction.outcome]?.tone === 'firm';
+    nodes.push({
+      label: 'Self-correct',
+      kind: 'model + check',
+      sub: c.correction.outcome,
+      dot: firm ? '#D96A64' : c.correction.outcome === 'corrected' ? '#5FB98D' : '#C2A265',
+    });
+  }
+  return nodes;
+}
+
+function ClaimWalk({ claim, index }: { claim: ClaimRecord; index: number }) {
+  const nodes = walkNodes(claim);
+  const base = 0.15 + index * 0.5; // claims replay top-to-bottom
+  const span = Math.max(0.5, nodes.length * 0.16); // rail fills as nodes light up
+  const meta = CORRECTION[claim.correction.outcome];
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: base, duration: 0.4 }}
+      className="rounded-2xl border border-ink-700/40 bg-ink-800/25 px-5 py-5"
+    >
+      <div className="flex items-start justify-between gap-4 mb-5">
+        <div className="flex items-start gap-3.5 min-w-0">
+          <span className="font-mono-nums text-xs text-ink-500 w-6 shrink-0 pt-0.5">
+            {String(index + 1).padStart(2, '0')}
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm text-ink-100 leading-snug break-words">{claim.raw_text}</p>
+            <span className="font-mono-nums text-[10px] tracking-[0.1em] uppercase text-ink-500">
+              {claim.claim_type}
+            </span>
+          </div>
+        </div>
+        <span
+          className={`shrink-0 inline-flex items-center gap-2 font-mono-nums text-[11px] tracking-[0.04em] ${verdictText(claim.verdict)}`}
+        >
+          <span className={`w-1.5 h-1.5 rounded-full ${VERDICT_DOT[claim.verdict]}`} />
+          {claim.verdict === 'Insufficient-Coverage' ? 'Insufficient coverage' : claim.verdict}
+        </span>
+      </div>
+
+      {/* the walker rail — a fill line grows as the nodes light up left-to-right */}
+      <div className="relative pt-0.5">
+        <div className="absolute left-[7px] right-[7px] top-[7px] h-px bg-ink-700/50" />
+        <motion.div
+          initial={{ scaleX: 0 }}
+          animate={{ scaleX: 1 }}
+          transition={{ delay: base, duration: span, ease: 'linear' }}
+          className="absolute left-[7px] top-[7px] h-px origin-left bg-ink-300"
+          style={{ width: 'calc(100% - 14px)' }}
+        />
+        <div className="relative flex items-start justify-between gap-2">
+          {nodes.map((n, ni) => (
+            <motion.div
+              key={n.label}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: base + ni * 0.16, duration: 0.32 }}
+              className="flex flex-col items-start gap-1.5 flex-1 min-w-0"
+            >
+              <motion.span
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                transition={{ delay: base + ni * 0.16, type: 'spring', stiffness: 380, damping: 18 }}
+                className="w-3.5 h-3.5 rounded-full shrink-0"
+                style={{ background: n.dot, boxShadow: `0 0 10px -1px ${n.dot}` }}
+              />
+              <span className="text-[12.5px] text-ink-100 leading-none">{n.label}</span>
+              <span className="font-mono-nums text-[10px] tracking-[0.04em] text-ink-400 truncate max-w-full">
+                {n.sub}
+              </span>
+              <span className="font-mono-nums text-[9px] tracking-[0.08em] uppercase text-ink-600">
+                {n.kind}
+              </span>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+
+      {/* the prominent correction callout, from the REAL outcome — loud for stood-firm/refused */}
+      {meta && <CorrectionReveal claim={claim} delay={base + span + 0.1} />}
+    </motion.div>
+  );
+}
+
+function CorrectionReveal({ claim, delay = 0.3 }: { claim: ClaimRecord; delay?: number }) {
   const meta = CORRECTION[claim.correction.outcome];
   if (!meta) return null;
   const firm = meta.tone === 'firm';
@@ -277,8 +385,8 @@ function CorrectionReveal({ claim }: { claim: ClaimRecord }) {
     <motion.div
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
-      transition={{ delay: 0.3, duration: 0.4 }}
-      className={`mb-3 rounded-xl border p-4 ${
+      transition={{ delay, duration: 0.4 }}
+      className={`mt-5 rounded-xl border p-4 ${
         firm ? 'border-contradicted/40 bg-contradicted/[0.06]' : 'border-insufficient/30 bg-insufficient/[0.05]'
       }`}
     >
