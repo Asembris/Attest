@@ -39,6 +39,19 @@ if (-not (Test-Path $compose)) { Write-Error "vendored compose not found: $compo
 $venvScripts = Join-Path $repoRoot ".venv/Scripts"
 if (Test-Path $venvScripts) { $env:PATH = "$venvScripts;$env:PATH" }
 
+# FAIL FAST if the DataHub CLI is missing. Below, `datahub docker quickstart` runs in a
+# BACKGROUND job with its output discarded (*> $null), so a missing CLI would make that job
+# die instantly and SILENTLY -- and the poll would then watch "starting..." until the 1800s
+# deadline before failing with a message pointing at docker, which is the wrong thing to
+# check. `just setup` installs the CLI (via requirements.txt). This turns a 30-minute hang
+# into a one-second, accurate error. Checked AFTER the venv is on PATH so a venv-only install
+# is found.
+if (-not (Get-Command datahub -ErrorAction SilentlyContinue)) {
+    Write-Host "ERROR: the 'datahub' CLI is not on PATH." -ForegroundColor Red
+    Write-Host "Run 'just setup' first -- it installs acryl-datahub (the CLI + the SDK the seed imports) via requirements.txt -- then 'just up'."
+    exit 1
+}
+
 Write-Host "Bringing up DataHub Core v1.5.0.6 (vendored compose; no GitHub fetch)."
 Write-Host "First bring-up on a fresh machine pulls ~12.6 GB of images and runs one-time"
 Write-Host "migrations, so allow several minutes. Watching GMS on $GmsUrl ..."
