@@ -1,8 +1,8 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ArrowLeft, BarChart3, Library, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react';
-import type { AuditRecord, DecisionRequest, HealthResponse, WriteBackView } from '../api/types';
-import { verdictCounts, awaitingPublication } from '../api/types';
+import type { AuditRecord, ClaimRecord, DecisionRequest, HealthResponse, WriteBackView } from '../api/types';
+import { verdictCounts, awaitingDecision } from '../api/types';
 import ReceiptsStrip from './ReceiptsStrip';
 import ClaimCard from './ClaimCard';
 import AuditInternals from './AuditInternals';
@@ -29,14 +29,17 @@ export default function AuditResults({
   onShowClaims: () => void;
 }) {
   const counts = verdictCounts(record);
-  // WHAT THE RUN IS ACTUALLY PARKED ON: every claim whose VERDICT is still unpublished —
-  // not just the ones with a correction proposal. This counted `proposals` until Session 16
-  // and had been wrong since Option A landed: the checkpoint parks while any claim's
-  // publication is pending, and only a correction ever produces a proposal. So a four-claim
-  // run with one proposal submitted one decision, re-parked on the other three, and could
-  // never reach `complete` — while this bar reported it settled.
-  const pending = awaitingPublication(record);
-  const reviewMode = record.status === 'awaiting-review' && pending.length > 0;
+  // WHAT THE RUN IS ACTUALLY PARKED ON — BOTH AXES. The checkpoint parks while any claim's
+  // VERDICT is unpublished OR a proposed CORRECTION is unruled (report.awaits_human), and it
+  // is a loop: anything still PENDING routes straight back and re-parks. This gate watched
+  // only publications, so it went blind the moment every verdict was published but a
+  // correction was not — `reviewMode` dropped to false, every control retired, and the
+  // still-pending correction re-parked the run into a permanent `awaiting-review` with
+  // nothing clickable. That was the same class as the `proposals()` bug this bar already
+  // outgrew, one axis over. `awaitingDecision` sees both axes, so the gate cannot go blind.
+  const reviewSet = awaitingDecision(record);
+  const inReview = new Set(reviewSet.map((c) => c.index));
+  const reviewMode = record.status === 'awaiting-review' && reviewSet.length > 0;
 
   // Two decisions per claim, never one flag. `undefined` is "no opinion", which is not "no":
   // an unnamed claim stays pending and the run stays parked, decidable on a later call.
@@ -44,13 +47,30 @@ export default function AuditResults({
     Record<number, { publish?: boolean; accept_correction?: boolean }>
   >({});
 
-  // The gate is PUBLICATION, and only publication. A correction is optional to rule on —
-  // there may not be one, and "no opinion on the fix" is a legitimate position — but a claim
-  // whose verdict nobody decided is a claim the run is still waiting on. Measured over
-  // `pending` rather than over the whole decisions map, so the count cannot outrun what is
-  // actually decidable.
-  const decided = pending.filter((c) => decisions[c.index]?.publish !== undefined).length;
-  const allDecided = decided === pending.length;
+  // A claim is fully decided only when EVERY axis it is parked on has a decision. The backend
+  // re-parks on a published verdict whose proposed correction is still unruled, so this gate
+  // must too — `accept_correction` is required-to-finish, not optional-to-skip. Gating on
+  // publications alone let Submit enable at "3/3" and strand the run on re-park; gating on
+  // both keeps it disabled until the correction is ruled, and the run finishes in one submit.
+  const isDecided = (c: ClaimRecord) => {
+    const d = decisions[c.index] ?? {};
+    const pubDecided = c.publication.status !== 'pending' || d.publish !== undefined;
+    const correctionPending =
+      c.correction.outcome === 'corrected' && c.correction.review === 'pending';
+    const correctionDecided = !correctionPending || d.accept_correction !== undefined;
+    return pubDecided && correctionDecided;
+  };
+  const decided = reviewSet.filter(isDecided).length;
+  const allDecided = decided === reviewSet.length;
+  // What is still holding Submit closed, so the bar can SAY it rather than greying a button
+  // with no reason. An unruled correction beside a published verdict is exactly the state the
+  // old gate hid — the human was never told a decision was still required.
+  const undecidedCorrections = reviewSet.filter(
+    (c) =>
+      c.correction.outcome === 'corrected' &&
+      c.correction.review === 'pending' &&
+      decisions[c.index]?.accept_correction === undefined,
+  ).length;
 
   // Bug 2: the DataHub indicator reflects THIS run's actual catalog reachability, not the
   // mount-time health probe (which is fetched once and sticks — a transient warm-up failure
@@ -63,10 +83,12 @@ export default function AuditResults({
   const datahubStatus = catalogReached ? 'reachable' : health?.datahub ?? '—';
 
   function submit() {
-    // One decision per claim still awaiting publication. `accept_correction` is only sent
-    // when a view was actually taken on it — omitting it means "no opinion", and sending
-    // `false` would RECORD a rejection nobody made, in an append-only log.
-    const payload: DecisionRequest[] = pending.map((c) => {
+    // One decision per claim the run is parked on — either axis. `publish` is `undefined` for
+    // a claim already published (a correction-only re-park), which JSON drops, so the backend
+    // reads "no opinion" and leaves it settled. `accept_correction` is only sent when a view
+    // was actually taken on it — omitting it means "no opinion", and sending `false` would
+    // RECORD a rejection nobody made, in an append-only log.
+    const payload: DecisionRequest[] = reviewSet.map((c) => {
       const d = decisions[c.index] ?? {};
       return {
         claim_index: c.index,
@@ -167,15 +189,16 @@ export default function AuditResults({
             <div className="flex items-center gap-2 text-sm text-insufficient mb-1">
               <GitBranch size={15} />
               <span className="font-medium">
-                {pending.length} verdict{pending.length === 1 ? '' : 's'} awaiting your decision
+                {reviewSet.length} claim{reviewSet.length === 1 ? '' : 's'} awaiting your decision
               </span>
             </div>
             <p className="text-xs text-ink-300 mb-4">
               Every claim needs a publish decision, whatever its verdict — a Supported finding
               is how the catalog learns that someone looked, and a verdict Attest never
               records is indistinguishable from a claim it never checked. Where the agent
-              proposed a fix you can rule on that separately. Nothing is written until you
-              submit; the run is parked at a durable checkpoint until then.
+              proposed a fix, ruling on it is a separate decision the run also waits for — a
+              published verdict beside an unruled correction does not finish the run. Nothing
+              is written until you submit; the run is parked at a durable checkpoint until then.
             </p>
             <div className="flex items-center gap-3">
               <button
@@ -186,9 +209,18 @@ export default function AuditResults({
                 {approving ? 'Submitting…' : 'Submit decisions'}
               </button>
               <span className="text-xs text-ink-400">
-                {decided}/{pending.length} decided
+                {decided}/{reviewSet.length} decided
               </span>
             </div>
+            {/* SAY why Submit is closed. A greyed button with no reason is what let the human
+                believe they were done — the whole shape of the strand. */}
+            {undecidedCorrections > 0 && !allDecided && (
+              <p className="mt-3 text-xs text-insufficient/90">
+                {undecidedCorrections} proposed correction{undecidedCorrections === 1 ? '' : 's'}{' '}
+                still {undecidedCorrections === 1 ? 'needs' : 'need'} a decision to finish the run
+                — publishing a verdict does not settle the fix the agent proposed for it.
+              </p>
+            )}
             {approveError && (
               <div className="mt-3 flex items-center gap-2 text-xs text-contradicted">
                 <AlertTriangle size={13} /> {approveError}
@@ -204,9 +236,12 @@ export default function AuditResults({
               key={claim.index}
               claim={claim}
               index={i}
-              // Reviewable per CLAIM now, not per proposal: every claim whose verdict is
-              // still pending gets a control, which is what Option A means.
-              reviewable={reviewMode && claim.publication.status === 'pending'}
+              // Reviewable per CLAIM, and per BOTH axes: a card is live while the run is
+              // parked on it for EITHER a pending verdict or an unruled correction. Each panel
+              // then narrows to its own axis (PublicationPanel to a pending verdict,
+              // CorrectionPanel to a pending proposal), so a claim whose verdict is published
+              // but whose correction is still open keeps only the correction control live.
+              reviewable={reviewMode && inReview.has(claim.index)}
               publish={decisions[claim.index]?.publish}
               onPublish={(publish) => decide(claim.index, { publish })}
               acceptCorrection={decisions[claim.index]?.accept_correction}

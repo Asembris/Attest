@@ -359,9 +359,37 @@ export function proposals(record: AuditRecord): ClaimRecord[] {
  *  It is every claim on purpose. Supported and Insufficient-Coverage are findings a catalog
  *  needs too: a dataset with no Attest verdict is otherwise ambiguous between "we checked
  *  and it was fine" and "nobody ever looked", which is precisely the ambiguity this product
- *  exists to refuse. */
+ *  exists to refuse.
+ *
+ *  This is ONE of the two axes the checkpoint parks on. It is not the whole gate — see
+ *  `awaitingDecision`, which adds the correction axis. Counting only this one is the same
+ *  class of bug as counting only `proposals`, one axis over. */
 export function awaitingPublication(record: AuditRecord): ClaimRecord[] {
   return record.claims.filter((c) => c.publication.status === 'pending');
+}
+
+/** EVERY claim the run is still parked on — verdict unpublished OR a proposed correction
+ *  unruled. THIS is what the review gate must range over.
+ *
+ *  The backend parks while EITHER axis is pending
+ *  (`report.ClaimAudit.awaits_human = publication.awaits_human OR correction.awaits_human`),
+ *  and the checkpoint is a LOOP: anything still PENDING routes straight back and re-parks.
+ *  A gate that tracks only `awaitingPublication` goes blind the moment every verdict is
+ *  published but a correction is not: `reviewMode` drops to false, every control retires,
+ *  and the still-pending correction re-parks the run into a permanent `awaiting-review` with
+ *  nothing clickable. That is the exact dead-end this set closes — the same class as the
+ *  `proposals()` publication-axis bug, one axis over.
+ *
+ *  `accept_correction` is therefore REQUIRED-TO-FINISH, not skip-and-finish. "Optional" in
+ *  the backend means the two axes are decided INDEPENDENTLY (publish now, rule the fix later;
+ *  or publish the verdict AND reject the fix) — not that a corrected proposal can be left
+ *  unruled while the run completes. It cannot: the run stays parked until it is decided. */
+export function awaitingDecision(record: AuditRecord): ClaimRecord[] {
+  return record.claims.filter(
+    (c) =>
+      c.publication.status === 'pending' ||
+      (c.correction.outcome === 'corrected' && c.correction.review === 'pending'),
+  );
 }
 
 export function verdictCounts(record: AuditRecord): Record<Verdict, number> {

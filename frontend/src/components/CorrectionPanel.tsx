@@ -59,10 +59,12 @@ export default function CorrectionPanel({
   const revisedText = typeof proposal?.raw_text === 'string' ? proposal.raw_text : null;
   const isProposal = meta.tone === 'proposal';
   const review = claim.correction.review;
-  // Only a `corrected` outcome is decidable. A stood-firm or refused claim is shown for what
-  // it is and has no control — there is nothing to accept, and offering one would imply the
-  // agent had proposed something.
-  const decidable = reviewable && isProposal;
+  // Only a `corrected` outcome that is STILL PENDING is decidable. A stood-firm or refused
+  // claim is shown for what it is and has no control — there is nothing to accept, and
+  // offering one would imply the agent had proposed something. An already-ruled proposal
+  // shows its settled card below rather than a live control, even while the card stays live
+  // for the other axis (its verdict awaiting publication).
+  const decidable = reviewable && isProposal && review === 'pending';
 
   return (
     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="overflow-hidden">
