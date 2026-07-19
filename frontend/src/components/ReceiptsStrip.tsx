@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { ShieldCheck, Clock3, Clock, Coins, Cpu, FileCheck, Zap } from 'lucide-react';
+import { ShieldAlert, ShieldCheck, Clock3, Clock, Coins, Cpu, FileCheck, Zap } from 'lucide-react';
 import type { Receipts, RunStatus } from '../api/types';
 
 function Metric({
@@ -51,9 +51,17 @@ export default function ReceiptsStrip({
   const cost = receipts.usd === null ? 'unknown' : `$${receipts.usd.toFixed(4)}`;
 
   const settled = status === 'complete';
-  const statusLabel = settled ? 'Complete' : 'Awaiting review';
-  const statusColor = settled ? 'text-supported' : 'text-insufficient';
-  const statusBg = settled ? 'bg-supported/15 text-supported' : 'bg-insufficient/15 text-insufficient';
+  // `flagged` is a TERMINAL, un-approvable state — a trajectory violation — not a milder
+  // "awaiting review". Collapsing it into that label (which is what happened before) told a
+  // reader the run could still be published when `service.approve` will only ever 409 it.
+  const flagged = status === 'flagged';
+  const statusLabel = flagged ? 'Flagged' : settled ? 'Complete' : 'Awaiting review';
+  const statusColor = flagged ? 'text-contradicted' : settled ? 'text-supported' : 'text-insufficient';
+  const statusBg = flagged
+    ? 'bg-contradicted/15 text-contradicted'
+    : settled
+      ? 'bg-supported/15 text-supported'
+      : 'bg-insufficient/15 text-insufficient';
 
   return (
     <motion.div
@@ -66,7 +74,13 @@ export default function ReceiptsStrip({
         <div className="flex items-center gap-3 pr-6 border-r border-ink-700/60">
           <div className="relative">
             <div className={`flex items-center justify-center w-8 h-8 rounded-lg ${statusBg}`}>
-              {settled ? <ShieldCheck size={16} strokeWidth={2.5} /> : <Clock3 size={16} strokeWidth={2.5} />}
+              {flagged ? (
+                <ShieldAlert size={16} strokeWidth={2.5} />
+              ) : settled ? (
+                <ShieldCheck size={16} strokeWidth={2.5} />
+              ) : (
+                <Clock3 size={16} strokeWidth={2.5} />
+              )}
             </div>
             {settled && (
               <motion.div
