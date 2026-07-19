@@ -105,7 +105,34 @@ export default function PublicationPanel({
         <AnimatePresence>
           {status === 'published' && (
             <motion.div key="published" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="pl-8">
-              {writeback && !writeback.ok ? (
+              {/* THREE honest states, not two. A null write-back is NOT a success: it is the
+                  absence of a receipt (a settled run reloaded from GET /audit carries none),
+                  and rendering it green claimed "written to catalog" for a write this view
+                  never saw land — the exact absence-read-as-confirmation this product exists to
+                  refuse. Only a writeback.ok === true receipt earns the green. */}
+              {!writeback ? (
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-ink-700/40 border border-ink-600/40">
+                  <div className="flex items-center justify-center w-7 h-7 rounded-full bg-ink-500 text-ink-100 shrink-0">
+                    <ShieldCheck size={15} strokeWidth={2.5} />
+                  </div>
+                  <div className="flex-1">
+                    <div className="text-sm text-ink-100 font-medium">Verdict published</div>
+                    <div className="text-xs text-ink-400 break-words">
+                      The decision is recorded. This view carries no catalog write-back receipt —
+                      read it back from the catalog (<span className="font-mono-nums">GET /claims</span>)
+                      to confirm the artifact.
+                    </div>
+                  </div>
+                  <a
+                    href={datahubDatasetUrl(claim.target_urn)}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1 text-xs text-accent-400 hover:text-accent transition-colors font-medium shrink-0"
+                  >
+                    View in DataHub <ExternalLink size={12} />
+                  </a>
+                </div>
+              ) : !writeback.ok ? (
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-contradicted/10 border border-contradicted/25">
                   <XCircle size={18} className="text-contradicted shrink-0" />
                   <div className="flex-1">
