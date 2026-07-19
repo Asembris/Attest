@@ -9,8 +9,18 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 default:
     @just --list
 
-# Install the package and its dev dependencies.
+# Install the package and its dev dependencies -- AND the seed/ingestion deps.
+#
+# requirements.txt FIRST, then the editable dev install: this is the exact two-step
+# CONTRIBUTING documents, and `just setup` was doing only the second half. requirements.txt is
+# the one place acryl-datahub (the `datahub` CLI and the SDK `seed/generate_seed.py` imports)
+# is pinned; without it the very next README command, `just up`, runs `datahub docker
+# quickstart` with NOTHING on PATH -- the background job dies instantly and silently and the
+# poll watches "starting..." for the full deadline. `just seed` fails the same way on
+# `import datahub.emitter`. The exact pins go in first so the editable install's floors are
+# already satisfied and nothing is re-resolved.
 setup:
+    python -m pip install -r requirements.txt
     python -m pip install -e ".[dev]"
 
 # --- the catalog -------------------------------------------------------------
