@@ -10,6 +10,10 @@
 # the offline tier. The integration tier (live GMS) and the live tier (real model) are NOT
 # run here: they need servers and a paid key, and the cadence rule keeps them on `just live`
 # / `just preflight` before a push to the semantic layer.
+#
+# The output of that one command is tee'd and rendered into a receipts panel on the run's
+# summary page (.github/scripts/ci_summary.py). The panel is DECORATION — the gate is the
+# step's exit code, which the summary never touches — so it cannot paint a red run green.
 name: ci
 
 on:
@@ -20,19 +24,31 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - uses: extractions/setup-just@v2
+      - uses: extractions/setup-just@v4
 
-      - name: Install package and dev dependencies
+      - name: 📦 Install package and dev dependencies
         run: just setup
 
       # lint + the truly-offline test tier (`-m 'not live and not integration'`), across
       # cores. No network: if any "offline" test reaches for DataHub, it fails here rather
-      # than skipping — which is the whole point of the gate.
-      - name: Lint and run the offline tier
-        run: just check
+      # than skipping — which is the whole point of the gate. Tee'd so the summary step can
+      # read the tally; pipefail (GitHub's default bash) keeps `just check`'s failure the
+      # pipeline's exit code, so the gate is unaffected by the tee.
+      - name: ✅ Lint and run the offline tier
+        id: check
+        run: just check 2>&1 | tee check-output.txt
+
+      # Render the run as a receipts panel on the summary page. `always()` so it also reports
+      # a FAILED run (the most useful time to see the counts); the banner reflects the real
+      # step outcome, never the parse.
+      - name: 📊 Job summary
+        if: always()
+        env:
+          CHECK_OUTCOME: ${{ steps.check.outcome }}
+        run: python .github/scripts/ci_summary.py
