@@ -127,7 +127,11 @@ export default function ClaimArtifactCard({
             {claim.history.length > 0 && (
               <span className="inline-flex items-center gap-1 text-xs text-ink-400">
                 <History size={10} />
-                {claim.history.length} verdict{claim.history.length === 1 ? '' : 's'}
+                {/* When the 50-event cap truncated the read, show `shown of total` — never
+                    just the shown count, which would under-report the real history silently. */}
+                {claim.history_truncated
+                  ? `${claim.history.length} of ${claim.history_total} verdicts`
+                  : `${claim.history.length} verdict${claim.history.length === 1 ? '' : 's'}`}
               </span>
             )}
           </div>
@@ -221,6 +225,15 @@ export default function ClaimArtifactCard({
                     View in DataHub <ExternalLink size={11} />
                   </a>
                 </div>
+                {/* The read caps run events at 50. When the catalog holds more, say so — the
+                    OLDEST are absent from THIS listing, never from the catalog. */}
+                {claim.history_truncated && (
+                  <p className="mb-3 text-[0.7rem] text-insufficient leading-relaxed max-w-[72ch]">
+                    Showing the {claim.history.length} most recent of {claim.history_total} verdict
+                    events — the read caps run events at 50. The older events are in the catalog,
+                    not in this listing. View in DataHub for the full timeseries.
+                  </p>
+                )}
                 {claim.history.length === 0 ? (
                   <p className="text-xs text-ink-400 leading-relaxed max-w-[72ch]">
                     No verdict has been recorded against this claim yet. That is not a verdict

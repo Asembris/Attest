@@ -222,6 +222,44 @@ def test_claim_identity_cannot_depend_on_a_run_or_a_clock(catalog):
     assert writeback.claim_id(other_owner) != writeback.claim_id(claim)
 
 
+def test_array_ORDER_does_not_split_one_claims_identity():
+    """ROT GUARD 1b: `labels` and `columns` are order-INDEPENDENT, and the id must agree.
+
+    A claim about `[email, ssn]` is the SAME claim as one about `[ssn, email]` — the order is
+    how the decomposer happened to list them, not part of what is asserted. `revise.subject()`
+    already sorts exactly these fields, which is the proof. Left unsorted in the identity, the
+    two orders hash to two URNs and one claim's verdict history is split across both — the
+    silent duplicate a content-addressed artifact exists to prevent.
+    """
+    # classification: labels reordered.
+    ab = {**classification_claim(), "labels": ["urn:li:tag:PII", "urn:li:tag:Sensitive"]}
+    ba = {**classification_claim(), "labels": ["urn:li:tag:Sensitive", "urn:li:tag:PII"]}
+    assert writeback.claim_id(ab) == writeback.claim_id(ba), (
+        "reordering labels minted a second artifact and split the claim's history"
+    )
+
+    # schema: columns reordered (each is a {name, native_type} dict).
+    col_email = {"name": "email", "native_type": "STRING"}
+    col_id = {"name": "id", "native_type": "NUMBER"}
+    schema_ab = {
+        "claim_type": "schema", "target_urn": SF, "raw_text": "has email and id",
+        "columns": [col_email, col_id],
+    }
+    schema_ba = {**schema_ab, "columns": [col_id, col_email]}
+    assert writeback.claim_id(schema_ab) == writeback.claim_id(schema_ba), (
+        "reordering columns minted a second artifact and split the claim's history"
+    )
+
+    # ...but the CONTENTS still matter: a different label set, or a column type change, is a
+    # different claim and must hash differently. Sorting normalizes ORDER, never MEANING.
+    assert writeback.claim_id(ab) != writeback.claim_id(
+        {**classification_claim(), "labels": ["urn:li:tag:PII"]}
+    )
+    assert writeback.claim_id(schema_ab) != writeback.claim_id(
+        {**schema_ab, "columns": [{"name": "email", "native_type": "NUMBER"}, col_id]}
+    )
+
+
 def test_write_claim_artifact_refuses_to_default_its_timestamp():
     """ROT GUARD 2: `checked_at` must have NO default.
 
@@ -341,6 +379,59 @@ def test_an_artifact_with_only_unattributed_events_is_INCOMPLETE(catalog):
     artifact = writeback.read_claim_artifact(catalog, urn)
     assert artifact.complete is False, "a FAILURE with no attest.verdict became a verdict"
     assert artifact.verdict is None
+
+
+def _assertion_node(events: list[dict], total: int) -> dict:
+    """A raw GraphQL assertion node, as `artifact_from_graphql` reads it. Built by hand so a
+    `total` LARGER than the returned events can be simulated — the fake always sets
+    `total == len(events)` and so cannot model the 50-cap truncation this exercises."""
+    return {
+        "urn": "urn:li:assertion:attest-deadbeef",
+        "info": {
+            "description": "a claim about a dataset",
+            "customAssertion": {
+                "type": "ATTEST_CLAIM_OWNERSHIP",
+                "entityUrn": SF,
+                "logic": json.dumps({"claim_type": "ownership", "grain": "table"}),
+            },
+        },
+        "tags": {"tags": []},
+        "runEvents": {"total": total, "runEvents": events},
+    }
+
+
+def _verdict_event(verdict: str, at_ms: int) -> dict:
+    return {
+        "timestampMillis": at_ms,
+        "result": {
+            "type": "FAILURE",
+            "nativeResults": [{"key": writeback.VERDICT_KEY, "value": verdict}],
+        },
+    }
+
+
+def test_a_history_past_the_50_event_cap_NAMES_its_truncation():
+    """Session 21 gap 1, one level down: a truncated history must never read as complete.
+
+    The run-event query is capped at 50. A claim audited more than 50 times returns fewer
+    events than the catalog holds, and `runEvents.total` is the only signal that the read was
+    short. Discarded, the oldest verdicts are SILENTLY absent — indistinguishable from a claim
+    that simply had that few — which is the absence-read-as-an-answer collapse this project
+    refuses. So `history_total` is round-tripped and `history_truncated` names the cut.
+    """
+    events = [_verdict_event("Contradicted", 1_700_000_000_000 + i) for i in range(50)]
+    truncated = writeback.artifact_from_graphql(_assertion_node(events, total=60))
+
+    assert truncated.history_total == 60
+    assert len(truncated.history) == 50
+    assert truncated.history_truncated is True, "a history short of the total read as whole"
+    assert truncated.complete is True, "a truncated history still HAS verdicts, not incomplete"
+
+    # The other side: total == returned means nothing was cut, so truncation must be False —
+    # otherwise the note would cry wolf on every complete history.
+    whole = writeback.artifact_from_graphql(_assertion_node(events[:3], total=3))
+    assert whole.history_total == 3
+    assert whole.history_truncated is False, "a complete history was falsely flagged truncated"
 
 
 def test_a_verdict_that_flips_swaps_its_tag_rather_than_accumulating(catalog):

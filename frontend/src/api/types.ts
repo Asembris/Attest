@@ -279,6 +279,13 @@ export interface ClaimView {
    *  On-read detection, not a reconciler. False when there is no verdict. */
   stale_tag: boolean;
   history: VerdictEventView[];
+  /** The catalog's OWN count of this claim's verdict events. When it exceeds `history.length`
+   *  the history was TRUNCATED at the 50-event read cap — the oldest events are absent from
+   *  this listing, NOT from the catalog. The run-event twin of `RetrievalView.total`. */
+  history_total: number;
+  /** True when `history_total > history.length`: older verdicts are not shown. Full
+   *  timeseries pagination is deferred; naming the truncation is not. */
+  history_truncated: boolean;
 }
 
 /** WHERE each predicate was applied. Part of the answer, not diagnostics: "retrievable

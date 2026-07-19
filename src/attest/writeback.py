@@ -169,11 +169,34 @@ def claim_id(claim: Mapping[str, Any]) -> str:
     prose. Two different claims about one dataset hash differently and coexist; the same
     claim re-audited next month hashes identically and appends a verdict to its history.
 
-    Canonical JSON, so key order and whitespace cannot change the id.
+    Canonical JSON, so key order and whitespace cannot change the id. ARRAY ORDER cannot
+    either: `labels` and `columns` are order-INDEPENDENT (a claim about `[email, ssn]` is the
+    same claim as one about `[ssn, email]`), so `_canonical_identity` sorts them before
+    hashing. `revise.subject()` already sorts exactly these, which is the proof the order
+    carries no meaning — without this, `[a,b]` and `[b,a]` mint two artifacts and split one
+    claim's history across two URNs.
+    """
+    key = json.dumps(_canonical_identity(claim), sort_keys=True, separators=(",", ":"))
+    return f"{NAMESPACE}-{hashlib.sha256(key.encode()).hexdigest()[:20]}"
+
+
+def _canonical_identity(claim: Mapping[str, Any]) -> dict[str, Any]:
+    """The claim's identity, minus its prose, with order-independent arrays SORTED.
+
+    `labels` (classification) and `columns` (schema) are sets in meaning but lists on the
+    wire, so their element order is noise the identity must not hash. Sorted here by the same
+    rule `revise.subject()` uses — labels by value, columns by their canonical form — so a
+    re-phrasing that reorders them lands on the SAME artifact.
     """
     identity = {k: v for k, v in claim.items() if k not in IDENTITY_EXCLUDES}
-    key = json.dumps(identity, sort_keys=True, separators=(",", ":"))
-    return f"{NAMESPACE}-{hashlib.sha256(key.encode()).hexdigest()[:20]}"
+    if isinstance(identity.get("labels"), list):
+        identity["labels"] = sorted(identity["labels"])
+    if isinstance(identity.get("columns"), list):
+        identity["columns"] = sorted(
+            identity["columns"],
+            key=lambda c: json.dumps(c, sort_keys=True, separators=(",", ":")),
+        )
+    return identity
 
 
 def claim_urn(claim: Mapping[str, Any]) -> str:
@@ -759,10 +782,28 @@ class ClaimArtifact:
     logic: dict[str, Any]
     history: tuple[VerdictEvent, ...] = ()
     tags: tuple[str, ...] = ()
+    # The catalog's OWN total count of this claim's verdict events, round-tripped rather than
+    # discarded (Session 21 gap 1, one level down). The run-event query is capped at 50
+    # (`limit: 50`), so a claim audited more than 50 times returns a TRUNCATED history — and a
+    # truncated history read as complete is the silent-absence collapse this project refuses.
+    # See `history_truncated`. Full timeseries pagination is deferred (see the README); naming
+    # the truncation is not.
+    history_total: int = 0
 
     @property
     def complete(self) -> bool:
         return bool(self.history)
+
+    @property
+    def history_truncated(self) -> bool:
+        """Did the 50-event cap cut this history off? `history_total` beyond what came back.
+
+        Mirrors `Retrieval`'s truncation check for the assertion listing: the catalog holds
+        more verdict events than this read returned, so the OLDEST are absent from `history`
+        — absent from THIS listing, never from the catalog. A reader that showed
+        `len(history)` as the whole story would be under-reporting silently.
+        """
+        return self.history_total > len(self.history)
 
     @property
     def verdict(self) -> str | None:
@@ -781,8 +822,9 @@ def artifact_from_graphql(node: Mapping[str, Any]) -> ClaimArtifact:
     except json.JSONDecodeError:
         logic = {}
 
+    run_block = node.get("runEvents") or {}
     events: list[VerdictEvent] = []
-    for ev in ((node.get("runEvents") or {}).get("runEvents") or []):
+    for ev in (run_block.get("runEvents") or []):
         result = ev.get("result") or {}
         native = {n["key"]: n["value"] for n in (result.get("nativeResults") or [])}
         verdict = native.get(VERDICT_KEY)
@@ -816,6 +858,10 @@ def artifact_from_graphql(node: Mapping[str, Any]) -> ClaimArtifact:
         tags=tuple(
             t["tag"]["urn"] for t in ((node.get("tags") or {}).get("tags") or [])
         ),
+        # The catalog's own total, so a history truncated at the 50-event cap is named, never
+        # silently short. `total` counts COMPLETE run events; `len(events)` is what this read
+        # actually carried back after the cap.
+        history_total=run_block.get("total") or len(events),
     )
 
 
