@@ -244,9 +244,16 @@ def test_the_whole_transaction_from_a_browser_to_datahub_and_back(
         box.fill(agent_output)
         page.get_by_role("button", name="Run Audit").click()
 
-        # The audit is a real pipeline run: real model, real catalog. Give it room.
-        page.get_by_role("heading", name="Audit Complete").wait_for(timeout=120_000)
+        # The audit is a real pipeline run: real model, real catalog. On completion the
+        # progress screen replays the run and HOLDS — there is no auto-advance. A human clicks
+        # Continue to reach the results checkpoint, and this test drives that same click. (An
+        # auto-advance timer a person never sees is not a real path forward; waiting on it here
+        # would have tested a clock, not the button.)
+        continue_btn = page.get_by_role("button", name="Continue to results")
+        continue_btn.wait_for(timeout=120_000)
         calls.assert_all_ok("the audit")
+        continue_btn.click()
+        page.get_by_role("heading", name="Audit Complete").wait_for(timeout=30_000)
 
         # The TS mirror deserialized a real AuditRecord. If `types.ts` had drifted from
         # `record.py`, this counter is where it shows: it is computed from
@@ -525,6 +532,8 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
         ) as caught:
             page.get_by_role("button", name="Run Audit").click()
         run_id = caught.value.json()["run_id"]
+        # The replay holds on completion; a human clicks Continue to reach the checkpoint.
+        page.get_by_role("button", name="Continue to results").click()
         page.get_by_role("heading", name="Audit Complete").wait_for(timeout=30_000)
 
         # The artifact this claim will land on — DERIVED from the claim the pipeline actually
