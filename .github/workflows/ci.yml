@@ -38,10 +38,18 @@ jobs:
       # lint + the truly-offline test tier (`-m 'not live and not integration'`), across
       # cores. No network: if any "offline" test reaches for DataHub, it fails here rather
       # than skipping — which is the whole point of the gate. Tee'd so the summary step can
-      # read the tally; pipefail (GitHub's default bash) keeps `just check`'s failure the
-      # pipeline's exit code, so the gate is unaffected by the tee.
+      # read the tally; the explicit `shell: bash` below turns pipefail ON (the implicit
+      # default does NOT), so `just check`'s failure stays the pipeline's exit code and the
+      # tee cannot mask it.
       - name: ✅ Lint and run the offline tier
         id: check
+        # `shell: bash` is REQUIRED, not stylistic. The IMPLICIT default on a Linux runner is
+        # `bash -e {0}` — no pipefail — so `just check 2>&1 | tee` exits with tee's 0 even when
+        # `just check` is RED, and a failing gate reports GREEN: a green light wired to nothing,
+        # in the repo's own CI. Naming the shell EXPLICITLY selects `bash --noprofile --norc -eo
+        # pipefail {0}`, which turns pipefail on, so `just check`'s exit code becomes the
+        # pipeline's exit code and the tee cannot mask a failure.
+        shell: bash
         run: just check 2>&1 | tee check-output.txt
 
       # Render the run as a receipts panel on the summary page. `always()` so it also reports
