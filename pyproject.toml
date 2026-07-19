@@ -7,6 +7,15 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 dependencies = [
     "fastapi>=0.115",
+    # FLOORED, and the floor is load-bearing rather than cosmetic. app.py uses
+    # `status.HTTP_422_UNPROCESSABLE_CONTENT`, which starlette only grew in 0.47.0 (the older
+    # spelling `..._ENTITY` is now deprecated — do NOT switch back to it). fastapi>=0.115 alone
+    # has no ceiling but the 0.115.x line pins starlette<0.47, so a resolver landing on the
+    # DECLARED FLOOR (not the newest resolve CI happens to get) imports a starlette without the
+    # symbol and dies with AttributeError on the target_urns 422 path — which an OFFLINE test
+    # exercises. Pinning starlette>=0.47 here forces fastapi>=0.116 by backtracking, so the
+    # symbol is present at the floor and not merely in requirements.lock.
+    "starlette>=0.47",
     "httpx>=0.28",
     "langgraph>=1.0",
     # PINNED, not floored. This is a separate distribution on its own release cadence
