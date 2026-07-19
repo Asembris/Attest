@@ -406,6 +406,36 @@ def test_approving_a_correction_writes_the_verdict_back_to_the_catalog(client):
     assert "written to" in approvals[0].writeback
 
 
+def test_two_decisions_for_one_claim_in_a_request_are_a_422(client):
+    """A self-contradictory approve is refused before it corrupts the append-only log.
+
+    Two decisions naming claim_index 0 in one call are contradictory by intent. The resume
+    path keeps only the last (its decision map is keyed by index), but BOTH rows would still
+    enter the append-only `approvals` log — a claim recorded as decided two ways in one
+    request, in the store that exists precisely because DataHub cannot hold an honest history.
+    So it is a 422 at the wire, and NOTHING is settled or written.
+    """
+    service = app.dependency_overrides[get_service]()
+    run_id = client.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+
+    response = client.post(
+        f"/audit/{run_id}/approve",
+        json={
+            "decisions": [
+                {"claim_index": 0, "publish": True},
+                {"claim_index": 0, "publish": False},
+            ]
+        },
+    )
+    assert response.status_code == 422
+
+    # The run is untouched: still awaiting review, nothing in the approvals log, nothing
+    # written back. A rejected request must not half-settle.
+    assert service.get(run_id).status == "awaiting-review"
+    assert len(service.store.approvals(run_id)) == 0
+    assert SF not in service.client.written
+
+
 def test_rejecting_a_correction_writes_nothing(client):
     service = app.dependency_overrides[get_service]()
     run_id = client.post("/audit", json={"agent_output": SAYS}).json()["run_id"]

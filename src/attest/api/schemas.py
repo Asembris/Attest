@@ -140,8 +140,28 @@ class ApprovalRequest(BaseModel):
         default=(),
         description="One entry per proposal you are settling. Proposals you do not name "
         "stay PENDING — nothing is accepted by default, and the run stays awaiting review "
-        "until every proposal has been decided.",
+        "until every proposal has been decided. Each claim may appear AT MOST ONCE.",
     )
+
+    @model_validator(mode="after")
+    def _no_duplicate_claim_index(self) -> ApprovalRequest:
+        """One decision per claim, and a duplicate is a 422 rather than a silent collapse.
+
+        Two decisions naming the same `claim_index` in one call are contradictory by intent —
+        the resume path keeps only the last (dict keyed by index), but BOTH rows still land in
+        the append-only `approvals` log, so the record would show a claim decided two
+        different ways in one request. The store exists precisely because DataHub cannot hold
+        an honest history; letting a self-contradictory call in would corrupt it at the source.
+        A caller who changed their mind resubmits — the checkpoint is a loop — rather than
+        stacking two verdicts on one claim in a single request.
+        """
+        seen = [d.claim_index for d in self.decisions]
+        dupes = sorted({i for i in seen if seen.count(i) > 1})
+        if dupes:
+            raise ValueError(
+                f"a claim_index may be decided at most once per request; duplicated: {dupes}"
+            )
+        return self
 
 
 class WriteBackView(BaseModel):
@@ -305,7 +325,23 @@ class ClaimView(BaseModel):
     )
     history: tuple[VerdictEventView, ...] = Field(
         default=(),
-        description="Every verdict this claim has ever had, newest first. Append-only.",
+        description="Every verdict this claim has ever had, newest first. Append-only. "
+        "Capped at 50 events per read; when `history_truncated` is true, the OLDEST are not "
+        "in this list.",
+    )
+    history_total: int = Field(
+        default=0,
+        description="The catalog's OWN count of this claim's verdict events. When it exceeds "
+        "`len(history)` the history was TRUNCATED at the 50-event read cap — the oldest events "
+        "are absent from this listing, NOT from the catalog. Round-tripped so a truncated "
+        "history is never mistaken for a complete one (the run-event twin of "
+        "`RetrievalView.total`).",
+    )
+    history_truncated: bool = Field(
+        default=False,
+        description="True when `history_total > len(history)`: the 50-event cap cut the "
+        "history off and older verdicts are not shown here. Full timeseries pagination is "
+        "deferred (see the README); naming the truncation is not.",
     )
 
 

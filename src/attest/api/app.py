@@ -412,6 +412,10 @@ def _claim_view(claim: RetrievedClaim) -> ClaimView:
             )
             for e in a.history
         ),
+        # The catalog's own verdict-event total, so a history truncated at the 50-event read
+        # cap is named rather than silently short. See ClaimArtifact.history_truncated.
+        history_total=a.history_total,
+        history_truncated=a.history_truncated,
     )
 
 
