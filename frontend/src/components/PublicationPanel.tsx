@@ -60,8 +60,11 @@ export default function PublicationPanel({
           from a claim Attest never checked.
         </p>
 
-        {reviewable && (
+        {reviewable && status === 'pending' && (
           <div className="pl-8 pt-1">
+            {/* Only while this VERDICT is still pending. The card can be live for its
+                correction after its verdict is published (a correction-only re-park), and
+                offering to publish an already-published verdict there would be nonsense. */}
             {/* Same idiom as the correction control: the picked choice fills solid, the other
                 dims but stays clickable, so a decision is reversible before Submit. */}
             <div className="flex items-center gap-3">

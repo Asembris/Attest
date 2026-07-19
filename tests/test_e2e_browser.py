@@ -363,6 +363,138 @@ def test_the_whole_transaction_from_a_browser_to_datahub_and_back(
         print()
 
 
+# --- the corrections-only strand: publish everything, rule NOTHING on the fix -----
+
+
+def test_publishing_every_verdict_but_leaving_a_correction_pending_does_not_strand_the_run(
+    server, browser, client, capsys
+):
+    """The one path the demo E2E never walks, and the dead-end it was hiding.
+
+    The main test above clicks BOTH controls — every Publish AND the one Accept — so the run
+    always settles. That masks a whole axis. The backend parks while EITHER is pending
+    (`report.ClaimAudit.awaits_human = publication.awaits_human OR correction.awaits_human`),
+    but the frontend review gate counted ONLY publications: once every verdict was published,
+    `reviewMode` went false, every control went dead, and a still-pending correction re-parked
+    the run into a permanent `awaiting-review` with nothing clickable. On the DEFAULT demo
+    path, triggered by NOT clicking an optional-looking control.
+
+    This is the SAME class as the `proposals()` publication-axis bug the file's header names —
+    a gate blind to one of the two axes the checkpoint parks on. The fix teaches the gate to
+    see BOTH (`awaitingDecision` = publication-pending OR unruled-correction), so it cannot be
+    stranded and it says so: Submit stays disabled until the correction is ruled, because a
+    published verdict beside an unruled proposal does NOT finish the run.
+
+    RED-FIRST HINGE: after publishing all three verdicts with the correction still pending,
+    the fixed gate reads `2/3 decided` and Submit is DISABLED (the corrected claim is not
+    fully decided). The unfixed gate reads `3/3` and enables Submit — so the `2/3`/disabled
+    assertion is what fails against current code, reproducing the dead-end's cause before it
+    can be reached. `spikes/e2e_sabotage.py` reverts the correction gate and demands this
+    goes red, permanently.
+    """
+    from tests.conftest import ALICE, DANA, DOCUMENTED, OWNED_BY_CAROL, UNREVIEWED
+
+    # The same mix the main test uses, and proven by test_live: three claims, exactly ONE
+    # correctable. That ratio is the whole point — publishing all three while leaving the one
+    # correction pending is precisely the state the old gate could not represent.
+    agent_output = (
+        f"The dataset {DOCUMENTED} is owned by {ALICE}. "
+        f"The dataset {UNREVIEWED} contains no PII. "
+        f"The dataset {OWNED_BY_CAROL} is owned by {DANA}."
+    )
+
+    page = browser.new_page()
+    calls = ApiCalls()
+    calls.attach(page)
+    console_errors: list[str] = []
+    page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+
+    try:
+        page.goto(server, wait_until="networkidle")
+        page.get_by_placeholder("Paste the AI agent's claims").fill(agent_output)
+        page.get_by_role("button", name="Run Audit").click()
+
+        continue_btn = page.get_by_role("button", name="Continue to results")
+        continue_btn.wait_for(timeout=120_000)
+        calls.assert_all_ok("the audit")
+        continue_btn.click()
+        page.get_by_role("heading", name="Audit Complete").wait_for(timeout=30_000)
+
+        counter = page.get_by_text(_DECIDED_RE)
+        assert counter.is_visible(), "the review bar never rendered — the record did not parse"
+        assert counter.inner_text().startswith("0/"), counter.inner_text()
+        total = int(counter.inner_text().split("/")[1].split()[0])
+        assert total == 3, f"expected 3 claims parked for publication, got {total}"
+
+        # --- publish EVERY verdict, and deliberately rule NOTHING on the fix -----
+        publish = page.get_by_role("button", name="Publish verdict", exact=True)
+        assert publish.count() == 3, (
+            f"expected a publish control on all 3 claims, found {publish.count()}"
+        )
+        for _ in range(total):
+            publish.first.click()
+        assert publish.count() == 0, "a publish control did not register the click"
+
+        # THE HINGE. Every verdict is published; the one correction is untouched. A gate that
+        # sees both axes reports the corrected claim as NOT fully decided (2/3) and keeps
+        # Submit disabled — a decision is still required. A gate blind to the correction reads
+        # 3/3 and lets you submit straight into the re-park dead-end. This assertion is what
+        # goes RED against the unfixed gate, and it is caught at the wire — no 90s hang waiting
+        # on text that is never coming (the file header's rule).
+        after_publish = counter.inner_text()
+        assert after_publish.startswith("2/"), (
+            f"after publishing every verdict with the correction still pending, the counter "
+            f"reads {after_publish!r}. The unfixed gate reads '3/3': it is blind to the "
+            f"correction axis and Submit would strand the run on re-park."
+        )
+        submit = page.get_by_role("button", name="Submit decisions")
+        assert submit.is_disabled(), (
+            "Submit is enabled while a proposed correction is still unruled. The backend "
+            "re-parks on it (report.awaits_human), so submitting here strands the run in "
+            "awaiting-review with no live control — the dead-end this test exists to forbid."
+        )
+        # And the correction control is still LIVE — the run remains actionable, not dead.
+        accept = page.get_by_role("button", name="Accept correction", exact=True)
+        assert accept.count() == 1, (
+            f"expected exactly one live correction control, found {accept.count()} — the fix "
+            "must keep the correction decidable while the run is parked on it"
+        )
+
+        # --- rule the correction; now the gate opens and the run can finish -----
+        accept.first.click()
+        assert counter.inner_text().startswith("3/"), counter.inner_text()
+        assert submit.is_enabled(), "Submit did not open once every axis was decided"
+
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and "/approve" in r.url, timeout=90_000
+        ) as caught:
+            submit.click()
+        approve = caught.value
+        assert approve.status == 200, f"approve came back {approve.status}:\n{approve.text()[:400]}"
+
+        page.get_by_text("Verdict written to catalog").first.wait_for(timeout=90_000)
+        calls.assert_all_ok("the approval")
+
+        # TERMINAL AND ACTIONABLE: the run settled COMPLETE, not re-parked. Under the strand
+        # bug it would still be awaiting-review with the review bar gone — parked forever.
+        assert page.get_by_role("button", name="Submit decisions").count() == 0, (
+            "the run is still parked after every verdict was published AND the correction was "
+            "ruled — the gate is still blind to an axis the checkpoint parks on"
+        )
+        assert not console_errors, f"the browser logged errors: {console_errors[:3]}"
+    finally:
+        page.close()
+
+    with capsys.disabled():
+        print(f"\n\n  {'=' * 72}")
+        print("  CORRECTIONS-ONLY STRAND: publish all, rule the fix, run FINISHES (not parked)")
+        print(f"  {'=' * 72}")
+        print("    publish x3, correction pending -> 2/3 decided, Submit DISABLED (required)")
+        print("    accept the correction          -> 3/3 decided, Submit enabled")
+        print("    submit                         -> approve 200, run COMPLETE, not re-parked")
+        print()
+
+
 # --- the repair path, from the browser ---------------------------------------
 
 

@@ -1,12 +1,15 @@
-"""THE VACUITY CHECK FOR THE BROWSER E2E. Re-introduce two REAL bugs; demand it goes red.
+"""THE VACUITY CHECK FOR THE BROWSER E2E. Re-introduce three REAL bugs; demand it goes red.
 
 `just e2e-sabotage`. Exits NON-ZERO if the E2E stays green under sabotage — same discipline
 as `just bench-sabotage` and `just spike-mcp`. An assertion that only ever passes is a green
 light wired to nothing, and that goes double for a test whose whole justification is catching
 a class of bug every other test missed.
 
-**THE TWO SABOTAGES ARE NOT INVENTED. They are lifted from commit 6903d6c**, where they had
-both shipped and lived a full session in `main`:
+**THE SABOTAGES ARE NOT INVENTED. They are the real bugs this UI shipped**, all three the
+same shape — a review gate blind to one of the two axes the checkpoint parks on. The first
+two are lifted from commit 6903d6c, where they shipped and lived a full session in `main`;
+the third was caught in a pre-submission audit and is the strand this file's corrections-only
+test was written for:
 
     1. THE 422. `DecisionRequest` carried `accept: boolean` for a session after the backend
        split it into `publish` / `accept_correction`. The backend forbids extras
@@ -16,12 +19,17 @@ both shipped and lived a full session in `main`:
     2. THE RE-PARK. The review bar counted `proposals` (claims with a corrected revision)
        while Option A parks on every claim's PUBLICATION. A three-claim run with one proposal
        submitted one decision, re-parked on the other two, and could never reach `complete` —
-       while the UI reported it settled.
+       while the UI reported it settled. (The gate blind to the PUBLICATION axis.)
 
-**Both were found by a human clicking the app. The entire suite was green through both.** That
-is the whole argument for the E2E, so these are the exact bugs it has to catch. If it does
-not catch them, it is not wired to anything and should not be trusted — which is what this
-script exists to find out, rather than to assume.
+    3. THE STRAND. The gate counted only publications and left `accept_correction` out of it,
+       so publishing every verdict enabled Submit at "3/3" while a proposed correction was
+       still unruled — the backend re-parked on it and the run stuck in `awaiting-review` with
+       no live control. (The gate blind to the CORRECTION axis — the mirror of the re-park.)
+
+**All three were found by a human clicking the app. The entire suite was green through them.**
+That is the whole argument for the E2E, so these are the exact bugs it has to catch. If it
+does not catch them, it is not wired to anything and should not be trusted — which is what
+this script exists to find out, rather than to assume.
 
 Every edit is reverted in a `finally`, and the bundle is rebuilt from the restored source
 before exit, so a crash cannot leave a sabotaged tree or a sabotaged `dist` behind.
@@ -79,14 +87,28 @@ SABOTAGES = (
             "claim's publication. A 3-claim run with 1 proposal could never complete."
         ),
         path=RESULTS,
-        old="const pending = awaitingPublication(record);",
-        new="const pending = proposals(record);",
+        old="const reviewSet = awaitingDecision(record);",
+        new="const reviewSet = proposals(record);",
         expect="the bar must park on 1 of 3 claims, and the E2E must refuse to call that settled",
+    ),
+    Sabotage(
+        name="the strand",
+        history=(
+            "pre-submission audit: the gate left `accept_correction` out, so publishing "
+            "every verdict enabled Submit at 3/3 while a proposed correction was unruled — "
+            "the run re-parked into a dead awaiting-review with no live control."
+        ),
+        path=RESULTS,
+        old="    return pubDecided && correctionDecided;",
+        new="    return pubDecided;",
+        expect="publishing all verdicts must NOT open Submit while a correction is unruled",
     ),
 )
 
-# `proposals` is exported but imported by no component, so sabotage 2 needs the import too.
-IMPORT_OLD = "import { verdictCounts, awaitingPublication } from '../api/types';"
+# `proposals` is exported but imported by no component, so the re-park sabotage needs the
+# import too (it swaps `awaitingDecision` -> `proposals`). The strand sabotage touches only
+# the gate's return and needs no import change.
+IMPORT_OLD = "import { verdictCounts, awaitingDecision } from '../api/types';"
 IMPORT_NEW = "import { verdictCounts, proposals } from '../api/types';"
 
 
@@ -127,7 +149,7 @@ def main() -> int:
     survived: list[str] = []
 
     print("=" * 78)
-    print("  E2E VACUITY CHECK — two real bugs from 6903d6c, re-introduced")
+    print("  E2E VACUITY CHECK — three real gate-blind-to-an-axis bugs, re-introduced")
     print("=" * 78)
 
     try:
@@ -175,7 +197,7 @@ def main() -> int:
         return 1
 
     print(f"  PASSED: all {len(SABOTAGES)} sabotages caught. The E2E can fail for a real")
-    print("  reason — both of the reasons it was written for.")
+    print("  reason — every one of the reasons it was written for.")
     print("=" * 78)
     return 0
 
