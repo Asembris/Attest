@@ -6,7 +6,7 @@
 model — and publishes each verdict back into DataHub, so the next agent inherits it from the
 catalog, not from Attest.**
 
-[![offline checks](https://img.shields.io/github/actions/workflow/status/Asembris/Attest/ci.yml?branch=main&label=offline%20checks&labelColor=22262D&color=5FB98D)](https://github.com/Asembris/Attest/actions/workflows/ci.yml)
+[![offline checks](https://img.shields.io/github/actions/workflow/status/Asembris/Attest/ci.yml?branch=main&label=offline%20checks&labelColor=22262D)](https://github.com/Asembris/Attest/actions/workflows/ci.yml)
 [![verdicts decided by a model: 0](assets/badges/verdicts-by-a-model.svg)](#why-the-verdict-is-trustworthy)
 [![checks: sabotage-verified](assets/badges/sabotage-verified.svg)](#receipts-not-headlines)
 [![tested: DataHub Core v1.5.0.6](assets/badges/datahub.svg)](docs/datahub-setup.md)
