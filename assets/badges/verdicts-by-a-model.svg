@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="203" height="20" role="img" aria-label="verdicts decided by a model: 0">
+<title>verdicts decided by a model: 0</title>
+<!-- ASSERTS: No model decides any verdict in Attest.
+     TRUE BECAUSE: checkers/ imports no model client; every checker step is asserted to have spent zero tokens (tests/test_graph.py); trajectory.py's NO_LLM_IN_THE_VERDICT_PATH FLAGs a violating run and makes it un-approvable; tests/test_trajectory.py sabotages it four ways.
+     Self-hosted so it cannot 404 or rate-limit while someone is reading the page. -->
+<clipPath id="r"><rect width="203" height="20" rx="3" fill="#fff"/></clipPath>
+<g clip-path="url(#r)">
+  <rect width="175" height="20" fill="#22262D"/>
+  <rect x="175" width="28" height="20" fill="#5FB98D"/>
+</g>
+<g font-family="Verdana,'DejaVu Sans',Geneva,sans-serif" font-size="11" text-anchor="middle">
+  <text x="87.5" y="14" fill="#D2D6DC">verdicts decided by a model</text>
+  <text x="189.0" y="14" fill="#0A0B0D" font-weight="600">0</text>
+</g>
+</svg>

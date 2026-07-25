@@ -1,27 +1,128 @@
+<img src="assets/banner.svg" alt="Attest — a claim enters, a deterministic check runs, a verdict comes out. Three real benchmark claims cycle through one identical rail: audit_log is PII-free reads Contradicted; raw_events contains no PII reads Insufficient-Coverage; orders_fact is free of PII reads Supported. Zero verdicts decided by a model.">
+
 # Attest
 
-**Verify what an AI agent says about your data — and publish the per-claim verdict to DataHub, so the next agent inherits it.**
+**Attest verifies what an AI agent claims about your data — with zero verdicts decided by a
+model — and publishes each verdict back into DataHub, so the next agent inherits it from the
+catalog, not from Attest.**
 
-Deterministic verdicts. Unknown is not false. Human-gated publication. Append-only claim history in DataHub.
+[![offline checks](https://img.shields.io/github/actions/workflow/status/Asembris/Attest/ci.yml?branch=main&label=offline%20checks&labelColor=22262D&color=5FB98D)](https://github.com/Asembris/Attest/actions/workflows/ci.yml)
+[![verdicts decided by a model: 0](assets/badges/verdicts-by-a-model.svg)](#why-the-verdict-is-trustworthy)
+[![checks: sabotage-verified](assets/badges/sabotage-verified.svg)](#receipts-not-headlines)
+[![tested: DataHub Core v1.5.0.6](assets/badges/datahub.svg)](docs/datahub-setup.md)
+[![python: 3.12+](assets/badges/python.svg)](pyproject.toml)
+[![license: Apache-2.0](assets/badges/license.svg)](LICENSE)
 
-[![offline checks](https://img.shields.io/github/actions/workflow/status/Asembris/Attest/ci.yml?branch=main&label=offline%20checks)](https://github.com/Asembris/Attest/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![python](https://img.shields.io/badge/python-3.12%2B-blue.svg)](pyproject.toml)
-[![tested against](https://img.shields.io/badge/tested-DataHub%20Core%20v1.5.0.6-teal.svg)](docs/datahub-setup.md)
+An agent is asked to summarise a warehouse for a governance review. It writes: *"`customer_profile`
+holds no PII."* Nobody checks it — there is nothing to check it *against* — and the sentence goes
+into the report.
 
-An agent claims *"the `customer_profile` table contains no PII."* Attest checks that claim against
-DataHub, reaches a verdict in code, asks a human whether to publish it, and — on approval — writes it
-back as a **claim artifact addressed to that exact proposition**. The next agent asks DataHub, not us.
+The table is tagged `PII`. Its `email` column is tagged `PII`. The catalog said so the whole time.
 
-| | | | |
-| --- | --- | --- | --- |
-| **0** verdicts decided by a model | **3** explicit verdicts | **1** content-addressed artifact per proposition | **DataHub-only** inheritance ([limits](#scope-and-limitations)) |
+That is one failure. The one underneath it is worse: the next table the agent looks at has **no tags
+at all**, and *"we reviewed it and it's clean"* is indistinguishable from *"nobody has ever looked."*
+A tool that reports those two as the same thing will cry wolf on every under-documented table in the
+warehouse — which is most of them.
 
-*(0 is an architectural invariant asserted on every run — not a measured accuracy. See [why the verdict is trustworthy](#why-the-verdict-is-trustworthy).)*
+> **Attest reads and writes DataHub Core v1.5.0.6.** It reads the catalog as ground truth over
+> GraphQL, decides in code, and — once a human publishes — writes each verdict back as its own
+> content-addressed **claim artifact** with an append-only verdict history.
 
-**→ [Inspect the benchmark receipts](benchmark/README.md)** · [What the next agent inherits](#what-the-next-agent-inherits) · [Why GraphQL, not MCP?](#why-graphql-not-mcp)
+## Zero, and what happens when we sabotage it
 
-## The audited transaction
+**No model decides a verdict in Attest.** Freshness, ownership, classification and schema verdicts
+come from date math, set membership and string comparison. That is an architectural invariant
+asserted on every run, not a measured accuracy — and it is checked three ways, including a gate that
+**flags a run un-approvable** if any verdict step so much as spends a token
+([how](#why-the-verdict-is-trustworthy)).
+
+An invariant nobody can falsify is decoration. So: **break one checker on purpose and accuracy over
+the 40-case benchmark falls from 1.000 to 0.675, Supported precision to 0.536, with 9 correctness
+and 4 coverage failures named**
+([receipt](benchmark/results/core-sabotaged-classification.json)). That check runs on every
+`just check`, not on demand.
+
+**→ [What the next agent inherits](#what-the-next-agent-inherits)** ·
+[Inspect the benchmark receipts](benchmark/README.md) ·
+[Engaging with the MCP Server](#engaging-with-the-mcp-server) ·
+[Scope and limitations](#scope-and-limitations)
+
+## What the next agent inherits
+
+This is the half of the thesis that is easy to fake. An agent says:
+
+> "The `customer_profile` table contains no PII."
+> `urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)`
+
+The table is tagged `PII`. The verdict is **Contradicted**. A human publishes it, and DataHub gains
+an artifact whose identity **is** the claim — the URN below is the one this exact claim really
+hashes to:
+
+```
+urn:li:assertion:attest-a6016c69300d32bf5a0a    # sha256 over the canonical claim, minus its prose
+  customType : ATTEST_CLAIM_CLASSIFICATION      # filterable
+  grain      : table
+  runEvents  : [ Contradicted @ t1, ... ]       # append-only; a re-audit adds, never overwrites
+  tag        : urn:li:tag:Attest-Contradicted   # a projection, written last
+```
+
+Two properties fall out of content-addressing, and both are load-bearing:
+
+- **Two claims about one dataset coexist.** They hash differently, so they land at different URNs.
+  A dataset-level verdict field cannot do this — the second claim overwrites the first, and the
+  survivor is a verdict with no subject. That was the defect this design was built to fix.
+- **Re-running the write is safe.** The id is derived from the claim and nothing else — no run id,
+  no clock — so a retry lands on the same artifact rather than duplicating it. (Re-phrasing the
+  sentence doesn't mint a second artifact either; see
+  [the design](docs/design/claim-artifact.md).)
+
+**The proof is a reader with no Attest database.** Retrieval reads **DataHub**, never Attest's store
+— `GET /claims`, `GET /claims/{claim_urn}` — and the same reader can be constructed with no store at
+all:
+
+```python
+reader = ClaimReader(client, store=None)      # no Attest database, at all
+page   = reader.list(ClaimQuery(target_urn=dataset_urn))
+
+for c in page.claims:
+    c.artifact.claim_urn            # urn:li:assertion:attest-a6016c69300d32bf5a0a
+    c.artifact.claim_type           # 'classification'   (c.artifact.grain -> 'table')
+    c.artifact.verdict              # 'Contradicted' — the STORED verdict, never inferred
+    c.artifact.history              # every verdict it has ever had, append-only
+    c.artifact.history[-1].reviewer # who published it, and on what evidence
+    c.stale_tag                     # derived from the artifact alone
+```
+
+Every claim, verdict, reviewer and full history comes out of the catalog alone. That is the actual
+test that the knowledge was **inherited** rather than merely recorded, and it runs live
+([`test_live.py`](tests/test_live.py)).
+
+Three details keep that read honest. The listing **paginates and round-trips the catalog's total**,
+so a claim past the read cap is *named* as truncated rather than silently absent. An
+Insufficient-Coverage verdict's evidence round-trips as **absence** — a `null` that stays `null`,
+never collapsed to empty — because for that verdict the catalog's silence *is* the evidence. And a
+**stale verdict tag is detected from the artifact alone**, so a store-less reader sees it too. What
+such a reader *cannot* do is diagnose a half-finished write; see [limits](#scope-and-limitations).
+
+## Why the verdict is trustworthy
+
+The claim is narrow and mechanical: **no model decides a verdict.** `checkers/` imports no model
+client, and takes a typed claim plus a catalog snapshot — it never sees agent text at all.
+
+But "the source doesn't import it" is only as good as the next commit, so it is not what the
+guarantee rests on. **Every step records what kind it is (`deterministic` / `llm` / `io`) alongside
+its token spend. The kind is what a step *claims* about itself; the token count is the *evidence*
+that checks it** — so a checker that quietly started calling a model fails the run even if it
+returns the right answers. Concretely:
+
+- [`tests/test_graph.py`](tests/test_graph.py) pins the checker step at **zero tokens**, and pins a
+  run's model calls to decomposition and explanation *and nothing else*.
+- [`tests/test_trajectory.py`](tests/test_trajectory.py) sabotages the real pipeline four ways —
+  guard torn out, a checker that spends tokens, a correction proposed without re-verification, a
+  miswired router — and every other test stays green through all four.
+- A violating run is **`FLAGGED`** and **cannot be approved** (HTTP 409), so a report the pipeline
+  could not vouch for never reaches the catalog. Seven invariants, of which
+  `no-llm-in-the-verdict-path` is the load-bearing one.
 
 ```mermaid
 flowchart TD
@@ -57,52 +158,28 @@ flowchart TD
     class K,X stop
 ```
 
-<sub>**Amber** = model-assisted · **Blue** = deterministic code · **Purple** = human decision · **Teal** = DataHub · **Red** = a stop.</sub>
+<sub>**Amber** = model-assisted · **Blue** = deterministic code · **Purple** = human decision ·
+**Teal** = DataHub · **Red** = a stop. **`POST /audit` writes nothing to the catalog, ever** — the
+only path to a write is a human publishing a parked run — and the three DataHub writes are
+**sequential, not atomic**, drawn as three steps because that is what they are.</sub>
 
-Two things this diagram is careful about. **`POST /audit` writes nothing to the catalog, ever** — the
-only path to a write is a human publishing a parked run. And the three DataHub writes are
-**sequential, not atomic**: they are drawn as three steps because that is what they are, and the
-[limits](#scope-and-limitations) say what happens when one fails.
+Three more things hold it up in practice:
 
-## What the next agent inherits
+- **One snapshot per run.** Every claim is decided against a single frozen read of the catalog.
+  Without it, two claims about one dataset get checked against two different states of the world and
+  the report contradicts itself while each verdict is individually "correct".
+- **The prose is guarded, and the guard is finite.** Explanations pass three gates — crosscheck,
+  lexical faithfulness, polarity — and any failure ships a **deterministic template** instead. The
+  precise invariant, and no more: *a detected polarity contradiction cannot ship as model prose, and
+  the deterministic verdict remains authoritative regardless.* These are lexical detectors; they do
+  not prove arbitrary natural-language entailment, and this README does not claim they do.
+- **Revision cannot change the subject.** A Contradicted claim may be revised — by **Attest's own
+  configured model**, not a callback into the original agent — at most twice, and re-checked by the
+  same checker against the same snapshot. It may change what a claim *asserts*, never what it is
+  *about*. Some claims are therefore honestly unrevisable, and standing by a false claim is still
+  publishable.
 
-This is the half of the thesis that is easy to fake. An agent says:
-
-> "The `customer_profile` table contains no PII."
-> `urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)`
-
-The table is tagged `PII`. The verdict is **Contradicted**. A human publishes it, and DataHub gains an
-artifact whose identity **is** the claim — the URN below is the one this exact claim really hashes to:
-
-```
-urn:li:assertion:attest-a6016c69300d32bf5a0a    # sha256 over the canonical claim, minus its prose
-  customType : ATTEST_CLAIM_CLASSIFICATION      # filterable
-  grain      : table
-  runEvents  : [ Contradicted @ t1, ... ]       # append-only; a re-audit adds, never overwrites
-  tag        : urn:li:tag:Attest-Contradicted   # a projection, written last
-```
-
-Three properties that fall out of content-addressing, and each is load-bearing:
-
-- **Two claims about one dataset coexist.** They hash differently, so they land at different URNs.
-  A dataset-level verdict field cannot do this — the second claim overwrites the first, and the
-  survivor is a verdict with no subject. That was the defect this design was built to fix.
-- **Re-phrasing the sentence does not mint a second artifact.** `raw_text` is excluded from the
-  identity, and the order-independent array fields (`labels`, `columns`) are sorted before hashing —
-  so *"customer_profile is PII-free"* is the same claim however it is worded or ordered, and its
-  verdict **appends** to the same history. Verified against the shipped code, not asserted here.
-- **Re-running the write is safe.** The id is derived from the claim and nothing else — no run id, no
-  clock — so a retry lands on the same artifact rather than duplicating it.
-
-Retrieval reads **DataHub**, never Attest's database: `GET /claims`, `GET /claims/{claim_urn}`. A
-reader constructed with no store at all (`ClaimReader(client, store=None)`) gets every claim, verdict,
-reviewer and history out of the catalog alone — which is the actual test that the knowledge was
-inherited rather than merely recorded. The claim listing paginates and round-trips the catalog's
-total, and a verdict history past the 50-event read cap is *named* rather than silently truncated (its
-own pagination is deferred) — so nothing is silently past a cap. An
-Insufficient-Coverage verdict's evidence round-trips as **absence** — a `null` that stays `null`, never
-collapsed to empty — because for that verdict the catalog's silence *is* the evidence. What such a
-reader *cannot* do is diagnose a half-finished write; see [limits](#scope-and-limitations).
+Depth on all of it: [docs/architecture.md](docs/architecture.md).
 
 ## Three verdicts, not a binary guess
 
@@ -131,10 +208,8 @@ flowchart TD
 | **Contradicted** | The catalog positively disagrees. | `revenue_daily` was last modified 417 days ago; the claim says "updated daily". |
 | **Insufficient-Coverage** | The catalog is silent. Absence, not disagreement. | `raw_events` has no owner at all, so "Bob owns it" is unverifiable — not false. |
 
-Keeping the third distinct from the second is the whole point. An auditor that reads *"the catalog
-doesn't say"* as *"the agent is wrong"* cries wolf on every under-documented table — which is most of
-them. Attest never assumes closed-world reasoning; the **catalog grants it per entity**, via a
-`Verified` marker a human applied. That is why the diagram has two ways to reach Contradicted, and why
+Attest never assumes closed-world reasoning; the **catalog grants it per entity**, via a `Verified`
+marker a human applied. That is why the diagram has two ways to reach Contradicted, and why
 *"PII-free"* is not the mirror image of *"contains PII"*: an untagged table cannot **support** a
 PII-free claim, because nobody looked.
 
@@ -154,92 +229,54 @@ Every number here is a committed JSON artifact you can open. None is typed by ha
 | **Sabotage** — one checker broken on purpose | accuracy **0.675**, macro-F1 **0.668**, Supported precision **0.536**, **13** errors named | [`core-sabotaged-classification.json`](benchmark/results/core-sabotaged-classification.json) · `just bench-sabotage` |
 | **Cross-family labels** (Nemotron, Llama family) | **39/40 agreement (97.5%)**, 1 disputed | [`calibration.json`](benchmark/results/calibration.json) · `just bench-calibrate` |
 
-**100% is a conformance gate, not a capability score — and it must be read that way.** The checkers are
-deterministic code implementing exactly the rules the labels encode, so anything below 100% is a *bug*,
-not a difficulty signal. The benchmark is a regression net and a coverage proof. That is why the
-sabotage row matters more than the first: break one checker and the metrics collapse, which is the only
-evidence that they measure anything at all. It runs on every `just check`, not just on demand.
+**100% is a conformance gate, not a capability score — and it must be read that way.** The checkers
+are deterministic code implementing exactly the rules the labels encode, so anything below 100% is a
+*bug*, not a difficulty signal. The benchmark is a regression net and a coverage proof. That is why
+the sabotage row matters more than the first: break one checker and the metrics collapse, which is
+the only evidence that they measure anything at all. It runs on every `just check`, not just on
+demand.
 
 **pass@k is a bug detector, not a score.** A deterministic checker cannot return two answers, so
 pass@5 below 100% on the core would mean a model had leaked into the verdict path.
 
-**What the benchmark does not prove**, stated plainly because omitting it is what would make the 100%
-hollow: it runs against a **seeded** catalog, not a messy real one; the labels **apply** the policy and
-do not **validate** it (a wrong rule scores 100% while being wrong); and the catalog is both oracle and
-input, so it cannot tell you whether the catalog is right about the **data**. Full methodology and
-denominators: [`benchmark/README.md`](benchmark/README.md).
+**What the benchmark does not prove**, stated plainly because omitting it is what would make the
+100% hollow: it runs against a **seeded** catalog, not a messy real one; the labels **apply** the
+policy and do not **validate** it (a wrong rule scores 100% while being wrong); and the catalog is
+both oracle and input, so it cannot tell you whether the catalog is right about the **data**. Full
+methodology and denominators: [`benchmark/README.md`](benchmark/README.md).
 
-## Try it
+## Engaging with the MCP Server
 
-Runs on your machine, not a hosted URL — **DataHub Core is a multi-container stack**, and a
-per-machine instance is what makes each run's catalog its own (the reset story in
-[docs/deployment.md](docs/deployment.md)). Two honest paths.
+Challenge 1 names the DataHub MCP Server as how agents get catalog context. Rather than skip the
+named path, we **scoped an adapter against it, built to its seam, and measured it** — the catalog
+read already had the one-method boundary an adapter would implement
+([`Reader.fetch_dataset`](src/attest/datahub/cache.py)), so the only open question was whether the
+MCP response *contains the facts a snapshot is made of.*
 
-**Prerequisites:** [`just`](https://github.com/casey/just), Python 3.12+, and — for the demo
-path only — Docker with ~8 GB free. Everything else is installed by `just setup`.
+**The server runs**, and that matters because compatibility is the failure everyone expects and is
+not what happened: it detects the deployment correctly (`is_oss=True`), version-gates its own query
+fragments, and answered every call for every seeded dataset without error. The finding is about what
+those *successful* responses contain.
 
-**Offline verification** — no DataHub, no API key, no cost. This is what CI runs:
+Its read tools are built to feed a **language model**, and each optimisation for that purpose
+removes something a deterministic checker needs. A dataset's `lastModified` is requested by no tool.
+Field tags are flattened to display names (`urn:li:tag:PII` → `"PII"`), so a column's glossary term
+can no longer reach the hierarchy that makes it a signal at all.
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate       # Windows;  source .venv/bin/activate on macOS/Linux
-just setup                   # installs the package + dev deps AND the datahub CLI / seed deps
-just check                   # lint + the truly-offline tier, on captured fixtures. Never skips.
-```
+**Measured on `mcp-server-datahub` 0.6.0 against the pinned Core: parity fails on 16/16 seeded
+datasets (130 field mismatches), and four of five true claims change verdict — including
+`customer_profile.email is PII` reading back Contradicted.** That last one is a *correctness*
+failure, the worst thing this product can do, and it is Attest's own thesis biting Attest: the tag
+arrives unrecognisable, the column reads unlabelled, the table is `Verified`, and our own hard-won
+completeness rule turns the loss into a **denial**. A transport that is lossy for an LLM is not
+merely lossy for a checker — it is *inverting*.
 
-**The local DataHub demo** — needs Docker (~8 GB free) and `OPENAI_API_KEY` for the semantic
-layer. After `just setup` above:
-
-```bash
-copy .env.example .env       # then set OPENAI_API_KEY in it  (cp .env.example .env on macOS/Linux)
-just up                      # bring up DataHub Core v1.5.0.6 from the vendored, pinned compose
-just seed                    # generate + ingest the seed catalog, capture the offline fixtures
-just demo                    # build the UI and serve it with the API on :8003
-```
-
-`just up` is a real command now, not a manual stack to set up by hand — it brings up DataHub
-from a **vendored** compose (no GitHub fetch) and blocks until GMS is actually healthy.
-**First bring-up pulls ~12.6 GB of images and takes a few minutes; the cold boot after that is
-~4.5 min** ([measured](docs/deployment.md#measured-cost)). Then open `http://localhost:8003`,
-`POST /audit` some agent prose, publish a verdict at the checkpoint, and read it back with `GET
-/claims`.
-
-`just smoke` makes "one command runs everything" **falsifiable**: it brings the stack up and
-asserts the demo path answers, and `just smoke-sabotage` proves it goes red — at the wire — for
-a dead stack and a dead demo path. `just reset` is the operator's definitive catalog wipe. The
-version pin and environment landmines are in [docs/datahub-setup.md](docs/datahub-setup.md);
-the deployment shape, the reset design, and the measured numbers are in
-[docs/deployment.md](docs/deployment.md).
-
-## Why the verdict is trustworthy
-
-The claim is narrow and mechanical: **no model decides a verdict.** Freshness, ownership,
-classification and schema verdicts come from date math, set membership and string comparison.
-`checkers/` imports no model client, and a test asserts that.
-
-What holds it up in practice:
-
-- **The trajectory gate.** Every step records what kind it is (`deterministic` / `llm` / `io`) plus its
-  token spend. The kind is what a step *claims* about itself; the token count is the *evidence* that
-  checks it — so a checker that quietly started calling a model fails the run even if it returns the
-  right answers. A violating run is `FLAGGED` and **cannot be approved** (HTTP 409), so a report the
-  pipeline could not vouch for can never reach the catalog. Seven invariants, and
-  [tests](tests/test_trajectory.py) sabotage the real pipeline four ways to prove they fire.
-- **One snapshot per run.** Every claim in an audit is decided against a single frozen read of the
-  catalog. Without it, two claims about one dataset can be checked against two different states of the
-  world and the report contradicts itself while each verdict is individually "correct".
-- **The prose is guarded, and the guard is finite.** Explanations pass three gates — crosscheck,
-  lexical faithfulness, polarity — and any failure ships a **deterministic template** instead. The
-  precise invariant, and no more: *a detected polarity contradiction cannot ship as model prose, and
-  the deterministic verdict remains authoritative regardless.* These are lexical detectors. They do
-  not prove arbitrary natural-language entailment, and this README does not claim they do.
-- **Revision cannot change the subject.** A Contradicted claim may be revised — by **Attest's own
-  configured model**, not by a callback into the original agent — at most twice, and the revision is
-  re-checked by the same checker against the same snapshot. It may change what a claim *asserts*, never
-  what it is *about*. Some claims are therefore honestly unrevisable, and standing by a false claim is
-  still publishable.
-
-Depth on all of it: [docs/architecture.md](docs/architecture.md).
+So MCP was rejected for deterministic verdict reads, **on evidence rather than preference** — and
+this is a finding about *structured consumers*, not a defect for the server's intended use, where
+the compaction is a feature. Three of the four defects are fixable upstream and are
+[drafted with reproductions](docs/upstream/). `just spike-mcp` **exits non-zero by design**: if it
+ever goes green, the finding has expired and the decision is worth reopening. Full write-up and
+per-dataset diffs: **[docs/mcp-evaluation.md](docs/mcp-evaluation.md)**.
 
 ## DataHub integration
 
@@ -271,46 +308,60 @@ flowchart TD
 ```
 
 <sub>The **run event** is the verdict and is append-only. The **tag** — and the dataset badge — are
-projections written after it, never the truth. The **write-ahead intent** is persisted before the first
-catalog write, so a process death mid-settlement is replayed on the next start; the writes are all
-idempotent, so replay collapses onto the same artifact and the same event. Retrieval paginates and
-round-trips the catalog's total, so a claim past the page is named as truncated, never silently absent.</sub>
+projections written after it, never the truth. The **write-ahead intent** is persisted before the
+first catalog write, so a process death mid-settlement is replayed on the next start; the writes are
+all idempotent, so replay collapses onto the same artifact and the same event.</sub>
 
-**Reads are GraphQL over `httpx`.** Writes are three sequential operations, and each is idempotent —
-which is why repeating the write *is* the recovery, and why no saga is needed. `WriteResult` names the
-**step** that failed rather than returning a boolean, because a failed `report` leaves a claim with no
-verdict while a failed `tag` leaves a verdict that is correct and merely not findable by search. Those
-are different problems, and `POST /audit/{run_id}/writeback` repairs both from the stored record
-without approving anything.
+**Reads are GraphQL over `httpx`.** Each of the three writes is idempotent — which is why repeating
+the write *is* the recovery, and why no saga is needed. `WriteResult` names the **step** that failed
+rather than returning a boolean, because a failed `report` leaves a claim with no verdict while a
+failed `tag` leaves a verdict that is correct and merely not findable by search. Different problems;
+`POST /audit/{run_id}/writeback` repairs both from the stored record without approving anything.
 
-**Where each filter is applied is part of the answer.** The two server-side entry points are disjoint:
-`dataset.assertions` scopes to a dataset but filters nothing; `searchAcrossEntities` filters `verdict`
-and `claim_type` but scopes to nothing. `reviewer` and `since` can never be pushed down — an assertion
-indexes nothing else — so they are applied **locally, after a bounded read**. Every response reports
-this rather than letting a caller assume the catalog answered what Attest answered. *Retrievable from
-DataHub* is true; *fully queryable in DataHub* is false, and the API says so on every call.
+**Where each filter is applied is part of the answer.** The two server-side entry points are
+disjoint, and `reviewer` and `since` can never be pushed down at all — so **DataHub does the
+scoping; Attest does most of the filtering**, and every response says so rather than letting a
+caller assume the catalog answered what Attest answered. *Retrievable from DataHub* is true; *fully
+queryable in DataHub* is false. Mechanics: [docs/architecture.md](docs/architecture.md).
 
-### Why GraphQL, not MCP?
+## Try it
 
-Challenge 1 names the DataHub MCP Server as how agents get catalog context, so it was scoped, built
-against, and **measured** — not skipped. The server runs fine against Core; compatibility was never the
-wall. The wall is that its read tools are built to feed a *language model*, and each optimisation for
-that purpose destroys something a checker needs: a dataset's `lastModified` is requested by no tool,
-and field tags are flattened to display names (`urn:li:tag:PII` → `"PII"`), so a column's term can no
-longer reach the glossary hierarchy that makes it a signal.
+Runs on your machine, not a hosted URL — **DataHub Core is a multi-container stack**, and a
+per-machine instance is what makes each run's catalog its own (the reset story in
+[docs/deployment.md](docs/deployment.md)). Two honest paths.
 
-**Measured on `mcp-server-datahub` 0.6.0 against the pinned Core: parity fails on 16/16 seeded datasets
-(130 field mismatches), and four of five true claims change verdict — including
-`customer_profile.email is PII` reading back Contradicted.** That last one is a *correctness* failure,
-the worst thing this product can do, and it is Attest's own thesis biting Attest: the tag arrives
-unrecognisable, the column reads unlabelled, the table is `Verified`, and our own completeness rule
-turns the loss into a **denial**. A transport that is lossy for an LLM is not merely lossy for a
-checker — it is *inverting*.
+**Prerequisites:** [`just`](https://github.com/casey/just), Python 3.12+, and — for the demo
+path only — Docker with ~8 GB free. Everything else is installed by `just setup`.
 
-So MCP was rejected for deterministic verdict reads, on evidence. `just spike-mcp` **exits non-zero by
-design**: if it ever goes green, the finding has expired and the decision is worth reopening. Full
-write-up, per-dataset diffs, and three defects drafted for upstream:
-**[docs/mcp-evaluation.md](docs/mcp-evaluation.md)**.
+**Offline verification** — no DataHub, no API key, no cost. This is what CI runs:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate       # Windows;  source .venv/bin/activate on macOS/Linux
+just setup                   # installs the package + dev deps AND the datahub CLI / seed deps
+just check                   # lint + the truly-offline tier, on captured fixtures. Never skips.
+```
+
+**The local DataHub demo** — needs Docker (~8 GB free) and `OPENAI_API_KEY` for the semantic
+layer. After `just setup` above:
+
+```bash
+copy .env.example .env       # then set OPENAI_API_KEY in it  (cp .env.example .env on macOS/Linux)
+just up                      # bring up DataHub Core v1.5.0.6 from the vendored, pinned compose
+just seed                    # generate + ingest the seed catalog, capture the offline fixtures
+just demo                    # build the UI and serve it with the API on :8003
+```
+
+`just up` brings up DataHub from a **vendored** compose (no GitHub fetch) and blocks until GMS is
+actually healthy. **First bring-up pulls ~12.6 GB of images; the cold boot after that is ~4.5 min**
+([measured](docs/deployment.md#measured-cost)). Then open `http://localhost:8003`, `POST /audit`
+some agent prose, publish a verdict at the checkpoint, and read it back with `GET /claims`.
+
+`just smoke` makes "one command runs everything" **falsifiable**, and `just smoke-sabotage` proves
+it goes red — at the wire — for a dead stack and a dead demo path. `just reset` is the operator's
+definitive catalog wipe. Version pin and environment landmines:
+[docs/datahub-setup.md](docs/datahub-setup.md); deployment shape, reset design and measured numbers:
+[docs/deployment.md](docs/deployment.md).
 
 ## API
 
@@ -343,16 +394,11 @@ and the run stays parked, decidable later. There is no `?auto_approve=true` and 
 | **Live** — the semantic layer vs a real model, plus the anti-drift fixture pin | DataHub + `OPENAI_API_KEY` | **Spends tokens; writes to your local catalog** | `just live` |
 | **Browser E2E** — a real browser drives the whole transaction to DataHub and back | ...plus a built UI | As above, through real Edge | `just e2e` |
 
-The two halves are blind to each other's failure mode, which is why running both is a rule rather than
-a habit: `just check` proves the guard still catches hallucinations — a guard that rejected
-*everything* would pass it perfectly — while `just live` proves it still lets the truth through.
-`just preflight` runs all three and is the convention before any push touching a prompt. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
-
-The offline tier is date-stable by construction: the test clock is derived from the captured fixture,
-not the wall clock, so freshness verdicts cannot rot into red against correct code. The fixtures are
-exactly as honest as [`test_fixture_drift.py`](tests/test_fixture_drift.py), which re-fetches every
-seeded URN from live GMS and fails by name when one has moved — in the live tier.
+The offline and live tiers are blind to each other's failure mode, so running both before a push
+touching a prompt is a rule rather than a habit (`just preflight`); the reasoning is in
+[CONTRIBUTING.md](CONTRIBUTING.md). The fixtures are exactly as honest as
+[`test_fixture_drift.py`](tests/test_fixture_drift.py), which re-fetches every seeded URN from live
+GMS and fails by name when one has moved.
 
 ## Scope and limitations
 
@@ -364,7 +410,7 @@ wrong verdict has the same confident shape as a right one.
 - **There is no `attest.confidence`.** The verdicts are code; there *is* no confidence. The third
   verdict already carries the only uncertainty in the system. A `0.95` would be a number invented to
   look like an ML system — the precise thing this project exists to catch.
-- **Reads are GraphQL, not MCP** — [measured](#why-graphql-not-mcp), not assumed.
+- **Reads are GraphQL, not MCP** — [measured](#engaging-with-the-mcp-server), not assumed.
 - **Ownership *type*** (technical vs business vs steward) is ignored, and **cross-dialect type
   equivalence** (`int8` ~ `BIGINT`) is not attempted. Both need a schema change or a model of each
   platform's type system, not an `if`.

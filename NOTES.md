@@ -26,3 +26,36 @@ pure-Python cost CI never *runs*, and it keeps "CI runs exactly what a developer
 `setup-ci` only when CI time is measurably a problem, and keep it a strict subset of `just
 setup` so it cannot diverge in what it proves. Related: the general "CI never installs the
 declared dependency FLOOR" gap is logged in [CLAUDE.md](CLAUDE.md)'s deferred-items table.
+
+## No test reads the root README, so its prose is unpinned
+
+**State.** Two tests pin displayed numbers to committed receipts, and neither one looks at
+`README.md`. [`test_benchmark_display_traces.py`](tests/test_benchmark_display_traces.py) pins
+`frontend/src/data/benchmarkData.ts`; [`test_calibration_consistency.py`](tests/test_calibration_consistency.py)
+pins `benchmark/README.md` (`BENCH_README`) and the same UI file. Every figure in the root
+README *does* trace to a committed JSON — verified by hand each time it is edited — but nothing
+fails when one drifts.
+
+**Trigger.** A number in the root README is found disagreeing with its receipt, or a prose
+claim is found asserting a guarantee no test makes.
+
+**The second half of that trigger has already fired once, which is why this is written down.**
+Before the Session 25 docs pass the README said *"`checkers/` imports no model client, and a
+test asserts that."* The **fact** is true — inspected, and no checker imports a model client —
+but no test asserted the static-import property; what the tests actually assert is the stronger
+runtime one (the checker step spent **zero tokens**, a run's model calls are decomposition and
+explanation and nothing else, `NO_LLM_IN_THE_VERDICT_PATH` FLAGs a violator un-approvable). The
+README was corrected to say what is asserted. **[docs/architecture.md](docs/architecture.md)
+still carries the identical sentence and is due the same correction in the next doc pass.** On a
+project whose whole thesis is that an unverified claim is not a verified one, a doc overstating
+what a test proves is the one self-inflicted wound worth a tripwire.
+
+**Lever (NOT built).** Extend `test_calibration_consistency.py`'s file list to the root README —
+its table regex already generalizes — and add a receipts-table trace of the same shape as
+`test_benchmark_display_traces.py`.
+
+**Why it stays on the shelf.** It was deferred deliberately during the rework, not forgotten:
+test-pinning a file being substantially rewritten invites churn in the pin rather than in the
+prose, and the property that actually matters — every number traces to a committed JSON — holds
+today. Build it once the README settles. Note the limit of what it would buy: a regex pins
+*numbers*, and the miss that really happened was a **sentence**.

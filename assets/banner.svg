@@ -1,0 +1,133 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 400" width="1200" height="400" role="img" aria-labelledby="t d">
+<title id="t">Attest — a claim enters, a deterministic check runs, a verdict comes out</title>
+<desc id="d">Three real benchmark claims cycle through one identical deterministic rail: audit_log is PII-free reads Contradicted; raw_events contains no PII reads Insufficient-Coverage; orders_fact is free of PII reads Supported. Zero verdicts are decided by a model.</desc>
+
+<style>
+  .mono  { font-family: 'JetBrains Mono','SFMono-Regular','SF Mono',Consolas,'Liberation Mono',Menlo,monospace; }
+  .serif { font-family: 'Cormorant Garamond',Georgia,'Times New Roman',serif; }
+</style>
+
+<!-- The card paints its own surface, so it renders identically on GitHub light and dark.
+     #0A0B0D is ink-950 — the application's real base colour. -->
+<rect x="0.5" y="0.5" width="1199" height="399" rx="14" fill="#0A0B0D" stroke="#22262D"/>
+
+<!-- ── static chrome ───────────────────────────────────────────────────────── -->
+<text class="serif" x="44" y="56" font-size="28" letter-spacing="5" fill="#EDEFF2">ATTEST</text>
+<text class="mono" x="1156" y="55" font-size="13" fill="#565D67" text-anchor="end">reads and writes · DataHub Core v1.5.0.6</text>
+<line x1="44" y1="80" x2="1156" y2="80" stroke="#1A1D22"/>
+
+<text class="mono" x="44" y="122" font-size="11" letter-spacing="1.6" fill="#565D67">AGENT CLAIMS</text>
+
+<!-- ══ the rail ════════════════════════════════════════════════════════════════
+     ONE set of elements, not three — the three claims below literally share it,
+     which is the point. It is always visible; only a highlight travels along it,
+     on its own 5s sub-loop (one traversal per claim). -->
+<g class="mono" font-size="13">
+  <circle cx="50" cy="204" r="4.5" fill="#3A4049">
+    <animate attributeName="fill" dur="5s" repeatCount="indefinite"
+             values="#3A4049;#3A4049;#6E8FBF;#6E8FBF;#3A4049;#3A4049" keyTimes="0;0.12;0.17;0.92;0.98;1"/>
+  </circle>
+  <text x="64" y="209" fill="#565D67">resolve
+    <animate attributeName="fill" dur="5s" repeatCount="indefinite"
+             values="#565D67;#565D67;#D2D6DC;#D2D6DC;#565D67;#565D67" keyTimes="0;0.12;0.17;0.92;0.98;1"/>
+  </text>
+  <line x1="130" y1="204" x2="176" y2="204" stroke="#22262D">
+    <animate attributeName="stroke" dur="5s" repeatCount="indefinite"
+             values="#22262D;#22262D;#3A4049;#3A4049;#22262D;#22262D" keyTimes="0;0.144;0.194;0.92;0.98;1"/>
+  </line>
+  <circle cx="188" cy="204" r="4.5" fill="#3A4049">
+    <animate attributeName="fill" dur="5s" repeatCount="indefinite"
+             values="#3A4049;#3A4049;#6E8FBF;#6E8FBF;#3A4049;#3A4049" keyTimes="0;0.17;0.22;0.92;0.98;1"/>
+  </circle>
+  <text x="202" y="209" fill="#565D67">check
+    <animate attributeName="fill" dur="5s" repeatCount="indefinite"
+             values="#565D67;#565D67;#D2D6DC;#D2D6DC;#565D67;#565D67" keyTimes="0;0.17;0.22;0.92;0.98;1"/>
+  </text>
+  <line x1="250" y1="204" x2="296" y2="204" stroke="#22262D">
+    <animate attributeName="stroke" dur="5s" repeatCount="indefinite"
+             values="#22262D;#22262D;#3A4049;#3A4049;#22262D;#22262D" keyTimes="0;0.194;0.244;0.92;0.98;1"/>
+  </line>
+  <circle cx="308" cy="204" r="4.5" fill="#3A4049">
+    <animate attributeName="fill" dur="5s" repeatCount="indefinite"
+             values="#3A4049;#3A4049;#6E8FBF;#6E8FBF;#3A4049;#3A4049" keyTimes="0;0.22;0.27;0.92;0.98;1"/>
+  </circle>
+  <text x="322" y="209" fill="#565D67">verdict
+    <animate attributeName="fill" dur="5s" repeatCount="indefinite"
+             values="#565D67;#565D67;#D2D6DC;#D2D6DC;#565D67;#565D67" keyTimes="0;0.22;0.27;0.92;0.98;1"/>
+  </text>
+</g>
+<text class="mono" x="404" y="209" font-size="12" letter-spacing="0.6" fill="#3A4049">[ deterministic — date math, set membership, string comparison ]
+  <animate attributeName="fill" dur="5s" repeatCount="indefinite"
+           values="#3A4049;#3A4049;#6E8FBF;#6E8FBF;#3A4049;#3A4049" keyTimes="0;0.22;0.27;0.92;0.98;1"/>
+</text>
+
+<!-- ═════════════════════════════════════════════════════════════════════════
+     FRAME 1 of the 15s loop — Contradicted (benchmark case class-09).
+
+     Its elements carry opacity="1" as their STATIC attribute while frames 2 and 3
+     carry opacity="0", so a renderer that ignores SMIL shows this frame whole and
+     correct rather than an empty card. It is deliberately the sharpest of the three:
+     the product catching a false claim.
+
+     Every string below is real: the claim and the one-line reason are verbatim from
+     benchmark/cases.json, and the assertion URN is what writeback.claim_urn() derives
+     from that claim's own content.
+     ═════════════════════════════════════════════════════════════════════════ -->
+<g>
+  <text class="mono" x="44" y="158" font-size="17" fill="#EDEFF2" opacity="1">The table urn:li:dataset:(…,attest_db.public.audit_log,PROD) is PII-free.
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.01;0.03333;0.30667;0.32667;1"/>
+  </text>
+  <g opacity="1">
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.1;0.12333;0.30667;0.32667;1"/>
+    <rect x="44" y="240" width="150" height="34" rx="6" fill="#D96A64" fill-opacity="0.12" stroke="#D96A64"/>
+    <text class="mono" x="119" y="262" font-size="14" letter-spacing="1.2" fill="#D96A64" text-anchor="middle">CONTRADICTED</text>
+  </g>
+  <text class="mono" x="44" y="304" font-size="14" fill="#A8AEB8" opacity="1">Its actor_email column is tagged PII, and a table-level PII claim is existential — one PII column settles it.
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.12333;0.14667;0.30667;0.32667;1"/>
+  </text>
+  <text class="mono" x="44" y="334" font-size="13" fill="#565D67" opacity="1">→ urn:li:assertion:attest-065759af0ff0ad6f405a
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.15;0.17333;0.30667;0.32667;1"/>
+  </text>
+</g>
+
+<!-- ── FRAME 2 — Insufficient-Coverage (benchmark case class-16) ───────────── -->
+<g>
+  <text class="mono" x="44" y="158" font-size="17" fill="#EDEFF2" opacity="0">The table urn:li:dataset:(…,analytics.staging.raw_events,PROD) contains no PII.
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.34333;0.36667;0.64;0.66;1"/>
+  </text>
+  <g opacity="0">
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.43333;0.45667;0.64;0.66;1"/>
+    <rect x="44" y="240" width="238" height="34" rx="6" fill="#C2A265" fill-opacity="0.12" stroke="#C2A265"/>
+    <text class="mono" x="163" y="262" font-size="14" letter-spacing="1.2" fill="#C2A265" text-anchor="middle">INSUFFICIENT-COVERAGE</text>
+  </g>
+  <text class="mono" x="44" y="304" font-size="14" fill="#A8AEB8" opacity="0">Nothing is tagged and nothing declares the review complete: absence of a PII tag is not evidence of absence of PII.
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.45667;0.48;0.64;0.66;1"/>
+  </text>
+  <text class="mono" x="44" y="334" font-size="13" fill="#565D67" opacity="0">→ urn:li:assertion:attest-d873fe291b76671eede9
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.48333;0.50667;0.64;0.66;1"/>
+  </text>
+</g>
+
+<!-- ── FRAME 3 — Supported (benchmark case class-04) ───────────────────────── -->
+<g>
+  <text class="mono" x="44" y="158" font-size="17" fill="#EDEFF2" opacity="0">The table urn:li:dataset:(…,analytics.orders.orders_fact,PROD) is free of PII.
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.67667;0.7;0.97333;0.99333;1"/>
+  </text>
+  <g opacity="0">
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.76667;0.79;0.97333;0.99333;1"/>
+    <rect x="44" y="240" width="122" height="34" rx="6" fill="#5FB98D" fill-opacity="0.12" stroke="#5FB98D"/>
+    <text class="mono" x="105" y="262" font-size="14" letter-spacing="1.2" fill="#5FB98D" text-anchor="middle">SUPPORTED</text>
+  </g>
+  <text class="mono" x="44" y="304" font-size="14" fill="#A8AEB8" opacity="0">No PII signal fires and the table is tagged Verified, so the absence is a reviewed finding rather than silence.
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.79;0.81333;0.97333;0.99333;1"/>
+  </text>
+  <text class="mono" x="44" y="334" font-size="13" fill="#565D67" opacity="0">→ urn:li:assertion:attest-b9966470479fc6fd7154
+    <animate attributeName="opacity" dur="15s" repeatCount="indefinite" values="0;0;1;1;0;0" keyTimes="0;0.81667;0.84;0.97333;0.99333;1"/>
+  </text>
+</g>
+
+<!-- ── footer ──────────────────────────────────────────────────────────────── -->
+<line x1="44" y1="358" x2="1156" y2="358" stroke="#1A1D22"/>
+<text class="mono" x="44" y="382" font-size="13" fill="#7B8390"><tspan font-size="16" fill="#EDEFF2">0</tspan> verdicts decided by a model</text>
+<text class="mono" x="1156" y="382" font-size="11" fill="#3A4049" text-anchor="end">benchmark/cases.json · class-09 · class-16 · class-04</text>
+</svg>
