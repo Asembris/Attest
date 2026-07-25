@@ -190,6 +190,12 @@ def explain(result: CheckResult, llm: LLM | None = None, max_attempts: int = 2) 
                 schema_name="verdict_explanation",
             )
         except LLMError as exc:
+            # LLMError, deliberately WIDE — it covers both a model that produced unusable
+            # output and a provider that produced none (llm.ProviderError). Degrading is
+            # right for both, and for the same reason: the verdict was decided by
+            # deterministic code BEFORE this step ran, so an outage here costs prose and
+            # nothing else. It used to cost the entire run — a provider exception is not a
+            # RuntimeError, so it walked past this line and took every verdict with it.
             log.error("explanation generation failed: %s", exc)
             rejected.append(f"attempt {attempt}: {exc}")
             break

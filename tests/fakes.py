@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
 
+import httpx
+import openai
+
 from attest.datahub import DataHubError, DatasetSnapshot, EntityNotFoundError
 
 
@@ -34,11 +37,25 @@ class FakeChat:
     nothing was called. Set it to make the fake BILL, which is what the tests about billing
     (test_concurrency.py) and about unpriced models (test_resume.py) need. A receipt cannot
     be tested against a client that never charges for anything.
+
+    **`faults` is how this fake can fail the way the REAL client fails, and its absence is
+    why a transport bug shipped past 23 green sessions.** A fake is a Python object: it opens
+    no socket and negotiates no TLS, so nothing it does can raise an `openai.APIStatusError`
+    on its own — the entire transport failure class is invisible to it BY CONSTRUCTION
+    (CLAUDE.md, Session 5). The DataHub fake below has had fault injection on nearly every
+    method since Session 4; this one had none, and that asymmetry is exactly the cover an
+    OpenAI 500 walked through. `faults` maps a 1-BASED call number to the exception that
+    call raises instead of replying, so a test can put an outage on the decompose call and
+    not on the explain call — which is the difference between a run that dies and a run that
+    degrades. The call is RECORDED before it raises: a test asserting "Attest did not retry
+    this" is asserting a count, and a fault that never reached `calls` would make every such
+    assertion pass vacuously.
     """
 
     replies: list[str]
     calls: list[dict[str, Any]] = field(default_factory=list)
     tokens: tuple[int, int] | None = None
+    faults: dict[int, Exception] = field(default_factory=dict)
 
     def create(
         self,
@@ -56,6 +73,9 @@ class FakeChat:
                 "temperature": temperature,
             }
         )
+        fault = self.faults.get(len(self.calls))
+        if fault is not None:
+            raise fault
         index = min(len(self.calls) - 1, len(self.replies) - 1)
         content = self.replies[index]
         return SimpleNamespace(
@@ -73,6 +93,47 @@ class FakeChat:
     def prompts(self) -> list[str]:
         """Every message body sent, flattened — for asserting what the model could see."""
         return [m["content"] for call in self.calls for m in call["messages"]]
+
+
+# --- the provider, failing ---------------------------------------------------
+#
+# REAL openai SDK exception objects, constructed the way the SDK constructs them — with an
+# httpx response carrying the status code, because that is where `status_code` is read from
+# and a hand-rolled stand-in with the attribute bolted on would prove the classification
+# works against a shape the SDK does not produce. The point of these is to reach code that
+# the fake chat client can otherwise never reach.
+
+_REQUEST = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+
+_BY_STATUS: dict[int, type[openai.APIStatusError]] = {
+    400: openai.BadRequestError,
+    401: openai.AuthenticationError,
+    403: openai.PermissionDeniedError,
+    404: openai.NotFoundError,
+    422: openai.UnprocessableEntityError,
+    429: openai.RateLimitError,
+    500: openai.InternalServerError,
+}
+
+
+def openai_status_error(status: int, message: str = "") -> openai.APIStatusError:
+    """The SDK's own exception for an HTTP status. 500 is the one that started this."""
+    cls = _BY_STATUS.get(status, openai.APIStatusError)
+    return cls(
+        message or f"Error code: {status}",
+        response=httpx.Response(status, request=_REQUEST),
+        body=None,
+    )
+
+
+def openai_connection_error() -> openai.APIConnectionError:
+    """What the SDK raises when the socket never produced a response."""
+    return openai.APIConnectionError(request=_REQUEST)
+
+
+def openai_timeout() -> openai.APITimeoutError:
+    """A read timeout. A subclass of APIConnectionError, which the classifier must honour."""
+    return openai.APITimeoutError(request=_REQUEST)
 
 
 def reply(payload: dict[str, Any]) -> str:

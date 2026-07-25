@@ -1582,6 +1582,95 @@ distinctions. No checker gained a model import; trajectory stays green.
   what proves the `_urns` hardening does not trip on real well-formed seeded data and the new
   future-IC evidence ships past the guards.
 
+**18. THE PROVIDER IS NOT THE MODEL (Session 24). A transient OpenAI 500 crashed the whole
+run and reached a user as a raw `Internal Server Error`. The defect was not a missing retry
+— it was an ERROR TAXONOMY hole, and the fake is why it survived 23 green sessions.**
+
+Reported from the UI: an audit of the default sample returned HTTP 500,
+`openai.InternalServerError` out of the decompose step. The TLS repair had fired and worked;
+the request went out and OpenAI returned a 500.
+
+- **THE RETRY FRAMING WAS REFUTED FIRST, and that mattered more than the fix.** Something had
+  already retried it. `OpenAI(api_key=...)` takes `DEFAULT_MAX_RETRIES = 2`, and the SDK's
+  `_should_retry` covers 408/409/429, every 5xx, and connection/timeout failures, with
+  `0.5 × 2ⁿ` backoff capped at 8s, jittered, honouring `retry-after`. **That 500 had already
+  cost three requests and ~1.5s of backoff.** Stacking an Attest retry on top would have made
+  **six requests and ~20s of backoff for one dead provider** — a hang wearing resilience's
+  clothes. Confirmed transient by re-running the identical sample twice: 201 both times,
+  3 claims, `trajectory_ok`, $0.00128 each.
+- **THE ACTUAL DEFECT.** All three LLM steps already had a designed degradation path, and all
+  three key on `LLMError` — a `RuntimeError`. Every OpenAI exception descends from
+  `openai.OpenAIError` → `Exception`. **`issubclass(InternalServerError, RuntimeError)` is
+  False**, so the entire transport failure class walked past `decompose`, `explain` AND
+  `revise`. Sharpest at **explain**: the verdict is decided by deterministic code *before* it
+  runs, so a 500 there threw away already-final verdicts with the safe template one line away.
+- **THE FIX IS TRANSLATION, NOT RETRY, at the seam the TLS repair already sat on**
+  (`LLM._create`). `ProviderError(LLMError)` with two subclasses: `ProviderUnavailable`
+  (transient) and `ProviderRefused` (a bad key, a model name that does not exist — retrying
+  cannot change the answer). **The transient line is drawn exactly where the SDK's
+  `_should_retry` draws it**, deliberately: that is what makes `ProviderUnavailable` mean
+  something specific — *the transport already retried this and still failed*. Draw it anywhere
+  else and Attest either promises a retry that never happened or refuses one that silently
+  did. A `ProviderError` is an `LLMError` but NOT a `MalformedOutput`, so it leaves `json()`
+  without consuming a schema-repair attempt: handing the model an error it never received is
+  two wasted requests and a nonsense prompt.
+- **THE DISPOSITION IS NON-UNIFORM ON PURPOSE, AND IT IS THE ANTI-SILENCE RULE PER STEP. DO
+  NOT "TIDY" IT INTO CONSISTENCY.** `explain` and `revise` catch the WIDE `LLMError` and
+  degrade — right for both, because the verdict is already decided by code, so an outage there
+  costs prose and nothing else. **`decompose` catches the NARROW `MalformedOutput`** so a
+  provider failure travels up. Degrading there would return `status=complete`,
+  `trajectory_ok=true`, and a report showing an audit that found nothing when three claims
+  went in — **Attest rendering silence as an answer, in its own output, about its own
+  failure.** A model that produced garbage twice against a strict schema SAID something and
+  "no claims" is a defensible reading of it; a provider that returned nothing said nothing.
+  The two `except` clauses look like an inconsistency and are the opposite of one.
+- **THREE STATUS CODES, BECAUSE IT IS THREE DIFFERENT FACTS** — `/audit` is the only route
+  that calls a model. `ProviderUnavailable` → **503 + `Retry-After`** (transient; the caller
+  can act). `ProviderRefused` → **502, pointedly not 503** (waiting changes nothing; telling
+  someone to retry a bad key wastes their time on Attest's behalf). A bare `LLMError`
+  (a missing key) → **500 that CARRIES the message**. The old bare 500 rendered as
+  `Internal Server Error` because Starlette's body is `text/plain`, so `client.ts`'s
+  `res.json()` threw and fell back to `statusText`. **The frontend needed no change** — the
+  detail pipe existed and was only ever handed plain text.
+- **THE 600-SECOND READ TIMEOUT WAS PART OF THIS FIX, not a separate nicety.** The SDK
+  defaults to `read=600s`, so one wedged socket stalled an audit for **30 minutes across three
+  attempts** and looked exactly like a slow audit — the SAME failure §7 recorded for the
+  calibration labeler, on the path a demo runs, which never got the same fix.
+  `READ_TIMEOUT_SECONDS = 30.0` (~10× a healthy call; a whole 16-step audit measures ~23s).
+  **MEASURED: worst case 1800s → 90s, then a clean 503.** `max_retries` is deliberately LEFT
+  at the SDK default — raising it lengthens every outage.
+- **THE FAKE IS WHY THIS SHIPPED, and that is the generalizable part.** Session 5's rule
+  again, in the same module: the scripted chat client is a Python object with no HTTP stack,
+  so **no test written against it could raise an `APIStatusError`**. The FakeDataHub had fault
+  injection on nearly every method since Session 4; `FakeChat` had **zero**. That asymmetry
+  was the bug's cover. `FakeChat.faults` (a 1-based call index → the exception that call
+  raises) closes it, and the call is RECORDED before it raises — an assertion that "Attest did
+  not retry this" is a count, and a fault that never reached `calls` would pass vacuously.
+  **When you add a fake, ask what the real thing fails at that the fake cannot.**
+- **A crashed run stores NOTHING and no longer LEAKS.** There is no report, so nothing is
+  persisted — a 0-claim `AuditRecord` standing in for an audit that never reached a verdict
+  would be the fabrication the store refuses everywhere else, and it is refused here too
+  (deferred on principle, not cost: there is no run id to hand back and the error says so).
+  But `forget` was only ever reached on the success path, so every crashed run left its ledger
+  — pinning that run's catalog snapshots — and its checkpoint rows for the life of the
+  process. A provider outage produces those in batches. Now `service.audit` forgets and
+  re-raises.
+- **VERIFIED, red-first.** Both bugs reproduced against pre-fix code (the explain run dying
+  with `isinstance(exc, LLMError) == False`; the decompose 500 arriving as
+  `content-type: text/plain`, body `Internal Server Error`) BEFORE any fix. The **vacuity
+  check runs in the suite**, not in a command someone has to remember (the
+  `test_breaking_a_checker_collapses_the_benchmark` precedent): neutering
+  `_as_provider_error` must lose the verdicts and restore the raw 500 — and it was itself
+  checked for vacuity, since with the fix in place both of its assertions fail. MEASURED:
+  offline **392 passed, 0 skipped**; integration 5 passed; **live 38 passed** (12 matrix
+  cells, the guard-lets-truth-through run, the browser E2E, the settlement-recovery SIGKILL
+  harness, and the 16-URN anti-drift pin).
+- **WHAT THIS DOES NOT DO:** it does not make Attest survive a provider that is actually down
+  — it makes it FAIL HONESTLY and fast, which is the only correct behaviour. It adds no
+  Attest-level retry, no queue, no degraded "offline mode", and it does not touch the
+  deterministic core, the trajectory rules, or token accounting (a failed call appends no
+  `Usage`, so nothing is double-billed and no step count is fabricated).
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |

@@ -188,7 +188,20 @@ class AuditService:
         run_id = str(uuid.uuid4())
         started = datetime.now(tz=UTC)
 
-        report = self.pipeline.run(agent_output, thread_id=run_id)
+        try:
+            report = self.pipeline.run(agent_output, thread_id=run_id)
+        except Exception:
+            # A run that died mid-flight (the provider went down, most likely — see
+            # llm.ProviderError) produced no report, so there is nothing to persist and
+            # deliberately nothing is invented: a 0-claim AuditRecord standing in for an
+            # audit that never reached a verdict would be Attest fabricating its own trail.
+            #
+            # But it must not LEAK. `forget` was only ever reached on the success path below,
+            # so every crashed run left its ledger — pinning that run's catalog snapshots —
+            # and its checkpoint rows behind for the life of the process. A service is a
+            # long-lived process, and a provider outage produces these in batches.
+            self.pipeline.forget(run_id)
+            raise
 
         record = record_module.from_report(
             report, run_id=run_id, source_agent=source_agent, created_at=started

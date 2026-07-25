@@ -40,7 +40,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from attest.claims import Claim
 from attest.config import Step
-from attest.llm import LLM, LLMError
+from attest.llm import LLM, MalformedOutput
 from attest.sanitize import Sanitized, as_data_block, sanitize
 
 log = logging.getLogger(__name__)
@@ -253,9 +253,18 @@ def decompose(text: str, llm: LLM | None = None) -> Decomposition:
             schema=SCHEMA,
             schema_name="extracted_claims",
         )
-    except LLMError as exc:
+    except MalformedOutput as exc:
         # No claims is an honest answer; a fabricated claim is not. The caller sees an
         # empty decomposition and the reason, and can decide what to do about it.
+        #
+        # **The catch is MalformedOutput, NOT LLMError, and the difference is the whole
+        # anti-silence rule.** This degradation is right for a model that produced garbage
+        # twice against a strict schema: it SAID something, and "no claims" is a defensible
+        # reading of it. It is wrong for a provider that returned nothing — a ProviderError
+        # degraded here would come back `status=complete`, `trajectory_ok=true`, and a report
+        # showing an audit that found nothing when three claims went in. That is Attest
+        # rendering silence as an answer, in its own output, about its own failure. So a
+        # provider failure (and a missing key) travels UP, to be reported as what it is.
         log.error("claim extraction failed: %s", exc)
         return Decomposition(
             claims=(),
