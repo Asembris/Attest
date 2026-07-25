@@ -77,11 +77,17 @@ from attest.api.service import (
 from attest.config import settings
 from attest.datahub import DataHubClient
 from attest.graph import Pipeline
+from attest.llm import LLMError, ProviderRefused, ProviderUnavailable
 from attest.record import AuditRecord, EvidenceView
 from attest.retrieval import ClaimQuery, RetrievedClaim
 from attest.store import AuditStore
 
 log = logging.getLogger(__name__)
+
+# What `Retry-After` says on a transient provider failure. Short, because the transport has
+# already spent its own bounded backoff getting here (llm.py) and a caller who waits a minute
+# on a hiccup that lasted two seconds has been told something untrue about the outage.
+RETRY_AFTER_SECONDS = 10
 
 
 @lru_cache(maxsize=1)
@@ -181,6 +187,11 @@ def submit_audit(
     `agent_output` (checked before the run) AND must have produced a claim (checked after
     it). An audit that covered less than the caller required is a 422 rather than a 201 —
     the run is still stored, and the error names it.
+
+    **This is the only route that calls a model**, so it is the only one that can fail on the
+    provider. A failure there is reported as three different things because it IS three
+    different things — retryable, refused, misconfigured — and a caller can act on exactly
+    one of them.
     """
     try:
         return service.audit(
@@ -193,6 +204,35 @@ def submit_audit(
         # request is well-formed and cannot be processed as asked. A 201 here would tell a
         # caller who said "audit these" that Attest did, when it did not.
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except ProviderUnavailable as exc:
+        # 503 + Retry-After: the upstream is transiently down and the transport has ALREADY
+        # exhausted its bounded retry (llm.py), so the next attempt belongs to whoever is
+        # holding the request — with a number rather than a shrug. Nothing was audited and
+        # nothing was stored; there is no run to point at, which is why this says so plainly
+        # instead of handing back a run id that would resolve to an audit of nothing.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"No audit was run: {exc}. Attest's verdicts are deterministic, but extracting "
+            f"claims from the agent's text needs the model, and the provider is temporarily "
+            f"unavailable. Nothing was written to the catalog. Try again in a moment.",
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        ) from exc
+    except ProviderRefused as exc:
+        # 502, and pointedly NOT 503: the provider rejected the request itself, so waiting
+        # changes nothing. Telling a caller to retry a bad key would waste their time on
+        # Attest's behalf, which is the failure the Retry-After above exists to avoid.
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"No audit was run: {exc}. The provider rejected the request, so retrying will "
+            f"not help — check the API key and the configured model name.",
+        ) from exc
+    except LLMError as exc:
+        # Attest's own configuration, most often a missing key. A 500 is right — it is our
+        # fault, not the caller's and not the provider's — but it must CARRY the message.
+        # A bare 500 renders as "Internal Server Error" in the browser (the body is
+        # text/plain, so the client's JSON parse falls back to statusText), which tells the
+        # person who can fix it nothing at all.
+        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)) from exc
 
 
 @app.get("/audit/{run_id}", response_model=AuditRecord)
