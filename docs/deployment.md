@@ -121,17 +121,24 @@ on top and are deliberately kept out of the default and CI install paths.
 
 ## The smoke test
 
-`just smoke` makes "one command runs everything" falsifiable. It depends on `up`, then runs
-[tests/test_smoke.py](../tests/test_smoke.py), which asserts GMS is reachable — **failing at
-the wire in ~3 s if not, never as a downstream timeout** — that Attest sees the catalog, and
-that the demo audit produces verdicts resolving every seeded URN.
+`just smoke` makes "one command runs everything" falsifiable. It depends on `up` **and a
+fresh `ui` build**, then [spikes/smoke_runner.py](../spikes/smoke_runner.py) launches the
+shipped `python -m uvicorn attest.api.app:app` command on an ephemeral port with temporary
+store/checkpoint files. [tests/test_smoke.py](../tests/test_smoke.py) receives only that HTTP
+base URL -- it imports neither the ASGI app nor `TestClient` -- and asserts, in order:
 
-`just smoke-sabotage` is its vacuity check ([spikes/smoke_sabotage.py](../spikes/smoke_sabotage.py)):
-it points the test at a dead GMS (must go red at the reachability gate, and **fast** — measured
-7.8 s) and feeds it an unseeded URN (must go red at the demo-answers assertion), and exits
-non-zero if either survives or reds for the wrong reason. Same discipline as `just
-bench-sabotage`, `just spike-mcp`, and `just e2e-sabotage`: an assertion that only ever passes
-is a green light wired to nothing.
+1. GMS is reachable, failing at the wire in ~3 seconds rather than as a downstream timeout.
+2. `/health` answers through the real uvicorn socket and Attest sees the catalog.
+3. `/` serves the newly built index and its referenced JavaScript asset answers with content.
+4. `/audit` produces verdicts resolving every seeded URN in the demo sample.
+
+`just smoke-sabotage` is the vacuity check
+([spikes/smoke_sabotage.py](../spikes/smoke_sabotage.py)). It independently breaks all four
+boundaries and requires each boundary-specific marker: dead GMS (measured 5.1 s), uvicorn
+startup (4.3 s), the built JavaScript asset (7.0 s), and a demo audit resolving no claims.
+A fault that merely exits nonzero at another layer is rejected; this caught the first runner
+polling `/health` before the direct GMS gate and misreporting a dead container as a server
+startup timeout.
 
 ## Honest limitations
 

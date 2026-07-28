@@ -357,8 +357,10 @@ actually healthy. **First bring-up pulls ~12.6 GB of images; the cold boot after
 ([measured](docs/deployment.md#measured-cost)). Then open `http://localhost:8003`, `POST /audit`
 some agent prose, publish a verdict at the checkpoint, and read it back with `GET /claims`.
 
-`just smoke` makes "one command runs everything" **falsifiable**, and `just smoke-sabotage` proves
-it goes red — at the wire — for a dead stack and a dead demo path. `just reset` is the operator's
+`just smoke` makes "one command runs everything" **falsifiable**: it builds the UI fresh,
+launches the shipped uvicorn command on a real socket, fetches `/` and its built JavaScript asset,
+then audits the live seeded catalog over HTTP. `just smoke-sabotage` proves DataHub, uvicorn, the
+built asset, and the demo API are each load-bearing. `just reset` is the operator's
 definitive catalog wipe. Version pin and environment landmines:
 [docs/datahub-setup.md](docs/datahub-setup.md); deployment shape, reset design and measured numbers:
 [docs/deployment.md](docs/deployment.md).
