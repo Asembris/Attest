@@ -214,6 +214,8 @@ export interface DecisionRequest {
 /** What the catalog did with a published verdict. Reported separately from the decision: a
  *  write can fail independently while the human decision still stands. */
 export interface WriteBackView {
+  /** Stable identity of the originating claim within this audit run. */
+  claim_index: number;
   target_urn: string;
   ok: boolean;
   detail: string;

@@ -370,6 +370,7 @@ def test_approving_a_correction_writes_the_verdict_back_to_the_catalog(client):
     assert body["audit"]["claims"][0]["verdict"] == "Contradicted"
 
     assert body["writebacks"][0]["target_urn"] == SF
+    assert body["writebacks"][0]["claim_index"] == 0
     assert body["writebacks"][0]["ok"] is True
     assert body["writebacks"][0]["failed_step"] is None
     assert body["writebacks"][0]["claim_urn"].startswith("urn:li:assertion:attest-")

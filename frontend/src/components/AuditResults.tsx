@@ -246,15 +246,9 @@ export default function AuditResults({
               onPublish={(publish) => decide(claim.index, { publish })}
               acceptCorrection={decisions[claim.index]?.accept_correction}
               onAcceptCorrection={(accept) => decide(claim.index, { accept_correction: accept })}
-              // KNOWN GAP, and named rather than half-fixed: this matches by TARGET URN, so
-              // two claims about one dataset both show the last write's result. The backend
-              // has this right — it keys its decision log by claim index precisely because
-              // keying by URN attributed a write to the wrong decision — but the wire type
-              // carries `claim_urn` and no claim index, and the UI cannot derive the URN
-              // (it is a sha256 over the claim's canonical JSON; re-implementing that
-              // identity rule in TypeScript would be a worse bug than this one). The fix is
-              // a claim index on WriteBackView, which is the write path's shape to change.
-              writeback={writebacks?.find((w) => w.target_urn === claim.target_urn) ?? null}
+              // A target URN is not a receipt identity: one audit can make several claims
+              // about the same dataset. Settlement and this view both key by claim index.
+              writeback={writebacks?.find((w) => w.claim_index === claim.index) ?? null}
             />
           ))}
         </div>
