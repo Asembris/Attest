@@ -177,6 +177,9 @@ class WriteBackView(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
+    claim_index: int = Field(
+        description="Stable identity of the originating claim within this audit run."
+    )
     target_urn: str
     ok: bool
     detail: str = ""

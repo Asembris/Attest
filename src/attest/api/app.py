@@ -462,6 +462,7 @@ def _claim_view(claim: RetrievedClaim) -> ClaimView:
 def _views(results) -> tuple[WriteBackView, ...]:
     return tuple(
         WriteBackView(
+            claim_index=w.claim_index,
             target_urn=w.target_urn,
             ok=w.ok,
             detail=w.detail,

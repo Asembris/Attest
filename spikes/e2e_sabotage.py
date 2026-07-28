@@ -1,15 +1,13 @@
-"""THE VACUITY CHECK FOR THE BROWSER E2E. Re-introduce three REAL bugs; demand it goes red.
+"""THE VACUITY CHECK FOR THE BROWSER E2E. Re-introduce four REAL bugs; demand it goes red.
 
 `just e2e-sabotage`. Exits NON-ZERO if the E2E stays green under sabotage — same discipline
 as `just bench-sabotage` and `just spike-mcp`. An assertion that only ever passes is a green
 light wired to nothing, and that goes double for a test whose whole justification is catching
 a class of bug every other test missed.
 
-**THE SABOTAGES ARE NOT INVENTED. They are the real bugs this UI shipped**, all three the
-same shape — a review gate blind to one of the two axes the checkpoint parks on. The first
-two are lifted from commit 6903d6c, where they shipped and lived a full session in `main`;
-the third was caught in a pre-submission audit and is the strand this file's corrections-only
-test was written for:
+**THE SABOTAGES ARE NOT INVENTED.** The first three are UI bugs that shipped or were
+caught before submission. The fourth is the reproduced same-dataset receipt alias that this
+session fixed:
 
     1. THE 422. `DecisionRequest` carried `accept: boolean` for a session after the backend
        split it into `publish` / `accept_correction`. The backend forbids extras
@@ -26,7 +24,12 @@ test was written for:
        still unruled — the backend re-parked on it and the run stuck in `awaiting-review` with
        no live control. (The gate blind to the CORRECTION axis — the mirror of the re-park.)
 
-**All three were found by a human clicking the app. The entire suite was green through them.**
+    4. THE RECEIPT ALIAS. Two claims on one dataset received divergent publication results,
+       but both cards matched the first receipt by target URN. The second card therefore
+       reported a catalog failure even though its own write succeeded.
+
+**The first three were found by a human clicking the app. The fourth was reproduced through
+that same browser boundary after an external audit named the source-level inference.**
 That is the whole argument for the E2E, so these are the exact bugs it has to catch. If it
 does not catch them, it is not wired to anything and should not be trusted — which is what
 this script exists to find out, rather than to assume.
@@ -103,7 +106,17 @@ SABOTAGES = (
         new="    return pubDecided;",
         expect="publishing all verdicts must NOT open Submit while a correction is unruled",
     ),
-)
+    Sabotage(
+        name="the receipt alias",
+        history=(
+            "external audit, reproduced live: same-dataset cards matched writebacks by "
+            "target URN, so claim 1 displayed claim 0's failed receipt."
+        ),
+        path=RESULTS,
+        old="writebacks?.find((w) => w.claim_index === claim.index)",
+        new="writebacks?.find((w) => w.target_urn === claim.target_urn)",
+        expect="the successful second card must not inherit the first claim's failed receipt",
+    ),)
 
 # `proposals` is exported but imported by no component, so the re-park sabotage needs the
 # import too (it swaps `awaitingDecision` -> `proposals`). The strand sabotage touches only
@@ -149,7 +162,7 @@ def main() -> int:
     survived: list[str] = []
 
     print("=" * 78)
-    print("  E2E VACUITY CHECK — three real gate-blind-to-an-axis bugs, re-introduced")
+    print("  E2E VACUITY CHECK — four real browser-boundary bugs, re-introduced")
     print("=" * 78)
 
     try:

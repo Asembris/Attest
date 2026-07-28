@@ -352,6 +352,8 @@ class WriteResult:
 
     ok: bool
     target_urn: str
+    # Assigned by the service: stable within the audit run, unlike a shared target URN.
+    claim_index: int | None = None
     detail: str = ""
     claim_urn: str = ""
     steps: tuple[StepResult, ...] = ()

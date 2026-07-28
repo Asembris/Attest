@@ -25,7 +25,8 @@ is the Session 5 rule at the browser boundary: a fake cannot fail in a way the r
 fails through machinery the fake does not have, and `TestClient` has no fetch, no JSON
 round-trip through TypeScript, and no `extra="forbid"` rejection to surface.
 
-`spikes/e2e_sabotage.py` (`just e2e-sabotage`) re-introduces both bugs and proves this file
+`spikes/e2e_sabotage.py` (`just e2e-sabotage`) re-introduces those bugs, the correction
+strand, and the same-dataset receipt alias, and proves this file
 goes RED for each. An E2E that cannot fail is a green light wired to nothing.
 
 **WHAT THIS FILE DOES NOT PROVE**, stated so nobody reads more into it:
@@ -593,6 +594,107 @@ class _BreaksTheReportStep:
             raise DataHubError("injected: the report step did not land")
         return self._real.report_assertion_result(*args, **kwargs)
 
+
+class _BreaksOnlyTheFirstReportStep:
+    """A one-shot report failure, so two same-dataset receipts deliberately disagree."""
+
+    def __init__(self, real) -> None:
+        self._real = real
+        self.armed = True
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+    def report_assertion_result(self, *args, **kwargs):
+        if self.armed:
+            self.armed = False
+            raise DataHubError("injected: only claim 0's report step did not land")
+        return self._real.report_assertion_result(*args, **kwargs)
+
+
+def test_same_dataset_claim_cards_show_their_own_writeback_receipts(
+    browser, client, tmp_path, capsys
+):
+    """Two claims can share a dataset; their publication receipts cannot share an identity.
+
+    The first write fails at `report` and the second succeeds. Matching receipts by target
+    URN paints BOTH cards with the first failure. The stable identity at this boundary is
+    the claim index already used by settlement and the decision log.
+    """
+    from tests.conftest import CAROL, OWNED_BY_CAROL
+
+    from attest.api.service import AuditService
+    from attest.graph import Pipeline
+    from attest.llm import LLM
+    from attest.store import AuditStore
+
+    window = 10_000 + int(time.time()) % 10_000
+    agent_output = (
+        f"The dataset {OWNED_BY_CAROL} is refreshed within {window} hours. "
+        f"The dataset {OWNED_BY_CAROL} is owned by {CAROL}."
+    )
+
+    real_client = client
+    broken = _BreaksOnlyTheFirstReportStep(real_client)
+    service = AuditService(
+        pipeline=Pipeline(llm=LLM(), client=real_client),
+        store=AuditStore(tmp_path / "same-dataset-receipts.db"),
+        client=broken,
+    )
+
+    base, stop = _serve_in_process(service)
+    page = browser.new_page()
+    calls = ApiCalls()
+    calls.attach(page)
+    try:
+        page.goto(base, wait_until="networkidle")
+        page.get_by_placeholder("Paste the AI agent's claims").fill(agent_output)
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and r.url.rstrip("/").endswith("/audit"),
+            timeout=120_000,
+        ) as caught:
+            page.get_by_role("button", name="Run Audit").click()
+        run_id = caught.value.json()["run_id"]
+
+        page.get_by_role("button", name="Continue to results").click()
+        page.get_by_role("heading", name="Audit Complete").wait_for(timeout=30_000)
+
+        stored = service.get(run_id)
+        assert len(stored.claims) == 2, [c.raw_text for c in stored.claims]
+        assert [c.index for c in stored.claims] == [0, 1]
+        assert {c.target_urn for c in stored.claims} == {OWNED_BY_CAROL}
+
+        publish = page.get_by_role("button", name="Publish verdict", exact=True)
+        assert publish.count() == 2
+        for _ in range(2):
+            publish.first.click()
+
+        with page.expect_response(
+            lambda r: r.request.method == "POST" and "/approve" in r.url, timeout=90_000
+        ) as caught:
+            page.get_by_role("button", name="Submit decisions").click()
+        approve = caught.value
+        assert approve.status == 200, approve.text()[:400]
+        receipts = approve.json()["writebacks"]
+        assert [w["ok"] for w in receipts] == [False, True], receipts
+
+        first = page.locator("div.surface-card").filter(
+            has_text=stored.claims[0].raw_text
+        ).first
+        second = page.locator("div.surface-card").filter(
+            has_text=stored.claims[1].raw_text
+        ).first
+        first.get_by_text("Published, but the catalog write failed").wait_for(timeout=60_000)
+        second.get_by_text("Verdict written to catalog").wait_for(timeout=60_000)
+        calls.assert_all_ok("same-dataset receipt attribution")
+    finally:
+        page.close()
+        stop()
+
+    with capsys.disabled():
+        print("\n\n  SAME DATASET, TWO RECEIPTS, TWO CARDS")
+        print("    claim 0 -> failed receipt -> failed card")
+        print("    claim 1 -> success receipt -> success card")
 
 def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_browser(
     browser, client, tmp_path, capsys

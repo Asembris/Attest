@@ -56,6 +56,7 @@ import json
 import logging
 import uuid
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from attest import record as record_module
@@ -584,7 +585,10 @@ class AuditService:
         """
         if not self.write_back:
             return WriteResult(
-                ok=False, target_urn=claim.target_urn, detail="write-back is disabled"
+                ok=False,
+                target_urn=claim.target_urn,
+                claim_index=claim.index,
+                detail="write-back is disabled",
             )
         result = writeback.write_claim_artifact(
             self.client,
@@ -609,6 +613,7 @@ class AuditService:
             source_agent=run.source_agent,
             external_url=f"/audit/{run.run_id}",
         )
+        result = replace(result, claim_index=claim.index)
         # The dataset-level badge, best-effort and deliberately secondary: it is a glance
         # view, and the claim artifact above is the record. A badge failure does not make the
         # claim's verdict any less written, so it does not turn the result red.
