@@ -1671,6 +1671,49 @@ the request went out and OpenAI returned a 500.
   deterministic core, the trajectory rules, or token accounting (a failed call appends no
   `Usage`, so nothing is double-billed and no step count is fabricated).
 
+**19. A RECEIPT NEEDS CLAIM IDENTITY, AND A DEPLOYMENT SMOKE NEEDS A PROCESS BOUNDARY
+(Session 25). Two source-level audit claims were investigated independently: one reproduced
+as a real browser bug; the other refuted the historical intention by reading the current
+harness, then was made true.**
+
+- **SAME DATASET IS NOT SAME CLAIM.** `AuditResults.tsx` matched a write-back receipt with
+  `find(w => w.target_urn === claim.target_urn)`. The backend already used `claim.index` for
+  settlement and its decision log, but `WriteBackView` discarded that identity. Reproduced
+  before the fix through real Edge, real uvicorn and real DataHub: two claims on
+  `support_tickets`, receipt 0 failed at `report`, receipt 1 succeeded, and BOTH cards rendered
+  the failed receipt. The wire regression was red separately with `KeyError: claim_index`.
+- **THE FIX CARRIES IDENTITY; IT DOES NOT REIMPLEMENT IT.** `WriteResult` now has a
+  service-assigned `claim_index`, the API and TypeScript wire types require it, and the card
+  matches `w.claim_index === claim.index`. The artifact URN remains content-addressed in one
+  Python implementation; TypeScript still derives nothing. The permanent browser test first
+  asserts the response receipts are `[False, True]`, then requires the first card to say failed
+  and the second written. The fourth E2E sabotage restores target-URN matching and the test
+  goes red on the second card.
+- **THE SMOKE AUDIT WAS RIGHT ABOUT THE CURRENT CODE, DESPITE THE SESSION-20 INTENTION.** The
+  old `just smoke` brought up real DataHub, then drove `TestClient(app)`. It bound no Attest
+  socket, launched no uvicorn, built no frontend, and fetched no asset. The replacement test
+  was red first because `ATTEST_SMOKE_BASE_URL` was absent; it imports neither the app nor
+  `TestClient`, so an in-process fallback is structurally unavailable.
+- **THE DEPLOYED BOUNDARY IS NOW THE TEST.** `just smoke` depends on `up ui`; the UI recipe
+  deletes the old bundle before rebuilding. `spikes/smoke_runner.py` performs the direct
+  three-second GMS preflight, starts the shipped `python -m uvicorn attest.api.app:app` command
+  on an ephemeral socket with temporary durable state, and hands only that URL to pytest.
+  The test requests `/health`, `/`, the JavaScript asset named by the built index, and
+  `/audit`. It then terminates the process and waits for Windows to release SQLite handles
+  before deleting the temporary directory.
+- **THE SMOKE SABOTAGE FOUND A HARNESS-ORDER BUG BEFORE GREEN.** Its first dead-GMS run timed
+  out waiting for uvicorn `/health`, so it went red as "Attest/UI did not start" rather than
+  at the promised reachability gate. Moving the direct GMS check ahead of process launch made
+  the diagnosis true. Four independent sabotages now fail at their own markers: dead GMS
+  (5.1s), invalid ASGI module (4.3s), missing built JavaScript asset (7.0s), and an unseeded
+  demo audit. A nonzero exit at the wrong layer is rejected.
+- **VERIFIED, red first and sabotage first.** Before: `just check` 392 passed; `just e2e`
+  3 passed; the three existing E2E sabotages were caught. After: `just check` **392 passed**;
+  `just e2e` **4 passed** including the divergent same-dataset receipts; all **4 E2E
+  sabotages** caught; `just smoke` **1 passed** through real uvicorn and the built asset; all
+  **4 smoke sabotages** caught at their own boundary. Item 3 was not approved and no MCP,
+  checker, verdict, trajectory, prompt, or model-path code changed.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
@@ -1681,7 +1724,6 @@ the request went out and OpenAI returned a 500.
 | **A step's `inputs` / `outputs` across a restart** | Not persisted, so a *replayed* step carries them empty. **The boundary is ASSERTED, not just documented:** `test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs` strips the summaries out of a real run's trace and demands the record, the receipts, the summary and the trajectory verdict are all unmoved. | They are a log convenience, and nothing a reader sees may read them. If something ever does, a resumed run starts reporting something an unrestarted one does not — silently, only after a restart, with every other test green, because every other test runs in one process and never replays. That is the TLS bug's shape exactly, which is why this one is nailed down rather than trusted. The test is non-vacuous by construction: it first asserts a step summary is **truthy** (`cached: True`, which is why the fixture uses two claims over one dataset — a one-claim run leaves every summary falsy) and only then strips the summaries and demands the record, receipts, printable summary and trajectory verdict are all unmoved, so if a receipt or a trajectory rule began reading `step.outputs` the equality checks would go red. |
 | **Store migrations** | None. A database older than Session 16 is refused at open, by name — and since Session 16 the guard checks EVERY column, not just the first one it was written for (`_REQUIRED_COLUMNS`; add a row whenever the schema gains a column). **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
 | **CI never installs the declared dependency FLOOR** | CI resolves to the NEWEST compatible versions, so a symbol that exists only above a floor (`starlette>=0.47`'s `HTTP_422_UNPROCESSABLE_CONTENT`) is never exercised at the floor a reused env might land on. Closed for THIS symbol by flooring `starlette>=0.47` in pyproject (a real dependency, not a lock note), so the floor now carries the symbol. The GENERAL hole — a floor bump that under-declares stays invisible until someone installs the minimum — is documented here, not swept. | The true close is a CI matrix cell that installs minimum-supported versions (`uv pip install --resolution lowest-direct`, or a hand-kept minimum-constraints file). That is a second resolve on every push and a constraints file to bump on every floor change — more than this hackathon build ships, and it errs the same way every other "green on my machine" trap in this repo does, so it is named rather than left silent. |
-| **A write-back result is matched to a claim by TARGET URN in the UI** | Two claims about one dataset both display the last write's result. The backend has this right — its decision log is keyed by claim INDEX, precisely because keying by URN attributed a write to the wrong decision — but `WriteBackView` carries `claim_urn` and no claim index. | The UI cannot derive the artifact URN: it is a sha256 over the claim's canonical JSON, and re-implementing that identity rule in TypeScript would be a worse bug than the one it fixes (two implementations of an identity that must never disagree). The fix is a claim index on the wire type, which is the write path's shape to change. |
 | **A REAL UX DEFECT: a human cannot act on a failed write from where they see it** | `PublicationPanel` renders "Published, but the catalog write failed at {step}" and **stops**. The remedy exists and is one call away, but it lives on the Published-claims screen. The person who is told the catalog does not know about their decision is given no way to do anything about it *at the point they are told* — they must know to navigate elsewhere. **This is not cosmetic and not a parking-lot item.** A failure surfaced without a remedy beside it is a report that relies on the reader already knowing what to do, which is the same shape as `pending-lag` and `incomplete` sharing a control — a UI stating something true and leaving the reader unable to act correctly on it. | Deferred by Session 19 on scope, not on merit. **The E2E proved the repair PATH works; it did not prove a human can repair from where the failure surfaces** — those are different claims and only the first is evidenced. Adding a second entry point to the one endpoint with a catalog side effect is a change to make deliberately, with its own test, not to slip in beside a test that found it. A later session owns it. |
 | **The repair spinner fans out across a run** | `ClaimsExplorer` passes `retrying={retrying === claim.audit_run}`, so repairing one claim shows "Repairing…" on every claim from the same audit. | Cosmetic, and the same URN-vs-index shape as the write-back row below: `retryWriteback` is genuinely run-scoped, so the state is keyed by the thing the call actually takes. The fix is a per-claim key the wire type does not carry. |
 | **No BACKGROUND reconciler for a stale verdict tag** (on-read detection now ships — Session 21) | A crash between `report` and `tag` leaves a correct verdict that a tag-filtered search cannot find. It is recorded (`writeback_step`), and since Session 21 **detected on read from the artifact alone** (`RetrievedClaim.stale_tag`, surfaced in `GET /claims` and the UI, visible to a `store=None` reader), and repairable in one call. What is still deferred is a **background sweeper** that scans the catalog for stale tags unprompted. | A production deployment would want a periodic reconcile comparing each claim's latest run event against its verdict tag across the whole catalog. On-read detection covers the claim a reader is actually looking at; a daemon that sweeps for ones nobody asked about is more than this build ships, and it says so rather than shipping a sweeper nobody exercises. |

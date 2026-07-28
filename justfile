@@ -197,11 +197,10 @@ live:
 e2e: ui
     python -m pytest tests/test_e2e_browser.py -m live -v
 
-# THE VACUITY CHECK FOR THE E2E. Re-introduce the two REAL bugs from 6903d6c -- the 422 and
-# the re-park -- and fail if the E2E does NOT go red for each. Both shipped, both lived a
-# full session in main, and both were caught by a human clicking the app while the entire
-# suite stayed green. If the E2E cannot catch them it is not wired to what it claims to
-# test. Restores the source and rebuilds the honest bundle even on a crash.
+# THE VACUITY CHECK FOR THE E2E. Re-introduce four real browser-boundary defects: the 422,
+# re-park, correction strand, and same-dataset receipt alias. The last one restores target-URN
+# receipt matching and must make the successful second card display the first claim's failure.
+# Restores the source and rebuilds the honest bundle even on a crash.
 e2e-sabotage:
     python spikes/e2e_sabotage.py
 
@@ -221,19 +220,20 @@ settle-recover:
 settle-sabotage:
     python spikes/settle_sabotage.py
 
-# THE DEPLOYMENT SMOKE TEST: bring the stack up, then prove the demo path answers.
+# THE DEPLOYMENT SMOKE TEST: bring DataHub up, build the UI fresh, launch the shipped uvicorn
+# command on a real socket, then prove the UI asset and demo API answer through that socket.
 #
-# `up` first (idempotent -- ~1s if already healthy, a cold bring-up otherwise), so the whole
-# "one command brings everything up AND the demo answers" claim is one command. Live tier:
-# needs a real model and writes nothing to the catalog (POST /audit only parks). Falsifiable
-# by `just smoke-sabotage`.
-smoke: up
-    python -m pytest tests/test_smoke.py -m live -q
+# `up` is idempotent (~1s if healthy); `ui` deletes the old bundle before building, so this
+# cannot pass against yesterday's frontend. The runner owns one uvicorn subprocess and gives
+# the test only its HTTP URL -- no TestClient fallback. Live tier: needs a real model and
+# writes nothing to the catalog (POST /audit only parks). Falsifiable by `just smoke-sabotage`.
+smoke: up ui
+    python spikes/smoke_runner.py
 
-# THE VACUITY CHECK FOR THE SMOKE TEST. Break it two ways -- a dead GMS (must go red at the
-# reachability gate, FAST) and an unseeded URN (must go red at the demo-answers assertion) --
-# and fail if either stays green or goes red for the wrong reason. Non-zero by design.
-smoke-sabotage:
+# THE VACUITY CHECK FOR THE SMOKE TEST. Break each deployed boundary: dead GMS, dead uvicorn,
+# missing built JS asset, and a demo audit that resolves no claims. Every fault must go red at
+# its own marker, not merely fail somewhere. `up ui` makes this command self-contained.
+smoke-sabotage: up ui
     python spikes/smoke_sabotage.py
 
 # Just the coverage matrix: can every claim type still reach every verdict?
