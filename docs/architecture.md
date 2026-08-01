@@ -4,6 +4,21 @@ Depth behind [the README](../README.md). This document explains *why* the bounda
 do. The exhaustive engineering log — every invariant, every landmine, and the session it was learned
 in — is [CLAUDE.md](../CLAUDE.md).
 
+**In this document.** Each section is one boundary and the argument for where it sits.
+
+| | |
+| --- | --- |
+| [Where the model boundary is drawn](#where-the-model-boundary-is-drawn) | The four questions pushed out of the deterministic core, and why each was pushed rather than guessed at. |
+| [How Attest decides what is PII](#how-attest-decides-what-is-pii) | The three named signals, precedence when they disagree, and `COMPLETENESS_REACHES_COLUMNS`. |
+| [The snapshot cache](#the-snapshot-cache-is-a-consistency-boundary) | One frozen read per run — a consistency boundary first, a cache second. |
+| [Why a graph](#why-a-graph-and-not-a-for-loop) · [Trajectory verification](#trajectory-verification) | What the graph buys over a `for` loop, and the seven invariants asserted against the run's own trace. |
+| [Self-correction](#self-correction-and-why-it-cannot-be-gamed) · [The human checkpoint](#the-human-checkpoint) | A revision may not change the subject, and nothing reaches the catalog unpublished. |
+| [Who audits the auditor](#who-audits-the-auditor) | The three prose gates, the exact size of the claim they make, and prompt injection. |
+| [Durable resume](#durable-resume) · [Crash-recoverable settlement](#crash-recoverable-settlement) · [Concurrency](#concurrency) | What survives a process death before the human decides, and after. |
+| [The append-only history](#the-append-only-history-and-its-one-collision-boundary) | Two guarantees pinned against real GMS, and the one collision boundary named rather than hidden. |
+| [Not a verdict](#entity-not-found-is-not-a-verdict--and-neither-is-a-malformed-one) | Malformed, absent, a bad clock, a dead provider — none of them is an answer. |
+| [The cost projection](#the-cost-projection) | A dated projection, not a receipt, and what the numbers actually say. |
+
 ## Where the model boundary is drawn
 
 The checkers are pure code: date math, set membership, string comparison. Four questions came up that
@@ -289,7 +304,14 @@ as saying they do.
 
 **The verdict itself is never at risk, whatever the model does.** Verdicts come from
 [`checkers/`](../src/attest/checkers/), which take a typed claim and a catalog snapshot and never see
-agent text at all. A test asserts the deterministic core imports no model client.
+agent text at all. That package imports no model client — but "the source doesn't import it" is only
+as good as the next commit, so it is not what the guarantee rests on. What is *asserted* is the
+stronger runtime property: [`tests/test_graph.py`](../tests/test_graph.py) pins the checker step at
+**zero tokens** and pins a run's model calls to decomposition and explanation and nothing else, the
+four [`tests/test_trajectory.py`](../tests/test_trajectory.py) sabotages prove the rules fire, and
+[`no-llm-in-the-verdict-path`](#trajectory-verification) FLAGs a violating run un-approvable at a
+409. A checker that quietly started calling a model fails the run even if it returns the right
+answers.
 
 ### Prompt injection
 
@@ -428,6 +450,33 @@ confident Supported. Beyond a small clock-skew grace it is Insufficient-Coverage
 value shown as evidence (distinct from the absent case, whose evidence is `None`); within the grace the
 age clamps to zero, because a just-modified dataset genuinely is fresh. A bad clock is not a freshness
 signal, exactly as a broken response is not a catalog reading.
+
+### A provider failure is not a finding either
+
+The same instinct reaches the model client. Every OpenAI exception descends from `Exception`, not
+`RuntimeError`, so a transient upstream 500 once walked past the `LLMError` handling in all three
+model steps and reached a user as a bare HTTP 500. The fix is **translation, not retry** — the SDK
+already retries with backoff, and a second loop in Attest would be a hang wearing resilience's
+clothes. So [`llm.py`](../src/attest/llm.py) names two failures at the seam: `ProviderUnavailable`
+(transient, *and the transport has already retried it and lost* — the line is drawn exactly where the
+SDK's own `_should_retry` draws it, which is what makes the name mean something specific) and
+`ProviderRefused` (a bad key, a model name that does not exist; retrying cannot change the answer).
+Three different facts, so three status codes: **503 with `Retry-After`**; **502, pointedly not 503**,
+because telling someone to wait out a bad key wastes their time on Attest's behalf; and for Attest's
+own missing configuration a **500 that carries its message**, rather than one that renders as
+"Internal Server Error" to the only person who could fix it.
+
+**The disposition is deliberately non-uniform, and that is the anti-silence rule applied per step.**
+`explain` and `revise` catch the wide `LLMError` and degrade to the deterministic template — the
+verdict is decided by code *before* either runs, so an outage there costs prose and nothing else.
+`decompose` catches only the narrow `MalformedOutput`, so a provider failure travels up and fails the
+request. Degrading there would return a `complete` run with `trajectory_ok` set, reporting an audit
+that found nothing when three claims went in: **Attest rendering silence as an answer, in its own
+output, about its own failure.** A model that produced garbage twice against a strict schema *said*
+something, and "no claims" is a defensible reading of it; a provider that returned nothing said
+nothing. The wait is bounded by a constant — `READ_TIMEOUT_SECONDS = 30.0` — because on the SDK's
+ten-minute read default a single wedged socket stalls an audit for its whole retry budget and looks
+exactly like a slow one.
 
 ## The cost projection
 
