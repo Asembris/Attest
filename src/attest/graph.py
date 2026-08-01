@@ -144,8 +144,9 @@ from attest.claims import (
 from attest.datahub import (
     CacheStats,
     DataHubClient,
-    DataHubError,
     DatasetSnapshot,
+    EntityNotFoundError,
+    MalformedResponseError,
     SnapshotCache,
 )
 from attest.decompose import Dropped, decompose
@@ -451,9 +452,22 @@ class Pipeline:
             try:
                 ledger.snapshot = ledger.catalog.fetch_dataset(claim.target_urn)
                 s.outputs = {"resolved": True, "cached": cached}
-            except DataHubError as exc:
+            except (EntityNotFoundError, MalformedResponseError) as exc:
                 # A missing entity is an ERROR, not a verdict — see report.ClaimError.
                 # Recorded on the step and carried out of the verdict path entirely.
+                #
+                # THE CATCH IS DELIBERATELY THIS PAIR AND NOT `DataHubError`, and the
+                # narrowness is the point. Both of these say something about the ENTITY, so
+                # both are facts a reader can act on: the URN names nothing, or the catalog's
+                # answer was structurally broken. A `CatalogUnavailable` says only that
+                # Attest never got to ask, and swallowing it here produced a run that settled
+                # with zero verdicts, `trajectory_ok`, and a UI reading AUDIT COMPLETE — the
+                # anti-silence rule (llm.py, §18) broken at the catalog read instead of the
+                # model call. It propagates, kills the run, and surfaces as a 503.
+                #
+                # Fail-closed by construction: a NEW DataHubError subclass is not silently
+                # adopted into "a fact about the claim" — it takes down the run until someone
+                # decides which of the two it is.
                 s.error = str(exc)
                 s.outputs = {"resolved": False, "cached": cached}
                 ledger.errors.append(ClaimError(index=i, claim=claim, error=str(exc)))

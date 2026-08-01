@@ -251,7 +251,7 @@ function Accountability({ record }: { record: AuditRecord }) {
         <Row
           icon={<Ban size={12} className="text-insufficient" />}
           title={`${record.errors.length} claim${record.errors.length === 1 ? '' : 's'} could not be checked`}
-          note="The entity does not exist — a malformed question, not a verdict. Shown in full above."
+          note="The URN names nothing, or the catalog's answer was structurally broken — a malformed question, not a verdict. An unreachable catalog never lands here: it fails the run outright rather than being filed as a claim nobody could check. Shown in full above."
         />
       )}
 

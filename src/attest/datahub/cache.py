@@ -61,7 +61,7 @@ import logging
 from dataclasses import dataclass
 from typing import Protocol
 
-from attest.datahub.client import DataHubError
+from attest.datahub.client import CatalogUnavailable, DataHubError
 from attest.datahub.snapshot import DatasetSnapshot
 
 log = logging.getLogger(__name__)
@@ -136,6 +136,14 @@ class SnapshotCache:
         self._fetches += 1
         try:
             snapshot = self._client.fetch_dataset(urn)
+        except CatalogUnavailable:
+            # NOT memoized. A miss is cached because it is a FACT ABOUT THE URN — the same
+            # bad URN in five claims must produce one lookup and five identical errors. An
+            # unreachable catalog is not a fact about the URN; it is Attest never having
+            # asked. Recording it here would turn a two-second outage into a permanent
+            # property of that entity for the rest of the run, which is the same absence-read-
+            # as-an-answer collapse this module's own miss cache exists to keep honest.
+            raise
         except DataHubError as exc:
             self._misses[urn] = exc
             raise

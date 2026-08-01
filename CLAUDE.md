@@ -1714,6 +1714,77 @@ harness, then was made true.**
   **4 smoke sabotages** caught at their own boundary. Item 3 was not approved and no MCP,
   checker, verdict, trajectory, prompt, or model-path code changed.
 
+**20. AN UNREACHABLE CATALOG IS NOT A MALFORMED QUESTION (Session 26). §18's error-taxonomy
+hole at the OTHER transport, reported from the UI, and §12 had already named the location.**
+
+A user ran the default sample against a DataHub that was still bootstrapping. The audit
+returned **HTTP 201**, `status=complete`, `trajectory_ok=true`, **zero verdicts**, and a UI
+reading **AUDIT COMPLETE · nothing has reached your catalog**. The log underneath said
+`could not resolve <urn>: GraphQL transport error: Server disconnected without sending a
+response`, three times.
+
+- **THE DEFECT WAS THE TAXONOMY, NOT A MISSING RETRY, and the retry framing was refuted
+  first.** Quickstart's GMS accepts the TCP connection while `system-update` is still running
+  and closes it before answering; httpx reports that as `RemoteProtocolError`. `execute`
+  wrapped **every** `httpx.HTTPError` into a bare `DataHubError`, and `graph._resolve` caught
+  `DataHubError` wholesale — so a transport failure was **indistinguishable from a bad URN**
+  and was filed as a `report.ClaimError`: *a malformed question*. Every other read-path error
+  is a fact about the ENTITY (`EntityNotFoundError`: the URN names nothing;
+  `MalformedResponseError`: the answer was structurally broken). A transport failure is a
+  fact about **Attest never having asked**.
+- **THE ANTI-SILENCE RULE, at the catalog read.** Degrading there returns an audit that found
+  nothing, indistinguishable from an agent who made no checkable claims — **Attest rendering
+  silence as an answer, in its own output, about its own failure**, which is the cardinal sin
+  of its own thesis. Identical in shape to `decompose` catching the NARROW `MalformedOutput`
+  (§18): a model that produced garbage SAID something; a transport that returned nothing said
+  nothing. §12 predicted the location verbatim — *"nothing defends the catalog READ, because
+  the read was the one thing that could be trusted to mean what it said."*
+- **`CatalogUnavailable(DataHubError)`, and the transient line is drawn where HTTPX draws
+  it** — `httpx.TransportError` ("the request never produced a response"), plus 5xx/429/408
+  from GMS. Deliberately NOT hand-enumerated: a list drifts from the library that defines the
+  failures, and this is the same reasoning that put `llm._as_provider_error` on the SDK's own
+  `_should_retry`. A GraphQL `errors` payload and a 4xx stay a plain `DataHubError`: the
+  server ANSWERED, and dressing that as an outage would promise a retry that cannot help.
+- **`_resolve` NOW CATCHES THE NARROW PAIR, and the narrowness is the fix.**
+  `except (EntityNotFoundError, MalformedResponseError)`. Fail-closed by construction: a
+  future `DataHubError` subclass is not silently adopted into "a fact about the claim" — it
+  takes down the run until someone decides which of the two it is. A `CatalogUnavailable`
+  propagates, `service.audit` forgets the ledger and re-raises (Session 24's leak fix already
+  covers this path), and **nothing is stored** — there are no verdicts, so inventing a
+  0-claim record would be the fabrication the store refuses everywhere else.
+- **503 + `Retry-After`, on `/audit` AND on the retrieval routes**, the same disposition as
+  `ProviderUnavailable` because it is the same fact. On `/claims` the alternative was worse
+  than a 500: an empty listing would tell the next agent that the catalog holds nothing about
+  a dataset when the truth is that it could not be asked — the collapse `state: unknown`
+  exists to prevent, one level up.
+- **THE CACHE DOES NOT MEMOIZE IT.** A miss is cached because it is a FACT ABOUT THE URN (one
+  lookup, five identical errors for a hallucinated URN repeated five times). An outage is
+  not. Cached, a two-second blip on the first of twenty claims about one dataset would be
+  replayed as that dataset's answer for the rest of the run.
+- **THE FAKE IS WHY THIS SHIPPED, and it is Session 24's lesson landing in the SAME FILE.**
+  `FakeDataHub` has had fault injection on its WRITE side since Session 4; the READ side —
+  the one that feeds every verdict — had **none**, so no offline test could distinguish an
+  unreachable catalog from a URN that does not exist. `FakeCatalog.read_faults` (1-based
+  fetch index → exception, **recorded before it raises**, so a no-retry assertion is not
+  vacuous) closes it, and the fake's `fail=True` now raises the class the real client would
+  raise for each shape. **When you add a fake, ask what the real thing fails at that the fake
+  cannot.**
+- **The translation is tested against REAL httpx shapes** (`httpx.MockTransport` driving the
+  shipped `execute`), not hand-rolled stand-ins — the same reason `openai_status_error` builds
+  the SDK's own exception types.
+- **The vacuity check runs IN THE SUITE**, not in a command someone has to remember: rebinding
+  `graph.EntityNotFoundError` to `DataHubError` restores the old broad `except` verbatim and
+  reproduces the reported screen exactly — 201, `status=complete`, `trajectory_ok=true`,
+  `claims: []`, the outage relabelled as a question about the claim.
+- **VERIFIED.** Offline **417 passed, 0 skipped**, lint clean; integration 5 passed; the live
+  tier unchanged by this (the two failures on this machine — `test_smoke`, which requires
+  `just smoke` to supply `ATTEST_SMOKE_BASE_URL`, and the E2E repair test — were confirmed
+  **pre-existing** by stashing the change and reproducing both identically). Translation also
+  confirmed against a genuinely dead socket, not only a mock.
+- **WHAT THIS DOES NOT DO:** it does not make Attest survive a catalog that is down — it makes
+  it FAIL HONESTLY and fast. No Attest-level retry, no queue, no degraded mode, and the
+  deterministic core, the trajectory rules and token accounting are untouched.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |

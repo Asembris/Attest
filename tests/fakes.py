@@ -22,7 +22,12 @@ from typing import Any
 import httpx
 import openai
 
-from attest.datahub import DataHubError, DatasetSnapshot, EntityNotFoundError
+from attest.datahub import (
+    CatalogUnavailable,
+    DataHubError,
+    DatasetSnapshot,
+    EntityNotFoundError,
+)
 
 
 @dataclass
@@ -196,14 +201,34 @@ def revision_reply(claim: dict[str, Any], unchanged: bool = False) -> str:
 
 
 class FakeCatalog:
-    """A DataHubClient stand-in. Serves snapshots by URN; raises on anything else."""
+    """A DataHubClient stand-in. Serves snapshots by URN; raises on anything else.
 
-    def __init__(self, snapshots: dict[str, DatasetSnapshot]) -> None:
+    `read_faults` maps a 1-BASED fetch index to the exception that fetch raises, so a test
+    can say "the catalog goes down on the second claim" without a live server. It exists for
+    the same reason `FakeChat.faults` does, and it is the same asymmetry landing a second
+    time: the write side of this fake has had fault injection since Session 4, while the READ
+    side — the one that feeds every verdict — had none, so no offline test could distinguish
+    an unreachable catalog from a URN that does not exist. That is what let a transport
+    failure be filed as a malformed question for twenty-odd green sessions.
+
+    The fetch is RECORDED before it raises. An assertion that Attest did not retry a dead
+    catalog is a count, and a fault that never reached `fetched` would pass vacuously.
+    """
+
+    def __init__(
+        self,
+        snapshots: dict[str, DatasetSnapshot],
+        read_faults: dict[int, Exception] | None = None,
+    ) -> None:
         self.snapshots = snapshots
         self.fetched: list[str] = []
+        self.read_faults = dict(read_faults or {})
 
     def fetch_dataset(self, urn: str) -> DatasetSnapshot:
         self.fetched.append(urn)
+        fault = self.read_faults.get(len(self.fetched))
+        if fault is not None:
+            raise fault
         if urn not in self.snapshots:
             raise EntityNotFoundError(urn)
         return self.snapshots[urn]
@@ -220,10 +245,20 @@ class FakeDataHub(FakeCatalog):
     real catalog — which for the write-back path is the whole question. `fail` makes the
     server refuse, because an approval whose catalog write failed must be reported as
     failed rather than as a quiet success.
+
+    `fail` raises the class the REAL client would raise for each shape: `CatalogUnavailable`
+    where the message says the server could not be reached, and a plain `DataHubError` where
+    the server answered and refused the write. A fake that raised one class for both would
+    make the distinction the read path now rests on untestable here.
     """
 
-    def __init__(self, snapshots: dict[str, DatasetSnapshot], fail: bool = False) -> None:
-        super().__init__(snapshots)
+    def __init__(
+        self,
+        snapshots: dict[str, DatasetSnapshot],
+        fail: bool = False,
+        read_faults: dict[int, Exception] | None = None,
+    ) -> None:
+        super().__init__(snapshots, read_faults=read_faults)
         self.fail = fail
         self.defined: list[str] = []
         # property urn -> its definition, so a test can see what the CATALOG says about a
@@ -249,12 +284,12 @@ class FakeDataHub(FakeCatalog):
 
     def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         if self.fail:
-            raise DataHubError("GraphQL transport error: the catalog is down")
+            raise CatalogUnavailable("the catalog at http://fake could not be reached")
         return {"appConfig": {"appVersion": "v1.5.0.6"}}
 
     def get_structured_property(self, urn: str) -> dict[str, Any] | None:
         if self.fail:
-            raise DataHubError("GraphQL transport error: the catalog is down")
+            raise CatalogUnavailable("the catalog at http://fake could not be reached")
         if urn not in self.defined:
             return None
         # The DEFINITION comes back, description and all — because that is what the real
@@ -267,7 +302,7 @@ class FakeDataHub(FakeCatalog):
         self, qualified_name: str, display_name: str = "", description: str = "", **kwargs: Any
     ) -> dict[str, Any]:
         if self.fail:
-            raise DataHubError("GraphQL transport error: the catalog is down")
+            raise CatalogUnavailable("the catalog at http://fake could not be reached")
         urn = f"urn:li:structuredProperty:{qualified_name}"
         self.defined.append(urn)
         self.definitions[urn] = {
@@ -281,7 +316,7 @@ class FakeDataHub(FakeCatalog):
         self, urn: str, display_name: str = "", description: str = ""
     ) -> dict[str, Any]:
         if self.fail:
-            raise DataHubError("GraphQL transport error: the catalog is down")
+            raise CatalogUnavailable("the catalog at http://fake could not be reached")
         if urn not in self.defined:
             # createStructuredProperty's mirror image: the real mutation has nothing to
             # update, and a fake that invented the property would hide the ordering bug.
@@ -390,7 +425,7 @@ class FakeDataHub(FakeCatalog):
 
     def get_assertion(self, urn: str) -> dict[str, Any] | None:
         if self.fail:
-            raise DataHubError("GraphQL transport error: the catalog is down")
+            raise CatalogUnavailable("the catalog at http://fake could not be reached")
         node = self.assertions.get(urn)
         if node is None:
             return None
@@ -408,7 +443,7 @@ class FakeDataHub(FakeCatalog):
         `just live` is the evidence for.
         """
         if self.fail:
-            raise DataHubError("GraphQL transport error: the catalog is down")
+            raise CatalogUnavailable("the catalog at http://fake could not be reached")
         self.dataset_reads.append({"dataset_urn": dataset_urn, "limit": limit})
         # SCOPES, AND FILTERS NOTHING — modelled on the real entry point rather than made
         # convenient. A fake that quietly accepted a verdict filter here would let the
@@ -435,7 +470,7 @@ class FakeDataHub(FakeCatalog):
         honesty argument untestable. Returns (nodes-up-to-limit, total), same as above.
         """
         if self.fail:
-            raise DataHubError("GraphQL transport error: the catalog is down")
+            raise CatalogUnavailable("the catalog at http://fake could not be reached")
         self.searches.append(
             {"custom_types": list(custom_types), "tags": list(tags), "limit": limit}
         )
