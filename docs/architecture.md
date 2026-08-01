@@ -439,10 +439,22 @@ The same rule reaches one layer down, to a response that is *structurally* broke
 (Session 23). A present-but-URL-less association entry (`{"owner": null}`) once normalized to the
 empty-string URN `''` — a populated-looking list of garbage that drove a confident Contradicted — and
 a wrong-shaped response (a field with no `fieldPath`, a null `urn`) crashed the whole run. Both now
-raise `MalformedResponseError`, a `DataHubError`, so `resolve` turns them into the same `ClaimError`:
-not a verdict, not a crash. The line that must not be crossed is that a legitimately **empty** (`[]`)
-or **absent** (`null`) aspect is a valid Insufficient-Coverage, never an error — absence is not
-malformation, just as it is not disagreement.
+raise `MalformedResponseError`, so `resolve` turns them into the same `ClaimError`: not a verdict, not
+a crash. The line that must not be crossed is that a legitimately **empty** (`[]`) or **absent**
+(`null`) aspect is a valid Insufficient-Coverage, never an error — absence is not malformation, just as
+it is not disagreement.
+
+But the rule stops exactly there, and Session 26 is where it stopped being one rule too many. Both of
+those errors say something about the **entity**: the URN names nothing, or the answer was broken. A
+*transport* failure says only that Attest never got to ask, and `resolve` used to catch `DataHubError`
+wholesale — so a DataHub that was still bootstrapping (it accepts the connection and closes it before
+answering) had every claim filed as "could not be checked", and the run reported itself **complete,
+with a green trajectory and zero verdicts**. That is indistinguishable from an agent who made no
+checkable claims: Attest rendering silence as an answer, in its own output, about its own failure.
+`CatalogUnavailable` is now its own class — the transient line drawn where httpx draws it — the catch
+in `resolve` is the narrow pair, and an unreachable catalog **fails the run** and answers **503 +
+`Retry-After`**, exactly as a provider outage does below. Nothing is stored, because nothing was
+verified.
 
 A **future** `lastModified` is the same instinct in the freshness checker: `now - last_modified` is
 negative, so a naive `age <= window` scores a bad upstream clock as *very fresh* and returns a

@@ -75,7 +75,7 @@ from attest.api.service import (
     TrajectoryViolation,
 )
 from attest.config import settings
-from attest.datahub import DataHubClient
+from attest.datahub import CatalogUnavailable, DataHubClient
 from attest.graph import Pipeline
 from attest.llm import LLMError, ProviderRefused, ProviderUnavailable
 from attest.record import AuditRecord, EvidenceView
@@ -192,6 +192,10 @@ def submit_audit(
     provider. A failure there is reported as three different things because it IS three
     different things — retryable, refused, misconfigured — and a caller can act on exactly
     one of them.
+
+    It also reads the CATALOG, and an unreachable one gets the same 503 for the same reason:
+    Attest's ground truth is DataHub, so a run that could not read it has nothing to report,
+    and reporting it as an audit that found nothing is the failure this tool exists to catch.
     """
     try:
         return service.audit(
@@ -204,6 +208,21 @@ def submit_audit(
         # request is well-formed and cannot be processed as asked. A 201 here would tell a
         # caller who said "audit these" that Attest did, when it did not.
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from exc
+    except CatalogUnavailable as exc:
+        # 503 + Retry-After, the SAME disposition as ProviderUnavailable and for the same
+        # reason: Attest could not read the ground truth, so it has nothing to say. The
+        # alternative — which is what shipped — was a 201 whose every claim was filed as
+        # "could not be checked", a run reading COMPLETE with zero verdicts. A caller cannot
+        # tell that from an agent who made no checkable claims, and the person staring at it
+        # is not told the one thing that would let them fix it: the catalog was down.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"No audit was run: {exc}. Attest verifies claims against DataHub, so a catalog "
+            f"it cannot read leaves it with no ground truth to verify against — and reporting "
+            f"that as an audit that found nothing would be the failure this tool exists to "
+            f"catch. Check DataHub is up (GET /health), then try again.",
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        ) from exc
     except ProviderUnavailable as exc:
         # 503 + Retry-After: the upstream is transiently down and the transport has ALREADY
         # exhausted its bounded retry (llm.py), so the next attempt belongs to whoever is
@@ -369,16 +388,19 @@ def list_claims(
     different things (`pending-lag`, `incomplete`, `unknown`) with three different
     responses, and only one of them is a bug.
     """
-    page = service.claims(
-        ClaimQuery(
-            target_urn=target_urn,
-            verdict=verdict,
-            claim_type=claim_type,
-            reviewer=reviewer,
-            since=since,
-        ),
-        limit=limit,
-    )
+    try:
+        page = service.claims(
+            ClaimQuery(
+                target_urn=target_urn,
+                verdict=verdict,
+                claim_type=claim_type,
+                reviewer=reviewer,
+                since=since,
+            ),
+            limit=limit,
+        )
+    except CatalogUnavailable as exc:
+        raise _catalog_is_down(exc) from exc
     return ClaimsResponse(
         claims=tuple(_claim_view(c) for c in page.claims),
         retrieval=RetrievalView(
@@ -410,6 +432,27 @@ def get_claim(claim_urn: str, service: Service) -> ClaimView:
         return _claim_view(service.claim(claim_urn))
     except ClaimNotFound as exc:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    except CatalogUnavailable as exc:
+        raise _catalog_is_down(exc) from exc
+
+
+def _catalog_is_down(exc: CatalogUnavailable) -> HTTPException:
+    """503 for the RETRIEVAL routes, and the distinction from a 404 is the whole reason.
+
+    These read DataHub and nothing else, so an unreachable catalog leaves them with no
+    answer — not with an empty one. Letting this fall through to a bare 500, or worse
+    returning `claims: []`, would tell a caller that the catalog holds nothing about a
+    dataset when the truth is that Attest could not ask. Absence is not an answer; that rule
+    is what `state: unknown` exists for on the claims themselves, and it applies no less to
+    the listing that carries them.
+    """
+    return HTTPException(
+        status.HTTP_503_SERVICE_UNAVAILABLE,
+        f"Nothing could be read: {exc}. These routes answer from DataHub alone, so an empty "
+        f"result here would mean 'the catalog holds nothing' when the truth is that it could "
+        f"not be asked.",
+        headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+    )
 
 
 def _claim_view(claim: RetrievedClaim) -> ClaimView:

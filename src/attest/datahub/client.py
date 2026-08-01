@@ -43,6 +43,37 @@ class EntityNotFoundError(DataHubError):
         self.urn = urn
 
 
+class CatalogUnavailable(DataHubError):
+    """Attest could not READ the catalog. This is not a fact about the claim.
+
+    THE TAXONOMY HOLE THIS CLOSES, and it is §18's provider bug at the other transport.
+    Every other `DataHubError` raised on the read path says something about the ENTITY:
+    `EntityNotFoundError` says the URN names nothing, `MalformedResponseError` says the
+    answer was structurally broken. Both are facts, both are correctly surfaced as a
+    `report.ClaimError` — a malformed question, kept out of the verdict tally.
+
+    A transport failure says nothing about the entity at all. It says Attest never got to
+    ask. Collapsed into the same class, a GMS that was merely still booting produced a run
+    that settled `awaiting-review` with `trajectory_ok`, ZERO verdicts, and a UI reading
+    AUDIT COMPLETE — Attest rendering silence as an answer, in its own output, about its own
+    failure. That is the cardinal sin of this project's own thesis, which is exactly what
+    §18 fixed for the model provider and what §12 predicted here: *nothing defends the
+    catalog READ, because the read was the one thing that could be trusted to mean what it
+    said.*
+
+    So this one does NOT become a ClaimError. `graph._resolve` lets it propagate, the run
+    dies without a report, and `POST /audit` answers **503 + Retry-After** — the same
+    disposition, for the same reason, as `llm.ProviderUnavailable`.
+
+    **The transient line is drawn where httpx draws it** (`httpx.TransportError`: connect,
+    read, timeout, proxy, and remote-protocol failures — "the request never produced a
+    response"), plus the status codes that mean the server could not serve rather than that
+    it answered. Anything else stays a plain `DataHubError`: a GraphQL `errors` payload is a
+    real answer to a broken query, and dressing it as an outage would promise a retry that
+    cannot help.
+    """
+
+
 class MalformedResponseError(DataHubError):
     """The catalog answered, but the answer was structurally broken (Session 23).
 
@@ -107,10 +138,32 @@ class DataHubClient:
             response = self._client.post(
                 "/api/graphql", json={"query": query, "variables": variables or {}}
             )
+        except httpx.TransportError as exc:
+            # The request never produced a response. httpx's own name for that class is
+            # TransportError, so the line is drawn there rather than hand-enumerated — a
+            # list would drift from the library that defines the failures.
+            #
+            # The observed shape, and the reason this class exists: quickstart's GMS accepts
+            # the TCP connection while it is still booting and closes it before answering,
+            # which arrives as RemoteProtocolError("Server disconnected without sending a
+            # response"). Indistinguishable, before this, from a URN that does not exist.
+            raise CatalogUnavailable(
+                f"the catalog at {self.gms_url} could not be reached: {exc}"
+            ) from exc
         except httpx.HTTPError as exc:
+            # Not transient: a malformed URL or an unsupported scheme is configuration, and
+            # telling someone to wait for it would waste their time on Attest's behalf.
             raise DataHubError(f"GraphQL transport error: {exc}") from exc
 
         if response.status_code != httpx.codes.OK:
+            if response.status_code >= 500 or response.status_code in (408, 429):
+                # The server could not serve the request. GMS answers a GraphQL problem with
+                # 200 and an `errors` payload, so a 5xx here is the server itself, never the
+                # query — and never an answer about the entity.
+                raise CatalogUnavailable(
+                    f"the catalog at {self.gms_url} returned "
+                    f"{response.status_code}: {response.text[:500]}"
+                )
             raise DataHubError(
                 f"GraphQL HTTP {response.status_code}: {response.text[:500]}"
             )
