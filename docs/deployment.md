@@ -1,8 +1,16 @@
 # Deployment
 
-How to stand up a drivable Attest, and the honest cost of each part. Every number here was
-measured on 2026-07-18 against the pinned DataHub Core v1.5.0.6 on an 8 GB Windows machine;
-where a number is network-dependent (an image pull), it says so instead of pretending.
+How to stand up a drivable Attest, and the honest cost of each part. Every figure in
+[Measured cost](#measured-cost) was taken on 2026-07-18 against the pinned DataHub Core
+v1.5.0.6 on an 8 GB Windows machine; where a number is network-dependent (an image pull), it
+says so instead of pretending. Timings elsewhere carry their own "measured" label and were
+taken with the harness they describe.
+
+**In this document:** [the local-vs-hosted ruling](#the-ruling-a-local-one-command-stack-not-a-hosted-url) ·
+[the one command](#the-one-command) · [measured cost](#measured-cost) ·
+[the reset design](#the-reset-design) · [configuration](#configuration) ·
+[reproducible installs](#reproducible-installs) · [the smoke test](#the-smoke-test) ·
+[honest limitations](#honest-limitations)
 
 ## The ruling: a local one-command stack, not a hosted URL
 
@@ -24,11 +32,23 @@ reason the local shape was chosen, not a fallback from a hosted one.
 ## The one command
 
 ```bash
-just setup          # install Attest (+ dev deps) into a venv
-just up             # bring up DataHub Core v1.5.0.6 from the vendored compose
-just seed           # generate + ingest the seed catalog, capture the offline fixtures
-just demo           # build the UI and serve it WITH the API on :8003
+just setup                # pinned deps (incl. the datahub CLI) + Attest, into a venv
+copy .env.example .env    # then set OPENAI_API_KEY in it   (cp … on macOS/Linux)
+just up                   # bring up DataHub Core v1.5.0.6 from the vendored compose
+just seed                 # generate + ingest the seed catalog, capture the offline fixtures
+just demo                 # build the UI and serve it WITH the API on :8003
 ```
+
+Two of those five are load-bearing in ways their names do not show:
+
+- **`just setup` installs `requirements.txt` before the editable install**, so the `datahub`
+  CLI and the seed's SDK are on PATH. Without them `just up` runs `datahub docker quickstart`
+  with nothing on PATH and watches "starting…" for its full deadline, and `just seed` dies on
+  `import datahub.emitter`. Neither failure names the missing CLI.
+- **`OPENAI_API_KEY` is required for the demo path.** The verdicts are deterministic, but
+  claim extraction and explanation are model calls, so `POST /audit` fails without a key. The
+  offline tier (`just check`) needs neither Docker nor a key — see
+  [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 Then open `http://localhost:8003`, paste agent prose (a sample is pre-filled), publish a
 verdict at the checkpoint, and read it back from DataHub with `GET /claims`.
