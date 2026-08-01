@@ -1,7 +1,17 @@
 # The Attest Golden Benchmark
 
 **40 hand-labeled groundedness claims about a DataHub catalog, with the rationale for every
-label.**
+label.** [`cases.json`](cases.json) is the artifact, usable without reading a line of Attest's
+source. This document is the methodology behind it: how the cases were built, what they cover,
+what they measure, and where the boundary of that measurement is. Every number here is a
+committed receipt in [`results/`](results).
+
+**Looking for the numbers?** [Reference results](#reference-results), and the
+[vacuity check](#the-vacuity-check) that proves they can move. **Looking for the limits?**
+[Why 100% is the expected result](#read-this-before-you-read-the-100) ·
+[What this does not prove](#what-this-benchmark-does-not-prove) ·
+[Cross-family calibration](#cross-family-calibration-not-letting-gpt-grade-gpts-homework) ·
+[Cases that were cut](#cases-that-were-cut)
 
 An AI agent says *"the `customers` table is owned by Alice and contains no PII."* Two
 questions follow, and only one of them is usually asked. The first is *is that true?* The
@@ -20,9 +30,6 @@ So every claim here is labeled with one of **three** verdicts, not two:
 The third verdict is the whole point. Collapsing it into Contradicted is the single most
 common way a groundedness checker goes wrong, and 8 of the 40 cases exist to catch exactly
 that.
-
-This dataset is usable without reading a line of Attest's source. [`cases.json`](cases.json)
-is the artifact; everything below is what it means and how it was built.
 
 ---
 
@@ -179,7 +186,9 @@ bench-sabotage`. Replace the classification checker with one that affirms everyt
 | Coverage failures | 0 | **4** |
 
 A benchmark that cannot fail is a green light wired to nothing. This one fails, on demand,
-and the failure is asserted by a test.
+and the failure is asserted by a test. The full run, all 13 mis-scored cases named, is
+[`results/core-sabotaged-classification.json`](results/core-sabotaged-classification.json);
+the mechanics are in [The vacuity check](#the-vacuity-check).
 
 ### What this benchmark does NOT prove
 
@@ -210,9 +219,10 @@ production catalog with contested metadata. This is not that, and it does not cl
 ## Reference results
 
 Measured against Attest ([github.com/…/attest](../README.md)), `gpt-4o-mini`, DataHub Core
-v1.5.0.6. `just bench` and `just bench-full` reproduce these.
+v1.5.0.6. `just bench` and `just bench-full` reproduce these, and every figure below opens in
+one of the two committed receipts.
 
-| | Deterministic core | Full pipeline (prose in) |
+| | Deterministic core ([receipt](results/core.json)) | Full pipeline, prose in ([receipt](results/full.json)) |
 | --- | --- | --- |
 | Accuracy | **100%** (40/40) | **100%** (40/40) |
 | Macro F1 | **1.000** | **1.000** |
@@ -303,6 +313,8 @@ just bench-sabotage      # replaces the classification checker with one that aff
 | Insufficient-Coverage recall | 1.000 | **0.500** |
 | Correctness failures | 0 | **9** |
 | Coverage failures | 0 | **4** |
+
+Receipt: [`results/core-sabotaged-classification.json`](results/core-sabotaged-classification.json).
 
 It names all 13 mis-scored cases. The command **exits non-zero if the numbers do not move**,
 so a metric that had quietly stopped measuring anything fails CI rather than reporting 100%.
