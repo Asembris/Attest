@@ -1,30 +1,70 @@
-# Why Attest reads DataHub over GraphQL and not over MCP
+# Engaging with the DataHub MCP Server
 
-**Status:** decided, with evidence. This is a measured result, not a preference.
-**Spike:** [`spikes/mcp_reader_probe.py`](../spikes/mcp_reader_probe.py) (`just spike-mcp`)
-**Measured against:** `mcp-server-datahub` **0.6.0**, DataHub Core **v1.5.0.6** (pinned), 16 seeded datasets.
+**Challenge 1 names the DataHub MCP Server as how agents obtain catalog context. Rather than
+skip the named path, we scoped an adapter against it, built to the one-method seam it would
+implement, and measured whether its responses can carry a deterministic verdict. This document
+is that measurement, and the reason Attest's catalog reads stay on GraphQL.**
+
+Two things to know before the numbers. **The server runs** — compatibility is the failure
+everyone expects here, and it is not what happened; every call answered, for every seeded
+dataset, without error. And the finding is about **structured consumers**, not about the
+server's intended use, where its compaction is a feature. Three of the four mechanisms behind
+it are fixable upstream, and we wrote them up.
+
+| | |
+| --- | --- |
+| **Status** | Decided, with evidence. A measured result, not a preference. |
+| **Spike** | [`spikes/mcp_reader_probe.py`](../spikes/mcp_reader_probe.py) — `just spike-mcp` |
+| **Measured against** | `mcp-server-datahub` **0.6.0**, DataHub Core **v1.5.0.6** (pinned), 16 seeded datasets |
+| **Contributed back** | Three drafts with reproductions in [`docs/upstream/`](upstream/) — drafted, awaiting review |
+| **Tripwire** | `just spike-mcp` exits non-zero **by design**. If it ever goes green, the finding has expired and this decision is worth reopening. |
+
+**Jump to:** [the result](#2-the-result) ·
+[the mechanism, at source level](#3-the-mechanism-at-source-level) ·
+[why it is a correctness finding](#4-why-this-is-a-correctness-finding-not-a-coverage-one) ·
+[what this does not prove](#6-what-this-evaluation-does-not-prove) ·
+[what we are contributing back](#7-what-we-are-contributing-back) ·
+[reproduce it](#8-reproduce-it)
 
 ---
 
-## The question
+## What we set out to do
 
 Challenge 1 names the **DataHub MCP Server / Agent Context Kit** as the way agents obtain
-catalog context. Attest reads the catalog with direct GraphQL over `httpx`. So:
+catalog context, and Attest's catalog read already had the one-method seam an adapter would
+implement. That made the question concrete and answerable rather than a matter of taste:
 
-> "Why aren't you using the named integration path?"
+> **Does an MCP response contain the facts a deterministic verdict is made of?**
 
-The honest answer is not a preference, and it is not "we ran out of time". We built the
-adapter's seam, evaluated the named path against the real server, and **measured that it
-cannot carry a deterministic verdict.** This document is that measurement.
+So we built to that seam, ran the real server against the real catalog, and diffed the result
+against the reference read — dataset by dataset, and then verdict by verdict.
 
 The short version:
 
-> **The DataHub MCP server is correct for the job it has — feeding a language model — and
-> its every optimisation for that job is destructive for a deterministic checker. Fed the
-> MCP snapshot, four of five TRUE claims change verdict, and a correctly-tagged PII column
-> reads back as `Contradicted`.**
+> **The DataHub MCP server is well-built for the job it has — feeding a language model — and
+> each optimisation for that job removes something a deterministic checker needs. Fed the MCP
+> snapshot, four of five TRUE claims change verdict, and a correctly-tagged PII column reads
+> back as `Contradicted`.**
 
-That is not a footnote to Attest's thesis. It *is* Attest's thesis, encountered in the wild.
+That is not a footnote to Attest's thesis. It *is* Attest's thesis, encountered in the wild: a
+transport tuned for a reader that can shrug, feeding one that cannot.
+
+---
+
+## The server runs. Compatibility is not the finding.
+
+Worth stating plainly and early, because it is the failure everyone expects and it is not what
+happened:
+
+- The server **installs and runs** against Core v1.5.0.6.
+- It **detects the deployment correctly**: `is_oss=True`, `is_cloud=False`, and it
+  version-gates its own `#[NEWER_GMS]` and `#[CLOUD]` query fragments accordingly.
+- It **answers every call** we made, for every seeded dataset, without error.
+- It exposes six read tools: `search`, `get_entities`, `list_schema_fields`, `get_lineage`,
+  `get_lineage_paths_between`, `get_dataset_queries`. Mutation, user, and data-quality
+  tools are disabled by default on OSS.
+
+Everything below is about what those successful responses **contain**.
 
 ---
 
@@ -58,21 +98,6 @@ mapping. A normalizer written any other way would be measuring its own author.
 **No LLM is involved anywhere in this evaluation.** MCP is a protocol, not a model. The
 probe calls a fixed tool with fixed JSON arguments from code, on an explicit URN, exactly as
 the adapter would have. Nothing decides which tool to call and nothing summarises anything.
-
-### The server runs. Compatibility is not the finding.
-
-Worth stating plainly, because it is the failure everyone expects and it is not what
-happened:
-
-- The server **installs and runs** against Core v1.5.0.6.
-- It **detects the deployment correctly**: `is_oss=True`, `is_cloud=False`, and it
-  version-gates its own `#[NEWER_GMS]` and `#[CLOUD]` query fragments accordingly.
-- It **answers every call** we made, for every seeded dataset, without error.
-- It exposes six read tools: `search`, `get_entities`, `list_schema_fields`, `get_lineage`,
-  `get_lineage_paths_between`, `get_dataset_queries`. Mutation, user, and data-quality
-  tools are disabled by default on OSS.
-
-Everything below is about what those successful responses **contain**.
 
 ---
 
@@ -114,9 +139,10 @@ column the catalog *explicitly tags as PII* is **not** PII. Not "we're not sure"
 
 ## 3. The mechanism, at source level
 
-Four defects, each verified in the server's own source rather than inferred from a response.
-None is configurable: there is no raw mode, and the only environment variables the server
-reads are token budgets and document-tool switches.
+Four defects, each verified in the server's own source rather than inferred from a response —
+which is what makes three of them a concrete upstream fix rather than a mystery. None is
+configurable: there is no raw mode, and the only environment variables the server reads are
+token budgets and document-tool switches, so an adapter cannot opt out of any of them.
 
 ### 3a. `lastModified` is never requested for a Dataset — by any tool
 
@@ -234,11 +260,15 @@ legible. The single `term_parents` mismatch in the run is not this rule at all �
 (`customer_contact`'s `CustomerIdentifier` is a *column*-level term, and column terms arrive
 as display names, so no URN and no hierarchy).
 
-### 3e. Two further landmines the probe surfaced
+### 3e. Two further caveats for a structured consumer
+
+Neither is a defect — both are reasonable behaviour for the server's intended consumer, and
+[§7](#7-what-we-are-contributing-back) says why neither was written up. They are recorded
+because an adapter author needs to know about them.
 
 - **Schemas are truncated to a token budget.** `ENTITY_SCHEMA_TOKEN_BUDGET` (default 16000),
   plus a `TOOL_RESPONSE_TOKEN_LIMIT` of 80000, with a `schemaFieldsTruncated` marker. It
-  does not fire on the seed (5-column tables) and it is a latent **correctness** bug on a
+  does not fire on the seed (5-column tables) and it is a latent **correctness** risk on a
   wide one: a dropped column makes `snapshot.field(path)` return `None`, and the schema
   checker reads that as the catalog *positively denying the column exists*. Contradicted,
   from a token budget.
@@ -294,26 +324,29 @@ is silent, confident, and wrong.
 
 ---
 
-## 5. The conclusion, and why it is the stronger answer
+## 5. The conclusion
 
 **Attest reads DataHub over GraphQL because a groundedness auditor requires a lossless read,
-and the MCP server — correctly, for its purpose — does not provide one.**
+and the MCP server — correctly, for its own purpose — does not provide one today.**
 
-The MCP server's transformations are not bugs from its own point of view. Stripping nulls
-and empty collections, replacing URNs with human-readable names, truncating schemas to a
-token budget: every one of those is *right* when the consumer is a language model reading
-prose context and paying by the token. It is a well-built tool for that job.
+The server's transformations are not bugs from its own point of view. Stripping nulls and
+empty collections, replacing URNs with human-readable names, truncating schemas to a token
+budget: every one of those is *right* when the consumer is a language model reading prose
+context and paying by the token. It is a well-built tool for that job, and it does that job.
 
-They are precisely wrong when the consumer is deterministic code whose entire product is the
-difference between *disagreement* and *silence*.
+They are the wrong trade when the consumer is deterministic code whose entire product is the
+difference between *disagreement* and *silence*. That is a mismatch between a transport and a
+consumer, and naming it is more useful than assigning fault to either.
 
-So the finding is not "MCP is bad" and not "we couldn't". It is:
+So the finding is not "MCP is bad", and it is not "we couldn't". It is:
 
-> **The named integration path encodes meaning as display strings and empty arrays, then
-> optimises both away — and Attest exists to say that absence is not an answer. We measured
-> the path, it cannot carry a verdict, and here is the receipt.**
+> **The named path encodes meaning for a reader that can shrug; Attest is a reader that
+> cannot. We measured the gap rather than assuming it, it is real on these versions, and
+> three of the four mechanisms behind it are fixable upstream — so we wrote them up.**
 
-You cannot script a better argument for why deterministic grounding needs a lossless read.
+The engagement is the point. Skipping the named path would have cost nothing and proved
+nothing. Building to its seam produced a measurement, three drafts with reproductions, and a
+tripwire that will tell us the day the finding expires.
 
 ### What we did *not* do, and why
 
@@ -362,11 +395,11 @@ Naming the boundary is what makes the rest credible.
 
 ---
 
-## 7. Upstream
+## 7. What we are contributing back
 
-Most of these harm **any** consumer that needs structured metadata, not just Attest, and none
-had an existing issue (open issues reviewed 2026-07-16). Drafts, with reproductions, are in
-[`docs/upstream/`](upstream/):
+Most of these affect **any** consumer that needs structured metadata, not just Attest, and
+none had an existing issue (open issues reviewed 2026-07-16). Drafts, with reproductions, are
+in [`docs/upstream/`](upstream/):
 
 | Finding | Upstream status |
 | --- | --- |
