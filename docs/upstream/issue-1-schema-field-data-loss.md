@@ -21,6 +21,10 @@ to carry:
 Table-level tags and terms **do** keep their URNs (`tags.tags[].tag.urn`), so a consumer sees
 identifiers at one grain and display strings at the other, for the same concepts.
 
+This is distinct from #157: that one is about `get_entities` returning no aspects for a
+`schemaField` URN (a missing `SchemaFieldEntity` branch). This is about the fields that *are*
+returned, inside a dataset's `schemaMetadata`, losing `type` and their tag/term identifiers.
+
 ### Environment
 
 - `mcp-server-datahub` 0.6.0 (via `uvx`)

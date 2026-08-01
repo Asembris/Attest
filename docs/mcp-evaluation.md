@@ -405,7 +405,7 @@ in [`docs/upstream/`](upstream/):
 | --- | --- |
 | `type` commented out; field tags/terms as display names | **Draft 1.** The data is already in the response and `type`'s reader still exists — the fix is cheap and costs an LLM consumer nothing. |
 | Dataset `lastModified` never requested | **Draft 2.** Add it to the fragment. Exactly the shape of upstream #118 (missing fragment ⇒ data the backend has never ships), which has a PR. |
-| `clean_gql_response` collapses absent and empty | **Draft 3, filed as a question.** Real ambiguity, no measured wrong answer, documented rationale — it may be working as intended. |
+| `clean_gql_response` collapses absent and empty | **Draft 3, framed as a question.** Real ambiguity, no measured wrong answer, documented rationale — it may be working as intended. |
 | Schema truncated to a token budget | **Not filed.** Working as intended, flagged via `schemaFieldsTruncated`, and `list_schema_fields` exists to page past it. A caveat for structured consumers, not a defect. |
 | `get_entities` returns `isError: False` for a missing entity | **Not filed.** Defensible: a batch call shouldn't fail wholesale over one bad URN, and the per-entity `{"error": ...}` dict is a reasonable shape. |
 

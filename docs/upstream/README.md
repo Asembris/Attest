@@ -34,12 +34,36 @@ Not filed as issues, deliberately:
 
 ## Checked for duplicates
 
-Open issues reviewed 2026-07-16. Nothing matching. Related, and referenced in the drafts:
+**Re-scanned 2026-08-02** (26 open issues; the repo moved a long way from the 2026-07-16 scan,
+which is why the recheck happened *before* filing rather than after). **Nothing matching any of
+the three drafts.** Targeted searches for `lastModified`, `freshness`/`stale`/`timestamp`,
+`glossary`, and `schema field type` return no issue claiming either defect.
 
+Related, and referenced in the drafts:
+
+- **#149** — *Expose `Dataset.externalUrl` through `get_entities`.* Open, with a PR and a test.
+  **The closest precedent to draft 2, and a closer one than #118**: same file
+  (`entity_details.gql`), same fragment (`entityPreview`), same Dataset arm, same argument —
+  the field is already requested for other entity types and was missed for Dataset — and the
+  same one-line fix. Cite this one.
+- **#159** — *Expose optional read-only aspect audit context from `get_entities`.* Open.
+  **Adjacent to draft 2 and NOT a duplicate**, and the distinction is worth keeping straight: it
+  asks for `systemMetadata` envelope provenance (`lastObserved`, ingestion run ids, audit
+  actors) and states explicitly that ingestion/observation time is **not** validation time.
+  Draft 2 asks for `DatasetProperties.lastModified` — the business/source timestamp. #159 draws
+  exactly the line that leaves draft 2's field unaddressed.
+- **#157** — *`get_entities` returns no aspects for `schemaField` urns.* Open. Adjacent to
+  draft 1, not a duplicate: a missing `SchemaFieldEntity` branch and `structuredProperties`,
+  nothing about `type` or display-name flattening.
+- **#139** — *`grep_documents` silently omits unresolvable, empty, and zero-match documents
+  alike, blocking fail-closed callers.* Open. Draft 3's philosophy on a different tool — a
+  caller cannot tell **why** something is absent. Not a duplicate; the right cross-reference if
+  draft 3 is ever filed.
 - **#118** — `get_entities` returns bare URN for `erModelRelationship`; root cause is a
   missing fragment, i.e. *the query does not ask for data the backend has*. Same shape as
-  draft 2. Has PR #119.
+  draft 2. Still **open**; PR #119 has not landed.
 - **#88** — hardcoded description truncation too aggressive; produced the
-  `DESCRIPTION_LENGTH_LIMIT` env var. Precedent that hardcoded lossy transforms are
-  accepted as fixable.
+  `DESCRIPTION_LENGTH_LIMIT` env var. Still open, now with PR #129
+  (`DESCRIPTION_LENGTH_OVERRIDES`). Precedent that hardcoded lossy transforms are accepted as
+  fixable.
 - **#131** — older-GMS breakage. Establishes that OSS/self-hosted GMS is in scope.

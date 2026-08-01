@@ -15,8 +15,15 @@ the field is `NON_NULL` in the schema.
 `lastModified` **is** requested for `Dashboard`, `Chart`, `Document`, and
 `BusinessAttribute`. Dataset appears to have been missed rather than deliberately excluded.
 
-This looks like the same shape as #118 (`erModelRelationship` returning a bare URN because
-the fragment does not ask for its properties).
+This looks like the same shape as #149 (`Dataset.externalUrl` present in GMS, requested for
+other entity types, missed for Dataset — a one-line fix to the same fragment) and #118
+(`erModelRelationship` returning a bare URN because the fragment does not ask for its
+properties).
+
+Note this is **not** what #159 asks for. That proposes exposing `systemMetadata` envelope
+provenance — `lastObserved`, ingestion run ids, audit actors — and rightly points out that
+ingestion/observation time is not validation time. `properties.lastModified` is the
+business/source timestamp, and it is the one a freshness question is actually about.
 
 ### Environment
 
