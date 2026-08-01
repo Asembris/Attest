@@ -46,7 +46,8 @@ but no test asserted the static-import property; what the tests actually assert 
 runtime one (the checker step spent **zero tokens**, a run's model calls are decomposition and
 explanation and nothing else, `NO_LLM_IN_THE_VERDICT_PATH` FLAGs a violator un-approvable). The
 README was corrected to say what is asserted. **[docs/architecture.md](docs/architecture.md)
-still carries the identical sentence and is due the same correction in the next doc pass.** On a
+carried the identical sentence; it took the same correction in `b848d83`, so this half of the
+trigger is SATISFIED — the claim survives nowhere.** On a
 project whose whole thesis is that an unverified claim is not a verified one, a doc overstating
 what a test proves is the one self-inflicted wound worth a tripwire.
 
