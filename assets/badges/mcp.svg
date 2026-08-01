@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="20" role="img" aria-label="MCP Server: adapter built + measured">
+<title>MCP Server: adapter built + measured</title>
+<!-- ASSERTS: Attest built an adapter to the DataHub MCP Server and measured it. Engagement, not omission.
+     TRUE BECAUSE: spikes/mcp_reader_probe.py (just spike-mcp) builds every seeded dataset's snapshot TWICE — once over the MCP server's get_entities, once over GraphQL — and diffs them field by field: 130 mismatches over 16/16 datasets on mcp-server-datahub 0.6.0 against the pinned Core v1.5.0.6, then the same gap as verdicts. Three upstream issue drafts with reproductions in docs/upstream/.
+     SCOPE: claims built-and-measured ONLY. MCP is NOT in the live verdict path and this badge does not say it is — docs/mcp-evaluation.md is why.
+     Self-hosted so it cannot 404 or rate-limit while someone is reading the page. -->
+<clipPath id="r"><rect width="256" height="20" rx="3" fill="#fff"/></clipPath>
+<g clip-path="url(#r)">
+  <rect width="80" height="20" fill="#22262D"/>
+  <rect x="80" width="176" height="20" fill="#6FA5A5"/>
+</g>
+<g font-family="Verdana,'DejaVu Sans',Geneva,sans-serif" font-size="11" text-anchor="middle">
+  <text x="40.0" y="14" fill="#D2D6DC">MCP Server</text>
+  <text x="168.0" y="14" fill="#0A0B0D" font-weight="600">adapter built + measured</text>
+</g>
+</svg>

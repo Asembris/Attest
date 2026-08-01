@@ -9,6 +9,7 @@ catalog, not from Attest.**
 [![offline checks](https://img.shields.io/github/actions/workflow/status/Asembris/Attest/ci.yml?branch=main&label=offline%20checks&labelColor=22262D)](https://github.com/Asembris/Attest/actions/workflows/ci.yml)
 [![verdicts decided by a model: 0](assets/badges/verdicts-by-a-model.svg)](#why-the-verdict-is-trustworthy)
 [![checks: sabotage-verified](assets/badges/sabotage-verified.svg)](#receipts-not-headlines)
+[![MCP Server: adapter built + measured](assets/badges/mcp.svg)](#engaging-with-the-mcp-server)
 [![tested: DataHub Core v1.5.0.6](assets/badges/datahub.svg)](docs/datahub-setup.md)
 [![python: 3.12+](assets/badges/python.svg)](pyproject.toml)
 [![license: Apache-2.0](assets/badges/license.svg)](LICENSE)
@@ -27,6 +28,12 @@ warehouse — which is most of them.
 > **Attest reads and writes DataHub Core v1.5.0.6.** It reads the catalog as ground truth over
 > GraphQL, decides in code, and — once a human publishes — writes each verdict back as its own
 > content-addressed **claim artifact** with an append-only verdict history.
+>
+> **The DataHub MCP Server was engaged, not skipped.** We built an adapter to its one-method
+> seam, ran it against all 16 seeded datasets on the pinned Core, and measured what its
+> responses can and cannot carry — `just spike-mcp` runs it against your own catalog. The
+> measurement kept the verdict read on GraphQL, and produced three upstream issue drafts with
+> reproductions. [The evaluation](#engaging-with-the-mcp-server).
 
 ## Zero, and what happens when we sabotage it
 
@@ -43,8 +50,8 @@ and 4 coverage failures named**
 `just check`, not on demand.
 
 **→ [What the next agent inherits](#what-the-next-agent-inherits)** ·
-[Inspect the benchmark receipts](benchmark/README.md) ·
 [Engaging with the MCP Server](#engaging-with-the-mcp-server) ·
+[Inspect the benchmark receipts](benchmark/README.md) ·
 [Scope and limitations](#scope-and-limitations)
 
 ## What the next agent inherits
@@ -271,7 +278,7 @@ arrives unrecognisable, the column reads unlabelled, the table is `Verified`, an
 completeness rule turns the loss into a **denial**. A transport that is lossy for an LLM is not
 merely lossy for a checker — it is *inverting*.
 
-So MCP was rejected for deterministic verdict reads, **on evidence rather than preference** — and
+So the verdict read stays on GraphQL — **a conclusion the measurement forced, not a preference** — and
 this is a finding about *structured consumers*, not a defect for the server's intended use, where
 the compaction is a feature. Three of the four defects are fixable upstream and are
 [drafted with reproductions](docs/upstream/). `just spike-mcp` **exits non-zero by design**: if it
@@ -361,7 +368,14 @@ some agent prose, publish a verdict at the checkpoint, and read it back with `GE
 launches the shipped uvicorn command on a real socket, fetches `/` and its built JavaScript asset,
 then audits the live seeded catalog over HTTP. `just smoke-sabotage` proves DataHub, uvicorn, the
 built asset, and the demo API are each load-bearing. `just reset` is the operator's
-definitive catalog wipe. Version pin and environment landmines:
+definitive catalog wipe.
+
+`just spike-mcp` re-runs the **MCP Server evaluation** against your own catalog — the adapter,
+all 16 seeded datasets, the field-parity diff, and the same gap expressed as verdicts. It
+**exits non-zero by design** (needs `pip install mcp` and `uvx`), because a green run would
+mean the finding had expired.
+
+Version pin and environment landmines:
 [docs/datahub-setup.md](docs/datahub-setup.md); deployment shape, reset design and measured numbers:
 [docs/deployment.md](docs/deployment.md).
 
@@ -412,7 +426,10 @@ wrong verdict has the same confident shape as a right one.
 - **There is no `attest.confidence`.** The verdicts are code; there *is* no confidence. The third
   verdict already carries the only uncertainty in the system. A `0.95` would be a number invented to
   look like an ML system — the precise thing this project exists to catch.
-- **Reads are GraphQL, not MCP** — [measured](#engaging-with-the-mcp-server), not assumed.
+- **The MCP adapter was built and measured; verdict reads stay on GraphQL.** Parity fails on
+  16/16 seeded datasets and four of five true claims change verdict, one of them Supported →
+  Contradicted. The cut is real — and it is a
+  [result we produced](#engaging-with-the-mcp-server), not a path we skipped.
 - **Ownership *type*** (technical vs business vs steward) is ignored, and **cross-dialect type
   equivalence** (`int8` ~ `BIGINT`) is not attempted. Both need a schema change or a model of each
   platform's type system, not an `if`.
@@ -465,7 +482,8 @@ wrong verdict has the same confident shape as a right one.
 | [benchmark/README.md](benchmark/README.md) | The golden benchmark: 40 hand-labeled claims, methodology, denominators, and why not RAGAS/DeepEval. |
 | [docs/architecture.md](docs/architecture.md) | Trust boundaries, the PII policy, the graph, the guards, resume, and the cost projection. |
 | [docs/deployment.md](docs/deployment.md) | The deployment shape, the reset design, the measured bring-up numbers, and the smoke test. |
-| [docs/mcp-evaluation.md](docs/mcp-evaluation.md) | The measured MCP-vs-GraphQL finding, per-dataset. |
+| [docs/mcp-evaluation.md](docs/mcp-evaluation.md) | Engaging the MCP Server: the adapter, the 16-dataset parity run, the verdict table, and why the verdict read stays on GraphQL. |
+| [docs/upstream/](docs/upstream/) | Three issue drafts for `acryldata/mcp-server-datahub`, each with a reproduction against 0.6.0. |
 | [docs/datahub-setup.md](docs/datahub-setup.md) | The version pin, the seed, and the environment landmines. |
 | [docs/design/claim-artifact.md](docs/design/claim-artifact.md) | The claim-artifact design, and the probe it was measured against. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Commands, the test tiers, and the verification cadence. |
