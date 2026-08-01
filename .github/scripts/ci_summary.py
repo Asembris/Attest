@@ -3,8 +3,14 @@
 # This is DECORATION, never a gate. The gate is `just check`'s exit code, which this script
 # does not touch. So the PASS/FAIL banner is driven by the step's real outcome (CHECK_OUTCOME),
 # never by what this parser managed to scrape — a summary that could paint a red run green would
-# be exactly the "green light wired to nothing" this repo refuses. The counts are supplementary:
-# if the pytest tail cannot be parsed, the row says so rather than inventing a number.
+# be exactly the "green light wired to nothing" this repo refuses.
+#
+# Every row below the banner is READ OUT OF THE LOG, never inferred from the banner. A green
+# `just check` does ENTAIL a clean ruff — `check: lint collect-check test-offline` runs fail-fast,
+# so nothing downstream runs unless ruff was clean — but an entailed row keeps printing "ruff clean"
+# after the recipe it names is dropped from `check`, and on a RED run it cannot say WHICH of the
+# three stages broke. So each row is parsed, and a row that cannot be parsed says so rather than
+# inventing a result.
 #
 # Input:  check-output.txt  (tee'd stdout+stderr of `just check`)
 #         CHECK_OUTCOME env  ('success' | 'failure' | 'cancelled')
@@ -20,10 +26,26 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # so the last such line in the log is always the offline test run's.
 TALLY = re.compile(r"(\d+)\s+(passed|failed|skipped|errors?|xfailed|xpassed|deselected)")
 DURATION = re.compile(r"\bin\s+([\d.]+)s")
+# ruff's success line, verbatim. Its failure output is `path.py:12:5: F401 ...` — no space after
+# the colon — so it can never be mistaken for a COLLECTED line below.
+LINT_OK = re.compile(r"^All checks passed!$")
+# `just collect-check` is `pytest --collect-only -q`, which prints ONE LINE PER FILE
+# ("tests/test_api.py: 37") and NO total: the "collected N items" line is verbosity >= 0 only.
+# MEASURED against the real command — so the total is summed from the per-file lines, which are
+# what the recipe actually leaves in the log.
+COLLECTED = re.compile(r"^\S+\.py:\s+(\d+)$")
 
 
-def parse_counts(log: str) -> tuple[dict[str, int], str | None]:
-    lines = [ANSI.sub("", ln) for ln in log.splitlines()]
+def parse_lint(lines: list[str]) -> bool:
+    return any(LINT_OK.match(ln.strip()) for ln in lines)
+
+
+def parse_collected(lines: list[str]) -> int | None:
+    per_file = [int(m.group(1)) for ln in lines if (m := COLLECTED.match(ln.strip()))]
+    return sum(per_file) if per_file else None
+
+
+def parse_counts(lines: list[str]) -> tuple[dict[str, int], str | None]:
     tally_lines = [
         ln
         for ln in lines
@@ -44,8 +66,11 @@ def main() -> None:
     log = ""
     p = Path("check-output.txt")
     if p.exists():
-        log = p.read_text(encoding="utf-8", errors="replace")
-    counts, duration = parse_counts(log)
+        # utf-8-SIG, not utf-8: a BOM would survive into the first line and make the very first
+        # row ("Lint") unparseable — a measured row silently degrading to "see the log above".
+        log = p.read_text(encoding="utf-8-sig", errors="replace")
+    lines = [ANSI.sub("", ln) for ln in log.splitlines()]
+    counts, duration = parse_counts(lines)
 
     passed = outcome == "success"
     if passed:
@@ -66,8 +91,9 @@ def main() -> None:
     else:
         tests_row = "see the log above"
 
-    lint_row = "ruff clean" if passed else "see the log above"
-    import_row = "collect-check clean" if passed else "see the log above"
+    collected = parse_collected(lines)
+    lint_row = "ruff clean" if parse_lint(lines) else "see the log above"
+    import_row = f"{collected} tests collected" if collected else "see the log above"
     dur_row = f"{duration}s (pytest)" if duration else "—"
     py = ".".join(str(v) for v in sys.version_info[:3])
     runner = os.environ.get("RUNNER_OS", "").lower() or "runner"
