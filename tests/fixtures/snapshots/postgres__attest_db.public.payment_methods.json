@@ -3,7 +3,7 @@
   "name": "payment_methods",
   "platform": "postgres",
   "description": "Stored payment instruments. Card numbers are held by the payment processor; only the last four digits are landed here.",
-  "last_modified": "2026-07-18T05:57:17.176000Z",
+  "last_modified": "2026-08-02T09:40:46.234000Z",
   "owners": [
     "urn:li:corpuser:dana.wu"
   ],
