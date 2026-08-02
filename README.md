@@ -32,8 +32,8 @@ warehouse — which is most of them.
 > **The DataHub MCP Server was engaged, not skipped.** We built an adapter to its one-method
 > seam, ran it against all 16 seeded datasets on the pinned Core, and measured what its
 > responses can and cannot carry — `just spike-mcp` runs it against your own catalog. The
-> measurement kept the verdict read on GraphQL, and produced three upstream issue drafts with
-> reproductions. [The evaluation](#engaging-with-the-mcp-server).
+> measurement kept the verdict read on GraphQL, and produced three upstream issue write-ups with
+> reproductions — two of them now filed upstream. [The evaluation](#engaging-with-the-mcp-server).
 
 ## Zero, and what happens when we sabotage it
 
@@ -281,7 +281,10 @@ merely lossy for a checker — it is *inverting*.
 So the verdict read stays on GraphQL — **a conclusion the measurement forced, not a preference** — and
 this is a finding about *structured consumers*, not a defect for the server's intended use, where
 the compaction is a feature. Three of the four defects are fixable upstream and are
-[drafted with reproductions](docs/upstream/). `just spike-mcp` **exits non-zero by design**: if it
+[written up with reproductions](docs/upstream/), two of them filed upstream
+([#169](https://github.com/acryldata/mcp-server-datahub/issues/169),
+[#168](https://github.com/acryldata/mcp-server-datahub/issues/168); the third stays a draft
+deliberately). `just spike-mcp` **exits non-zero by design**: if it
 ever goes green, the finding has expired and the decision is worth reopening. Full write-up and
 per-dataset diffs: **[docs/mcp-evaluation.md](docs/mcp-evaluation.md)**.
 

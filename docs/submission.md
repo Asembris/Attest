@@ -11,9 +11,11 @@ or Insufficient-Coverage — with **zero verdicts decided by a model**. Once a h
 one, Attest **writes it back into DataHub** as its own content-addressed claim artifact with
 an append-only verdict history, so the next agent inherits it from the catalog rather than
 from Attest's database. We also **built an adapter to the DataHub MCP Server, measured it
-against all 16 seeded datasets, and wrote up three upstream issue drafts with reproductions**
-— the measurement is why the verdict read stays on GraphQL, and it is runnable as
-`just spike-mcp`.
+against all 16 seeded datasets, and wrote up three upstream issues with reproductions — two of
+them filed** ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169),
+[#168](https://github.com/acryldata/mcp-server-datahub/issues/168); the third is deliberately
+kept as a draft) — the measurement is why the verdict read stays on GraphQL, and it is runnable
+as `just spike-mcp`.
 
 ## The problem
 
