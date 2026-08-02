@@ -174,17 +174,6 @@ export default function Hero({
           </motion.div>
         )}
 
-        {/* The interaction affordance for the field behind everything. */}
-        {!reducedMotion && (
-          <motion.p
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 1.6, delay: 1 }}
-            className="mt-9 font-mono-nums text-[11px] tracking-[0.14em] uppercase text-[rgba(140,155,180,0.4)]"
-          >
-            move · hover · click the field
-          </motion.p>
-        )}
       </div>
     </div>
   );
