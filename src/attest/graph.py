@@ -1034,22 +1034,23 @@ def _with_publication(audit: ClaimAudit, publication: Publication) -> ClaimAudit
 
 
 def _with_review(audit: ClaimAudit, review: ReviewStatus) -> ClaimAudit:
-    """A reviewed copy. Correction is frozen, so a decision replaces rather than mutates."""
-    return ClaimAudit(
-        index=audit.index,
-        claim=audit.claim,
-        verdict=audit.verdict,
-        reason=audit.reason,
-        evidence=audit.evidence,
-        explanation=audit.explanation,
-        publication=audit.publication,
-        correction=Correction(
-            outcome=audit.correction.outcome,
-            attempts=audit.correction.attempts,
-            proposal=audit.correction.proposal,
-            review=review,
-        ),
-    )
+    """A reviewed copy. Correction is frozen, so a decision replaces rather than mutates.
+
+    **`replace`, and NOT a field-by-field rebuild, and that is the whole of this function.**
+    It used to reconstruct `ClaimAudit(...)` by hand, which meant every field had to be
+    listed — and `snapshot_id` was not, so it fell back to its default and a decided
+    correction silently cost the claim the identity of the catalog state its verdict was
+    decided against. The write-back then omitted `attest.snapshot_id` from the run event,
+    because the value was falsy rather than because there was nothing to say.
+
+    The failure was invisible in the shape a hand-written copy always is: it is not a wrong
+    value, it is a MISSING one, on a path that only runs when a human rules on a correction
+    — so the same run published an artifact with a snapshot identity or without one
+    depending on a decision that has nothing to do with which catalog state was read.
+    `replace` copies what it is not told to change, so a field added to `ClaimAudit`
+    tomorrow cannot be dropped here by omission.
+    """
+    return replace(audit, correction=replace(audit.correction, review=review))
 
 
 def _freshness(claim: Claim, snap: DatasetSnapshot, now: datetime | None) -> CheckResult:
