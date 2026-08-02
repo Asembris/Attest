@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowLeft, Database, RefreshCw, Search } from 'lucide-re
 import { ApiError, listClaims, retryWriteback } from '../api/client';
 import type { ClaimFilters, ClaimsResponse, ClaimType, Verdict } from '../api/types';
 import { seededDatasets } from '../data/catalog';
+import AttestMark from './AttestMark';
 import ClaimArtifactCard from './ClaimArtifactCard';
 import { Reveal } from './reveal';
 
@@ -149,7 +150,11 @@ export default function ClaimsExplorer({ onBack }: { onBack: () => void }) {
           <button onClick={onBack} className="btn-ghost text-sm px-2">
             <ArrowLeft size={16} />
           </button>
-          <span className="font-serif text-xl font-semibold tracking-tight">Attest</span>
+          {/* mark + wordmark are ONE lockup — tighter gap than the breadcrumb around it. */}
+          <div className="flex items-center gap-2">
+            <AttestMark size={18} className="text-ink-100" />
+            <span className="font-serif text-xl font-semibold tracking-tight">Attest</span>
+          </div>
           <span className="text-ink-500">/</span>
           <span className="text-sm text-ink-300">Published claims</span>
           <button

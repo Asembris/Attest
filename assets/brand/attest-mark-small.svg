@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 96" fill="none" role="img" aria-labelledby="t d">
+  <title id="t">Attest mark, small size</title>
+  <desc id="d">Attest mark: a triangular constellation forming the letter A, with an apex node, two base nodes, a crossbar edge and a sealed centre point.</desc>
+  <g fill="none" stroke="currentColor" stroke-width="4.2" stroke-linecap="round">
+    <path d="M50 10 L10 86"/>
+    <path d="M50 10 L90 86"/>
+    <path d="M22.63 62 L77.37 62"/>
+  </g>
+  <g fill="currentColor">
+    <circle cx="50" cy="10" r="8.06"/>
+    <circle cx="10" cy="86" r="8.06"/>
+    <circle cx="90" cy="86" r="8.06"/>
+    <circle cx="50" cy="62" r="6.80"/>
+  </g>
+</svg>

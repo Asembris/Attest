@@ -9,6 +9,7 @@ import {
   calibrationMeta,
   calibrationRuns,
 } from '../data/benchmarkData';
+import AttestMark from './AttestMark';
 import { Reveal, CountUp } from './reveal';
 
 // The benchmark page, re-typeset to the design pass. EVERY number here is read from
@@ -55,7 +56,12 @@ export default function Benchmark({ onBack }: { onBack: () => void }) {
           <button onClick={onBack} className="btn-ghost text-sm px-2">
             <ArrowLeft size={16} />
           </button>
-          <span className="font-serif text-xl font-semibold tracking-tight">Attest</span>
+          {/* mark + wordmark are ONE lockup, so they get their own tighter gap than the
+              breadcrumb around them (the kit's clearspace rule, at nav scale). */}
+          <div className="flex items-center gap-2">
+            <AttestMark size={18} className="text-ink-100" />
+            <span className="font-serif text-xl font-semibold tracking-tight">Attest</span>
+          </div>
           <span className="text-ink-500">/</span>
           <span className="text-sm text-ink-300">Evidence &amp; Benchmark</span>
           <span className="ml-auto flex items-center gap-2 font-mono-nums text-[11px] tracking-[0.14em] text-supported">

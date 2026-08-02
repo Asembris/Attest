@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { ArrowRight } from 'lucide-react';
 import type { AuditRecord, ClaimRecord, CorrectionOutcome, StepView, Verdict } from '../api/types';
+import AttestMark from './AttestMark';
 
 // THE AUDIT-IN-PROGRESS SCREEN. The backend is a SINGLE BLOCKING POST /audit — no streaming,
 // no per-step event — so the screen is in two honest phases:
@@ -232,7 +233,11 @@ export default function AuditProgress({
         <main className="px-6 lg:px-14 py-12 lg:py-14 overflow-hidden">
           <header className="flex items-baseline justify-between mb-8">
             <div className="flex items-center gap-3.5">
-              <span className="font-serif text-[25px] font-semibold tracking-tight">Attest</span>
+              {/* mark + wordmark are ONE lockup — tighter gap than the rule beside it. */}
+              <div className="flex items-center gap-2">
+                <AttestMark size={20} className="text-ink-100" />
+                <span className="font-serif text-[25px] font-semibold tracking-tight">Attest</span>
+              </div>
               <span className="w-px h-4 bg-ink-600/60" />
               <span className="font-mono-nums text-[11px] tracking-[0.22em] uppercase text-ink-400">
                 {done ? 'Audit complete' : 'Audit in progress'}

@@ -1,7 +1,8 @@
 import { useState, useRef, Suspense, lazy } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowRight, BarChart3, Library, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { ArrowRight, BarChart3, Library, AlertTriangle } from 'lucide-react';
 import { sampleAgentOutput } from '../data/mockData';
+import AttestMark from './AttestMark';
 import UrnPicker from './UrnPicker';
 
 const HeroLattice = lazy(() => import('./HeroLattice'));
@@ -74,7 +75,7 @@ export default function Hero({
       {/* Nav — BOTH destinations, deliberately: claims is reachable without an audit. */}
       <nav className="relative z-10 flex items-center justify-between px-6 lg:px-12 py-6">
         <div className="flex items-center gap-2">
-          <ShieldCheck size={20} className="text-supported" strokeWidth={2.5} />
+          <AttestMark size={20} className="text-ink-100" />
           <span className="font-serif text-xl font-medium tracking-tight">Attest</span>
         </div>
         <div className="flex items-center gap-1">

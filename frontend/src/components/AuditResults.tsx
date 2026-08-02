@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, BarChart3, Library, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react';
+import { ArrowLeft, BarChart3, Library, AlertTriangle, GitBranch } from 'lucide-react';
 import type { AuditRecord, ClaimRecord, DecisionRequest, HealthResponse, WriteBackView } from '../api/types';
 import { verdictCounts, awaitingDecision } from '../api/types';
+import AttestMark from './AttestMark';
 import ReceiptsStrip from './ReceiptsStrip';
 import ClaimCard from './ClaimCard';
 import AuditInternals from './AuditInternals';
@@ -116,7 +117,7 @@ export default function AuditResults({
               <ArrowLeft size={16} />
             </button>
             <div className="flex items-center gap-2">
-              <ShieldCheck size={18} className="text-supported" strokeWidth={2.5} />
+              <AttestMark size={18} className="text-ink-100" />
               <span className="font-serif text-base font-medium tracking-tight">Attest</span>
             </div>
             <span className="text-ink-500 mx-1">/</span>
