@@ -407,6 +407,64 @@ def test_approving_a_correction_writes_the_verdict_back_to_the_catalog(client):
     assert "written to" in approvals[0].writeback
 
 
+def test_deciding_a_correction_preserves_the_claims_snapshot_identity(client):
+    """Ruling on a correction must not cost the claim the catalog state it was decided against.
+
+    `snapshot_id` is captured at audit time from the snapshot the checker actually ran
+    against, and it is what lets an inherited verdict name its ground truth. Two helpers in
+    graph.py copy a frozen `ClaimAudit` as a decision settles it, and only one of them
+    copied it WHOLE: `_with_publication` replaces a single field, while `_with_review`
+    rebuilt the dataclass field by field and silently let `snapshot_id` fall back to its
+    default. So a claim whose correction a human ruled on published an artifact with NO
+    snapshot identity, while a claim nobody had to rule on published one — the same run,
+    two different records, split by a decision that says nothing about which catalog state
+    was read.
+
+    It shipped green because nothing carried the value through THIS path: the live test
+    hands `snapshot_id` straight to `write_claim_artifact` and the retrieval test hands it
+    to a fake. Both assert the round trip; neither asserts that the approve path still has
+    it to hand over.
+
+    Asserted against the AUDIT-TIME value rather than merely non-empty — falling back to
+    `""` IS the failure, so a `!= ""` assertion is the one that would rot into vacuity.
+    """
+    service = app.dependency_overrides[get_service]()
+    run_id = client.post("/audit", json={"agent_output": SAYS}).json()["run_id"]
+
+    at_audit = service.store.load(run_id).claims[0].snapshot_id
+    assert at_audit.startswith("sha256:"), (
+        "the claim never carried a snapshot identity at audit time, so this test could not "
+        "prove it survives the approve"
+    )
+
+    body = client.post(
+        f"/audit/{run_id}/approve",
+        json={
+            "decisions": [{
+                "claim_index": 0,
+                "publish": True,
+                "accept_correction": True,
+                "reviewer": "dana",
+            }]
+        },
+    ).json()
+    assert body["audit"]["claims"][0]["correction"]["review"] == "accepted", (
+        "the correction was not decided, so this run does not exercise _with_review"
+    )
+
+    # On the wire...
+    assert body["audit"]["claims"][0]["snapshot_id"] == at_audit
+    # ...and in the store.
+    assert service.store.load(run_id).claims[0].snapshot_id == at_audit
+    # ...and therefore in the published artifact, which is the whole reason to carry it: a
+    # reader inheriting this verdict from the catalog can name the catalog state it held for.
+    artifact = writeback.read_claim_artifact(
+        service.client, body["writebacks"][0]["claim_urn"]
+    )
+    assert artifact is not None
+    assert artifact.history[0].snapshot_id == at_audit
+
+
 def test_two_decisions_for_one_claim_in_a_request_are_a_422(client):
     """A self-contradictory approve is refused before it corrupts the append-only log.
 
