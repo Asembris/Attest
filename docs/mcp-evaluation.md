@@ -16,7 +16,7 @@ it are fixable upstream, and we wrote them up.
 | **Status** | Decided, with evidence. A measured result, not a preference. |
 | **Spike** | [`spikes/mcp_reader_probe.py`](../spikes/mcp_reader_probe.py) — `just spike-mcp` |
 | **Measured against** | `mcp-server-datahub` **0.6.0**, DataHub Core **v1.5.0.6** (pinned), 16 seeded datasets |
-| **Contributed back** | Three drafts with reproductions in [`docs/upstream/`](upstream/) — drafted, awaiting review |
+| **Contributed back** | Three write-ups with reproductions in [`docs/upstream/`](upstream/) — two filed upstream ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169), [#168](https://github.com/acryldata/mcp-server-datahub/issues/168)), the third deliberately kept as a draft |
 | **Tripwire** | `just spike-mcp` exits non-zero **by design**. If it ever goes green, the finding has expired and this decision is worth reopening. |
 
 **Jump to:** [the result](#2-the-result) ·
@@ -403,8 +403,8 @@ in [`docs/upstream/`](upstream/):
 
 | Finding | Upstream status |
 | --- | --- |
-| `type` commented out; field tags/terms as display names | **Draft 1.** The data is already in the response and `type`'s reader still exists — the fix is cheap and costs an LLM consumer nothing. |
-| Dataset `lastModified` never requested | **Draft 2.** Add it to the fragment. Exactly the shape of upstream #118 (missing fragment ⇒ data the backend has never ships), which has a PR. |
+| `type` commented out; field tags/terms as display names | **Filed: [#169](https://github.com/acryldata/mcp-server-datahub/issues/169)** (draft 1). The data is already in the response and `type`'s reader still exists — the fix is cheap and costs an LLM consumer nothing. |
+| Dataset `lastModified` never requested | **Filed: [#168](https://github.com/acryldata/mcp-server-datahub/issues/168)** (draft 2). Add it to the fragment. Exactly the shape of upstream #118 (missing fragment ⇒ data the backend has never ships), which has a PR. |
 | `clean_gql_response` collapses absent and empty | **Draft 3, framed as a question.** Real ambiguity, no measured wrong answer, documented rationale — it may be working as intended. |
 | Schema truncated to a token budget | **Not filed.** Working as intended, flagged via `schemaFieldsTruncated`, and `list_schema_fields` exists to page past it. A caveat for structured consumers, not a defect. |
 | `get_entities` returns `isError: False` for a missing entity | **Not filed.** Defensible: a batch call shouldn't fail wholesale over one bad URN, and the per-entity `{"error": ...}` dict is a reasonable shape. |

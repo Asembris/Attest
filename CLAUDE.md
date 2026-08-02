@@ -1198,8 +1198,10 @@ submission asset, not an apology. **Do not reopen this as a checkbox.**
 - **What it does NOT prove:** not that the server is defective for its intended use (the
   compaction is a *feature* for an agent assembling prose context); not that no adapter is
   possible in principle — only that none is possible on this server's responses without
-  inventing data the catalog did not send. Three defects are drafted upstream
-  ([docs/upstream/](docs/upstream/)); were they fixed, this should be revisited.
+  inventing data the catalog did not send. Three defects are written up
+  ([docs/upstream/](docs/upstream/)), and two of them are FILED upstream — #169 (schema-field
+  data loss) and #168 (dataset `lastModified`); the third stays a draft deliberately. Were they
+  fixed, this should be revisited.
 
 **13. THE REPO TELLS THE CURRENT TRUTH (Session 18). Docs rebuilt to match the shipped
 feature, on receipts only.**
