@@ -1,6 +1,11 @@
 <img src="assets/banner.svg" alt="Attest — a claim enters, a deterministic check runs, a verdict comes out. Three real benchmark claims cycle through one identical rail: audit_log is PII-free reads Contradicted; raw_events contains no PII reads Insufficient-Coverage; orders_fact is free of PII reads Supported. Zero verdicts decided by a model.">
 
-# Attest
+<!-- The lockup is theme-switched, and it has to be: attest-lockup-horizontal.svg draws in
+     `currentColor`, which inside a README <img> resolves to black regardless of the reader's
+     theme — invisible on GitHub dark. So the rasters ship instead, and note the kit's naming
+     is by ARTWORK colour, not by background: `light` is the bone artwork (for dark themes),
+     `dark` is the ink artwork (for light themes, and the fallback when <picture> is stripped). -->
+# <picture><source media="(prefers-color-scheme: dark)" srcset="assets/brand/attest-lockup-light-1200.png"><img src="assets/brand/attest-lockup-dark-1200.png" alt="Attest" height="44"></picture>
 
 **Attest verifies what an AI agent claims about your data — with zero verdicts decided by a
 model — and publishes each verdict back into DataHub, so the next agent inherits it from the
