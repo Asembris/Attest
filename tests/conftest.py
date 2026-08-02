@@ -140,6 +140,12 @@ NO_TIMESTAMP = _sf("analytics.staging.pipeline_scratch")
 NO_SCHEMA = _pg("attest_db.public.external_report")
 # Owned by carol.davis, so a claim naming anyone else is contradicted.
 OWNED_BY_CAROL = _pg("attest_db.public.support_tickets")
+# The postgres mirror of DOCUMENTED: complete owner, tags, terms, and a FRESH timestamp,
+# so a freshness claim with any generous window is Supported. The seed declares that
+# ("ownership and freshness claims should both be Supported"), which is why a test that
+# needs a Supported freshness verdict names this rather than picking a dataset that
+# happens to be recent today.
+RECENTLY_MODIFIED = _pg("attest_db.public.users")
 # Tagged Deprecated but unowned; its `email` column is untagged (not NonPII).
 DEPRECATED_UNOWNED = _pg("attest_db.public.legacy_accounts")
 # PII marked by globalTag ONLY — zero glossary terms, at table or column grain.

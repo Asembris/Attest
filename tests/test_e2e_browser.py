@@ -60,6 +60,12 @@ DIST = REPO / "frontend" / "dist"
 # `2/3 decided` — the review bar's progress counter (AuditResults.tsx).
 _DECIDED_RE = re.compile(r"\d+/\d+ decided")
 
+# What `GET /claims` returns at most, mirroring the route's default (`app.get_claims`,
+# `limit: ... = 50`). The frontend sends no `limit`, so this is exactly what the browser
+# gets. Held here as a named constant because the repair test's decay guard is a claim
+# ABOUT the route's cap, and a bare 50 in an assertion would not say so.
+_CLAIMS_PAGE_SIZE = 50
+
 pytestmark = [
     pytest.mark.live,
     pytest.mark.skipif(not settings.openai_api_key, reason="no OPENAI_API_KEY"),
@@ -499,29 +505,100 @@ def test_publishing_every_verdict_but_leaving_a_correction_pending_does_not_stra
 # --- the repair path, from the browser ---------------------------------------
 
 
-def _await_read_state(service, target_urn: str, claim_urn: str, want, timeout_s: float = 30.0):
-    """Poll the service's own read until a claim reaches `want`. Returns the state it reached.
+def _await_read_state(service, claim_urn: str, want, timeout_s: float = 30.0):
+    """Poll the service's read of ONE claim until it reaches `want`. Returns what it saw.
 
-    DataHub's index is eventually consistent in BOTH directions — a delete takes a moment to
-    stop being visible, exactly as a write takes a moment to become visible (measured ~2s,
-    CLAUDE.md §11). So the honest read is a poll with a bound and an answer either way, not a
-    sleep and a hope. This returns the LAST state seen rather than raising, so the caller
-    fails with what it actually got.
+    DataHub's index is eventually consistent, so a verdict is not readable the instant it is
+    written (measured median 2.1s, max 3.2s — CLAUDE.md §11). The honest read is therefore a
+    poll with a bound and an answer either way, not a sleep and a hope. `None` means the
+    catalog held no artifact at that URN for the whole window — a real answer, distinct from
+    every ReadState, and the caller is given it rather than a crash.
+
+    **BY IDENTITY — `service.claim(urn)` — NEVER by scanning a dataset listing, and that is
+    the whole point rather than a refactor.** This used to page `service.claims(target_urn)`
+    and look for the claim in the result. That read is capped (`GET /claims` defaults to 50)
+    and `dataset.assertions` returns a dataset's artifacts OLDEST FIRST, while the claim this
+    test makes is FRESH by construction and therefore always the NEWEST. So the moment the
+    dataset accumulated more than 50 artifacts the poll was scanning 50 claims all older than
+    the one it wanted, every time, and could never find it.
+
+    That is exactly how this test died: `support_tickets` reached 62 artifacts (measured: the
+    claim sat at position 60, absent at `limit=50`, present at `limit=None`), the poll
+    returned `None`, and the assertion below crashed on `None.value` — a green light with an
+    expiry date, and the expiry had passed. Each run of this file writes ~2 more permanent
+    artifacts and nothing prunes them, so the failure was deterministic and worsening.
+
+    An identity read is O(1), order-independent and cap-independent: it asks the catalog for
+    the artifact it actually wants instead of hoping to find it in a truncated page. It
+    cannot decay. See NOTES.md, "E2E runs accumulate unprunable claim artifacts".
     """
-    from attest.retrieval import ClaimQuery
+    from attest.api.service import ClaimNotFound
 
     seen = None
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        page = service.claims(ClaimQuery(target_urn=target_urn))
-        for c in page.claims:
-            if c.artifact.claim_urn == claim_urn:
-                seen = c.state
-                break
+        try:
+            seen = service.claim(claim_urn).state
+        except ClaimNotFound:
+            # Not in the catalog at all — yet, or ever. Distinct from a claim that is there
+            # with no verdict, which is what the four ReadStates are about.
+            seen = None
         if seen is want:
             return seen
         time.sleep(1)
     return seen
+
+
+def _named(state) -> str:
+    """A read-state for a failure message, including the state of having no artifact."""
+    return state.value if state is not None else "<no artifact at this URN>"
+
+
+def _await_dataset_visibility(
+    client, dataset_urn: str, claim_urn: str, timeout_s: float = 30.0
+) -> float:
+    """Wait until the claim is reachable through the DATASET-SCOPED read. Returns seconds.
+
+    **THE BROWSER AND THE BACKEND ASSERTION USE DIFFERENT ENTRY POINTS, and this is the
+    barrier between them.** The state assertion above reads the artifact BY IDENTITY
+    (`get_assertion`), which is a direct entity fetch and answers as soon as the entity
+    exists. The explorer reads `dataset.assertions` — a RELATIONSHIP read served from an
+    eventually-consistent index, which sees a newly upserted assertion a moment later. So
+    "the backend can see it" does not imply "the browser can see it", and the gap is real.
+
+    That gap used to be hidden: the state poll itself paged `service.claims(target_urn=…)`,
+    the same relationship read, so it could not return until the index had caught up. Moving
+    it to an identity read (correctly — see `_await_read_state`) removed that ACCIDENTAL
+    barrier, and the browser step began racing the index. It passed once and failed on the
+    very next run. So the barrier is made explicit here rather than left implicit somewhere
+    it can be optimised away again.
+
+    **It must be waited for HERE, before the browser is told to select the dataset, because
+    the explorer FETCHES ONCE.** `ClaimsExplorer` loads on the filter change and re-polls
+    only while something reads `pending-lag` — and this claim reads `incomplete`, which is
+    deliberately not a polling state (a failed write never resolves itself, so a spinner over
+    it would be a lie). A `wait_for` on the badge is therefore waiting on a page that will
+    never re-request: it can only time out. That is the file header's own rule — a wait that
+    cannot succeed is a mystery hang, not a diagnostic.
+
+    `limit=None` paginates the whole dataset, so this cannot decay the way the capped scan
+    did. The elapsed time is RETURNED and printed by the test, so the bound stays backed by a
+    number measured on every run rather than by a comment written once.
+    """
+    started = time.monotonic()
+    deadline = started + timeout_s
+    while time.monotonic() < deadline:
+        nodes, _ = client.list_dataset_assertions(dataset_urn, limit=None)
+        if any(n.get("urn") == claim_urn for n in nodes):
+            return time.monotonic() - started
+        time.sleep(0.5)
+    raise AssertionError(
+        f"{claim_urn} is not reachable through `dataset.assertions` on {dataset_urn} after "
+        f"{timeout_s:.0f}s. The entity exists (the state assertion above already read it by "
+        "identity), so this is the dataset->assertion relationship index not catching up — "
+        "not a missing write. The browser reads that entry point and fetches ONCE, so it "
+        "could only ever show a stale page from here."
+    )
 
 
 def _serve_in_process(service):
@@ -730,11 +807,23 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
     test on it would have made the test lie the moment it went green once.
 
     So the freshness window varies per run. It is an odd-looking number and a REAL claim: a
-    genuine `FreshnessClaim` about a real dataset, decided by the real checker. `support_
-    tickets` is ~2 days old, so any window in this range is honestly Supported — which keeps
-    the correction loop out of a test that is about the write's tail, not about the loop.
+    genuine `FreshnessClaim` about a real dataset, decided by the real checker.
+    `RECENTLY_MODIFIED` carries a fresh timestamp — the seed declares freshness claims about
+    it Supported — so any window in this range is honestly Supported, which keeps the
+    correction loop out of a test that is about the write's tail, not about the loop.
+
+    **AND THE DATASET IS NOT `support_tickets` ANY MORE, WHICH IS THE OTHER HALF.** A fresh
+    claim per run means a new permanent artifact per run, and nothing prunes them (the DELETE
+    above). The browser step below reads `GET /claims`, which is capped at 50 and returns a
+    dataset's artifacts oldest first — so once a dataset passes 50 artifacts, the claim this
+    test just made is off the page and its badge can never render. `support_tickets` reached
+    62 (this file hammered it from three tests), and this test went permanently red. Moving to
+    a dataset nothing else in the E2E writes to restores the headroom; the guard below makes
+    the day it runs out an immediate named failure instead of a 30-second mystery. The real
+    fix is pagination in the UI, and that stays an honestly documented deferred item.
     """
-    from tests.conftest import OWNED_BY_CAROL
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+    from tests.conftest import RECENTLY_MODIFIED
 
     from attest.api.service import AuditService
     from attest.graph import Pipeline
@@ -742,8 +831,20 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
     from attest.retrieval import ClaimQuery, ClaimReader, ReadState
     from attest.store import AuditStore
 
+    # THE DECAY GUARD, and it is this test's own history rather than belt-and-braces.
+    # Checked BEFORE the audit, so a saturated dataset costs no tokens and fails by name.
+    _, held = client.list_dataset_assertions(RECENTLY_MODIFIED, limit=None)
+    assert held < _CLAIMS_PAGE_SIZE, (
+        f"{RECENTLY_MODIFIED} holds {held} claim artifacts and `GET /claims` returns at most "
+        f"{_CLAIMS_PAGE_SIZE}, oldest first. The fresh claim this test is about to publish "
+        "would be off the page, so the browser could never see its badge — which is how this "
+        "test died on `support_tickets` at 62 artifacts. Artifacts cannot be deleted (the "
+        "DELETE returns 200 and removes nothing), so the remedy is `just reset` to rebuild "
+        "the catalog from the seed. See NOTES.md."
+    )
+
     window = 1000 + int(time.time()) % 9000
-    agent_output = f"The dataset {OWNED_BY_CAROL} is refreshed within {window} hours."
+    agent_output = f"The dataset {RECENTLY_MODIFIED} is refreshed within {window} hours."
 
     real_client = client
     broken = _BreaksTheReportStep(real_client)
@@ -778,6 +879,16 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
 
         stored = service.get(run_id)
         assert len(stored.claims) == 1, [c.raw_text for c in stored.claims]
+        # The OTHER thing that can drift out from under this test: the seeded `fresh`
+        # timestamp ages, and once the dataset is older than the window floor (1000h) this
+        # claim becomes Contradicted and drags in the correction loop, which this test is
+        # not about. Assert the precondition here so that arrives as one clear line rather
+        # than as a confusing extra control on the checkpoint screen. Remedy: `just seed`.
+        assert stored.claims[0].verdict == "Supported", (
+            f"the freshness claim came back {stored.claims[0].verdict}, not Supported. "
+            f"{RECENTLY_MODIFIED} has aged past the {window}h window this test asserts, so "
+            "the seeded timestamps need regenerating: `just seed`."
+        )
         artifact_urn = wb.claim_urn(stored.claims[0].claim)
 
         # NOT deleted first, and the docstring says why: the delete returns 200 and leaves
@@ -802,17 +913,24 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
         # ASSERT THE BACKEND STATE FIRST, so a failure below names the layer that is wrong.
         # Without this, "the UI never showed Incomplete" is indistinguishable from "the
         # backend never produced Incomplete", and the first version of this test spent its
-        # time hunting the UI for a state the read had not reached — most often because the
-        # artifact still carried a verdict a DELETE had not finished propagating (the
-        # content-addressing trap, one layer down).
-        state = _await_read_state(
-            service, OWNED_BY_CAROL, artifact_urn, ReadState.INCOMPLETE
-        )
+        # time hunting the UI for a state the read had not reached.
+        state = _await_read_state(service, artifact_urn, ReadState.INCOMPLETE)
         assert state is ReadState.INCOMPLETE, (
-            f"the half-written claim reads {state.value}, not incomplete. A verdict is "
-            "present when none should be: the DELETE above did not take, so this claim is "
-            "showing an EARLIER run's verdict and the state under test is masked."
+            f"the half-written claim reads {_named(state)}, not incomplete.\n"
+            "  <no artifact at this URN>: the `upsert` step did not land either, so there is "
+            "nothing half-written to read — the injected failure is at `report`, which runs "
+            "after it.\n"
+            "  complete: a verdict is present when none should be. This claim was not fresh, "
+            "so it is showing an EARLIER run's verdict and the state under test is masked "
+            "(the content-addressing trap — the freshness window must vary per run).\n"
+            "  unknown/pending-lag: the catalog is silent and Attest's own record disagrees "
+            "with the write that was just recorded as failed."
         )
+
+        # THE INDEX BARRIER, crossed BEFORE the browser is asked to look. The explorer
+        # fetches once per filter change, so it must not be pointed at the dataset until the
+        # relationship read can actually return this claim. See `_await_dataset_visibility`.
+        visible_after = _await_dataset_visibility(client, RECENTLY_MODIFIED, artifact_urn)
 
         page.get_by_role("button", name="Published claims").first.click()
         page.get_by_role("heading", name="What the next agent inherits").wait_for(timeout=30_000)
@@ -820,14 +938,51 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
         # SCOPE TO THE DATASET, and this is not tidiness. The explorer opens UNFILTERED,
         # which is `searchAcrossEntities` — an EVENTUALLY-CONSISTENT index that has not seen
         # an artifact upserted seconds ago. Naming the dataset switches the entry point to
-        # `dataset.assertions`, which is served from the entity itself and shows the claim
-        # immediately. The first version of this test asserted on the unfiltered list, found
-        # the word "Incomplete" belonging to some OTHER run's card, and then looked for a
-        # Repair button that was never going to be there. Scoping is what makes the
-        # assertions be about OUR claim.
-        page.get_by_label("Dataset").select_option(OWNED_BY_CAROL)
+        # `dataset.assertions`, which is scoped to the entity. The first version of this test
+        # asserted on the unfiltered list, found the word "Incomplete" belonging to some OTHER
+        # run's card, and then looked for a Repair button that was never going to be there.
+        # Scoping is what makes the assertions be about OUR claim.
+        page.get_by_label("Dataset").select_option(RECENTLY_MODIFIED)
         badge = page.get_by_text("Incomplete").first
-        badge.wait_for(timeout=30_000)
+        try:
+            badge.wait_for(timeout=30_000)
+        except PlaywrightTimeout as exc:
+            # NEVER let this be a bare 30-second timeout. The explorer fetches ONCE per
+            # filter change, so "the badge is not there" has several very different causes —
+            # the listing did not contain the claim, it contained it in another state, or the
+            # request failed — and a timeout cannot tell them apart. That is the file
+            # header's rule (a mystery hang is the same symptom as five other bugs), and it
+            # is exactly what cost this test two sessions of misdiagnosis. So the failure
+            # says what the backend served and what the browser asked for.
+            listed = service.claims(ClaimQuery(target_urn=RECENTLY_MODIFIED))
+            asked = [(m, u.split("127.0.0.1")[-1], s) for m, u, s, _ in calls.seen]
+            # WHICH QUERY IS THE PAGE ACTUALLY SHOWING? The explorer renders the entry point
+            # it was served ("Where this was filtered"). If the dropdown names the dataset
+            # but the page still shows `searchAcrossEntities`, the browser is displaying the
+            # response to a DIFFERENT request than the one the filter asked for.
+            showing = (
+                "searchAcrossEntities"
+                if page.get_by_text("searchAcrossEntities").count()
+                else "dataset.assertions"
+                if page.get_by_text("dataset.assertions").count()
+                else "<no retrieval panel>"
+            )
+            selected = page.get_by_label("Dataset").input_value()
+            rendered = "\n".join(
+                f"      {c.state.value:12} verdict={c.artifact.verdict!s:22} "
+                f"{c.artifact.claim_urn}"
+                for c in listed.claims
+            )
+            raise AssertionError(
+                "the explorer never rendered an `Incomplete` badge for the half-written "
+                f"claim.\n  looking for : {artifact_urn}\n"
+                f"  entry point : {listed.retrieval.entry_point}, considered "
+                f"{listed.retrieval.considered} of {listed.retrieval.total}\n"
+                f"  backend served this listing for the dataset:\n{rendered or '      (empty)'}\n"
+                f"  the PAGE is showing : {showing}\n"
+                f"  the dropdown says   : {selected}\n"
+                f"  browser API calls: {asked}"
+            ) from exc
 
         # EXPAND THE CARD. The repair control lives inside the collapsed panel
         # (ClaimArtifactCard.tsx), so it is not in the DOM until a human opens the card —
@@ -855,13 +1010,11 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
         # that, so a timeout here is NOT "DataHub was slow": it means the write did not land.
         # That distinction is what keeps this assertion honest rather than flaky, and it is
         # why this polls the STATE rather than sleeping a fixed time and hoping.
-        state = _await_read_state(
-            service, OWNED_BY_CAROL, artifact_urn, ReadState.COMPLETE, timeout_s=30
-        )
+        state = _await_read_state(service, artifact_urn, ReadState.COMPLETE, timeout_s=30)
         assert state is ReadState.COMPLETE, (
-            f"the repaired claim reads {getattr(state, 'value', state)} after 30s. The "
-            "readable-verdict lag is a measured ~2s, so this is a write that did not land, "
-            "not an index catching up."
+            f"the repaired claim reads {_named(state)} after 30s. The readable-verdict lag "
+            "is a measured ~2s, so this is a write that did not land, not an index catching "
+            "up."
         )
     finally:
         page.close()
@@ -872,13 +1025,21 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
     # Not racing: COMPLETE is decided by DataHub ALONE (`read_state` asks the catalog first
     # and its answer is final), so once the poll above saw COMPLETE, a reader with no store
     # sees it too. The store can only ever EXPLAIN an absent verdict, never conjure one.
+    # DELIBERATELY the DATASET-SCOPED read, not `reader.get(urn)`: this is the thesis query
+    # ("show me what the next agent inherits about this dataset") answered by a reader with
+    # no store, and that is worth exercising here as well as by identity. It is therefore the
+    # one scan left in this test that a saturated dataset could decay, so the failure names
+    # that possibility instead of leaving it to be rediscovered.
     reader = ClaimReader(client, store=None)
-    got = [
-        c
-        for c in reader.list(ClaimQuery(target_urn=OWNED_BY_CAROL)).claims
-        if c.artifact.claim_urn == artifact_urn
-    ]
-    assert got, f"{artifact_urn} is not on the dataset after the repair"
+    inherited = reader.list(ClaimQuery(target_urn=RECENTLY_MODIFIED))
+    got = [c for c in inherited.claims if c.artifact.claim_urn == artifact_urn]
+    assert got, (
+        f"{artifact_urn} is not on the dataset after the repair. The read considered "
+        f"{inherited.retrieval.considered} of {inherited.retrieval.total} artifacts; if those "
+        "differ, "
+        "this listing was TRUNCATED at the cap and the claim is newer than everything on the "
+        "page rather than absent from the catalog — `just reset`. See NOTES.md."
+    )
     assert got[0].state is ReadState.COMPLETE
     assert got[0].artifact.verdict == "Supported"
     # EXACTLY ONE verdict, not two. The repair re-runs an idempotent write keyed by the run's
@@ -893,6 +1054,7 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
         print("  A HALF-WRITTEN CLAIM, REPAIRED FROM THE BROWSER")
         print(f"  {'=' * 72}")
         print(f"\n  {artifact_urn}")
+        print(f"    dataset.assertions saw it after {visible_after:.1f}s (relationship index)")
         print("    report step broken -> read `incomplete`, Repair offered")
         print("    POST /writeback    -> read `complete`, same artifact URN")
         print(f"    verdict            : {got[0].artifact.verdict}")
