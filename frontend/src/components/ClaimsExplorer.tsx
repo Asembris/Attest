@@ -52,18 +52,41 @@ export default function ClaimsExplorer({ onBack }: { onBack: () => void }) {
   // LIVE filter state would let it describe a query that has not run yet.
   const applied = useRef<ClaimFilters>({});
 
+  // WHICH REQUEST IS THE LATEST. Reads land in whatever order the server finishes them, and
+  // this screen issues two in quick succession on the most ordinary path there is: it loads
+  // UNFILTERED on mount (`searchAcrossEntities`, catalog-wide) and a human picks a dataset a
+  // moment later (`dataset.assertions`, scoped). The scoped read is much the faster of the
+  // two, so the slower catalog-wide response routinely lands SECOND — and, unguarded,
+  // overwrote the answer to the question that was actually asked.
+  //
+  // That is not a cosmetic race here. `applied.current` is set when a request goes OUT, so
+  // the "Where this was filtered" panel would describe the scoped query while the rows on
+  // screen came from the catalog-wide one: the disclosure asserting DataHub scoped a result
+  // it did not scope. That panel exists precisely so a reader is never misled about which
+  // predicates the catalog applied, and this is the one way it could lie.
+  //
+  // MEASURED through the browser E2E: 2 of 3 runs rendered `searchAcrossEntities` results
+  // while the dropdown named a dataset. So a stale response is DISCARDED — the newest
+  // request always wins, whatever order the network answers in.
+  const latest = useRef(0);
+
   const load = useCallback(async (next: ClaimFilters, resetPolls = true) => {
+    const seq = ++latest.current;
     setLoading(true);
     setError(null);
     applied.current = next;
     try {
       const body = await listClaims(next);
+      if (seq !== latest.current) return; // superseded — never render an older answer
       setData(body);
       if (resetPolls) setPollsLeft(POLL_ATTEMPTS);
     } catch (e) {
+      if (seq !== latest.current) return; // a superseded FAILURE is not this query's error
       setError(e instanceof ApiError ? e.detail : 'Could not reach Attest.');
     } finally {
-      setLoading(false);
+      // Only the newest request owns the spinner; a stale one finishing must not clear it
+      // while the current read is still in flight.
+      if (seq === latest.current) setLoading(false);
     }
   }, []);
 
