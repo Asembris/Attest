@@ -3,7 +3,7 @@
   "name": "customer_contact",
   "platform": "snowflake",
   "description": "Contact channels per customer. One row per customer per channel.",
-  "last_modified": "2026-08-02T09:40:46.234000Z",
+  "last_modified": "2026-08-02T12:36:04.271000Z",
   "owners": [
     "urn:li:corpuser:alice.chen"
   ],
