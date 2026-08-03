@@ -3,7 +3,7 @@
   "name": "hr_headcount",
   "platform": "postgres",
   "description": "Headcount and compensation by employee. Classified with tags only — the HR domain never adopted the glossary.",
-  "last_modified": "2026-08-02T09:40:46.234000Z",
+  "last_modified": "2026-08-02T12:36:04.271000Z",
   "owners": [
     "urn:li:corpuser:dana.wu"
   ],
