@@ -123,3 +123,42 @@ test-pinning a file being substantially rewritten invites churn in the pin rathe
 prose, and the property that actually matters — every number traces to a committed JSON — holds
 today. Build it once the README settles. Note the limit of what it would buy: a regex pins
 *numbers*, and the miss that really happened was a **sentence**.
+
+## The calibration receipt schema has drifted from the labeler that writes it — so DO NOT run `just bench-calibrate` before judging
+
+**State.** [`benchmark/labeler.py`](benchmark/labeler.py) writes the **k-run** schema — `k`,
+`agreement_per_run`, `agreement_mean`, `judge_self_consistency`, `unstable_across_runs`,
+`disputed_in_every_run`, `disputed_in_some_runs` — to `benchmark/results/calibration.json`, plus
+one `calibration-run{N}.json` beside it per run. Both **committed** receipts
+(`calibration.json`, `calibration-before-policy-declared.json`) are still the older
+**single-run** schema: `agreement`, `agreed`, `disputed`, `labels`. And
+[`test_calibration_consistency.py`](tests/test_calibration_consistency.py) reads exactly those
+single-run keys off every file matching `calibration*.json`.
+
+Both halves moved in `0b276cf` — the writer to k-run, the receipts hand-corrected in place and
+left in the shape they were measured in. Nothing has run the labeler since, so the mismatch has
+never surfaced.
+
+**Consequence, and it is why this is written down rather than fixed.** `calibration.json` is a
+**cited** receipt: it holds the `97.5% / class-03` row that [CLAUDE.md](CLAUDE.md) §7,
+`benchmark/README.md`'s table and `frontend/src/data/benchmarkData.ts` all trace to, keyed by
+`(agreement, disputed case ids)`. Re-running `just bench-calibrate` overwrites it with a payload
+carrying none of those keys, so the three trace tests raise `KeyError` instead of reporting
+drift, the per-run files dropped beside it are JSON **lists** that the same glob picks up and
+`TypeError`s on, and the cited row's trace is gone even once the reader is taught the new shape.
+A displayed figure would be left pointing at a receipt that no longer contains it — on a project
+whose whole thesis is that every displayed number traces to a committed measurement.
+
+**Trigger.** Judging is over, or a calibration figure has to change.
+
+**Lever (NOT built).** Teach `_receipts()` the k-run schema (`agreement_mean` /
+`disputed_in_every_run`, and skip the list-shaped `calibration-run*.json`), then re-run the
+labeler and re-commit both the receipt and the rows that trace to it.
+
+**Why it stays on the shelf.** The fix is only verifiable by RUNNING the labeler, which is the
+one action that destroys the cited receipt — so it cannot be done safely on the eve of a
+deadline, and doing it after judging costs nothing. It is also not a serialization detail:
+which half is wrong is a real question. The committed receipts are single-run; the labeler is
+k-run **by design** (§7 — one run's dispute list is not a fact about the labels), so
+reconciling means deciding whether the displayed table stays two single-run rows or becomes a
+k-run summary. That is a claim about what is being shown, and it wants a session, not a patch.
