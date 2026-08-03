@@ -379,10 +379,12 @@ Naming the boundary is what makes the rest credible.
   design**, so if it ever goes green the finding has expired and this decision is worth
   reopening. That is the same discipline as `test_fixture_drift.py` — an assertion that only
   ever passes is a green light wired to nothing.
-- **It tests the read tools an adapter would use** — `get_entities` and
-  `list_schema_fields`, on explicit URNs. It does not evaluate `search`, lineage, or query
-  tools, which are not what a `Reader` needs and which Attest deliberately does not want
-  (free-text entity resolution is out of scope by design — CLAUDE.md §4).
+- **It tests the one read tool an adapter would use** — `get_entities`, on explicit URNs.
+  Schema fields arrive embedded in that response, so `list_schema_fields` is never called —
+  the schema-truncation caveat recorded above is read off the server's source, not measured
+  here. It does not evaluate `search`, lineage, or query tools, which are not what a `Reader`
+  needs and which Attest deliberately does not want (free-text entity resolution is out of
+  scope by design — CLAUDE.md §4).
 - **It does not prove no adapter is possible in principle.** It proves no adapter is possible
   *on this server's responses* without inventing data the catalog did not send. Three of the
   four defects are fixable upstream, and we have written them up (§7). Were they fixed, this
