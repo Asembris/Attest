@@ -3,7 +3,7 @@
   "name": "external_report",
   "platform": "postgres",
   "description": "A vendor-delivered report registered for lineage. The columns live in the vendor's system; no schema has ever been ingested.",
-  "last_modified": "2026-08-02T12:36:04.271000Z",
+  "last_modified": "2026-08-04T13:17:09.514000Z",
   "owners": [
     "urn:li:corpuser:bob.martinez"
   ],

@@ -3,7 +3,7 @@
   "name": "audit_log",
   "platform": "postgres",
   "description": "Append-only record of privileged actions. Nobody ever classified the table itself; one column was tagged when it was added.",
-  "last_modified": "2026-08-02T12:36:04.271000Z",
+  "last_modified": "2026-08-04T13:17:09.514000Z",
   "owners": [
     "urn:li:corpuser:dana.wu"
   ],
