@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-labelledby="t d">
+  <title id="t">Attest</title>
+  <desc id="d">The Attest mark, simplified for small sizes.</desc>
+  <rect width="32" height="32" rx="7.5" fill="#0E0E12"/>
+  <g fill="none" stroke="#F5F3EE" stroke-width="1.7" stroke-linecap="round">
+    <path d="M16.00 6.00 L5.47 26.00"/>
+    <path d="M16.00 6.00 L26.53 26.00"/>
+    <path d="M8.80 19.68 L23.20 19.68"/>
+  </g>
+  <circle cx="16.00" cy="19.68" r="2.3" fill="#F5F3EE"/>
+</svg>

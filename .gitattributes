@@ -1,0 +1,12 @@
+# docs/replay/ is BUILT OUTPUT, committed only because GitHub Pages serves main//docs and has
+# no build step — the bytes have to be in the repo or the page does not exist.
+#
+# Store it VERBATIM. With `core.autocrlf=true` (this machine, and the Windows default) git
+# would rewrite the line endings of the built JS, CSS and SVG on checkout, so the files a
+# judge is served would not be the files `just replay-verify` drove a browser through. It
+# would also produce a whole-bundle diff every time it is rebuilt from a machine whose
+# autocrlf differs — churn that hides a real change to the replay inside noise.
+#
+# Scoped to this directory on purpose: the rest of the tree keeps whatever normalization it
+# has today, so nothing outside the replay moves.
+docs/replay/** -text
