@@ -295,9 +295,11 @@ query { dataset(urn: $urn) {
 } }
 ```
 
-That single query returns, for each claim: its ID, what it asserts, its grain, every verdict
-it has ever had, when, by which run, and who signed each one off. **From DataHub. Without
-Attest running.**
+That single query returns, for each claim: its ID, what it asserts, its grain, its verdict
+events — newest first, capped by the `limit` in the query above, with `total` beside them so a
+longer history reads as truncated rather than as the whole story — when each was recorded, by
+which run, and who signed it off. **From DataHub. Without Attest running.** (Append-only is a
+property of the storage; the read is bounded, and it reports the bound.)
 
 ```graphql
 # Every contradicted ownership claim in the catalog.
@@ -423,7 +425,7 @@ Two new read endpoints, thin projections of the above — **no new state**:
 | Endpoint | Returns |
 | --- | --- |
 | `GET /claims?target_urn=&verdict=&claim_type=&reviewer=&since=` | Claim artifacts, filtered. `target_urn` → `dataset.assertions`; `verdict`/`claim_type` → the indexed search; `reviewer`/`since` → applied client-side over the run events, and the response says so. |
-| `GET /claims/{claim_id}` | One claim: asserted value, grain, and its full verdict history. |
+| `GET /claims/{claim_id}` | One claim: asserted value, grain, and its verdict history — the newest events up to the read's cap, with the catalog's own total round-tripped so a longer one is named as truncated. |
 
 **These read DataHub, not the store.** That is deliberate and it is the whole thesis: if the
 API answered from SQLite, the demo would prove nothing about what a second agent inherits.
@@ -765,8 +767,9 @@ boundary is what makes the rest credible.
 **Today:** an opaque run UUID pointing at application state it cannot reach.
 
 **After this:** two independently-addressable claim artifacts on the dataset, each carrying
-what it asserted, at what grain, the verdict, the evidence, who approved it and when, every
-prior verdict it has ever had — and the whole set is one GraphQL query against the catalog,
-with no Attest process running.
+what it asserted, at what grain, the verdict, the evidence, who approved it and when, and its
+prior verdicts back to the read's cap — with the catalog's own total beside them, so a longer
+history is named as truncated rather than served as all of it. The whole set is one GraphQL query
+against the catalog, with no Attest process running.
 
 Measured on the pinned server before it was designed.

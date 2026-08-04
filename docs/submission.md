@@ -63,8 +63,10 @@ load-bearing: two claims about one dataset **coexist** (they hash differently), 
 it never overwrites.
 
 The proof is a reader constructed with **no Attest database at all** —
-`ClaimReader(client, store=None)`. Every claim, verdict, reviewer and full history comes back
-out of DataHub alone. That runs live, against real GMS.
+`ClaimReader(client, store=None)`. Every claim, verdict, reviewer and verdict history comes back
+out of DataHub alone — the history capped at the newest 50 events, with the catalog's own total
+round-tripped so a longer one reads as truncated rather than as the whole story. That runs live,
+against real GMS.
 
 **Nothing reaches the catalog without a human.** `POST /audit` writes nothing, ever. Every
 audited claim parks for a per-claim decision, and `publish` is separate from

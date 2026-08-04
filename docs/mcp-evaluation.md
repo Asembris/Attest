@@ -359,7 +359,7 @@ tripwire that will tell us the day the finding expires.
   inverting transport alongside the real read, purely to be able to say we touched MCP,
   would be the hollow checkbox integration this finding argues against — and a second read
   of the same catalog re-opens the consistency boundary that
-  [cache.py](../src/attest/datahub/cache.py) exists to hold (one run, one frozen snapshot).
+  [cache.py](../src/attest/datahub/cache.py) exists to hold (one run, one frozen read per entity).
   Exercising a path we just proved cannot carry a verdict, with a note explaining that it
   doesn't decide anything, is decoration.
 
