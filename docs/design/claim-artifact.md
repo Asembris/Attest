@@ -427,9 +427,10 @@ Two new read endpoints, thin projections of the above — **no new state**:
 | `GET /claims?target_urn=&verdict=&claim_type=&reviewer=&since=` | Claim artifacts, filtered. `target_urn` → `dataset.assertions`; `verdict`/`claim_type` → the indexed search; `reviewer`/`since` → applied client-side over the run events, and the response says so. |
 | `GET /claims/{claim_id}` | One claim: asserted value, grain, and its verdict history — the newest events up to the read's cap, with the catalog's own total round-tripped so a longer one is named as truncated. |
 
-**These read DataHub, not the store.** That is deliberate and it is the whole thesis: if the
-API answered from SQLite, the demo would prove nothing about what a second agent inherits.
-The store answers a different question (§7).
+**These read their claims from DataHub, not from the store** — the store is consulted only to
+explain the catalog's *silence*, never to supply a claim or a verdict. That is deliberate and it
+is the whole thesis: if the API answered from SQLite, the demo would prove nothing about what a
+second agent inherits. The store answers a different question (§7).
 
 **The MCP path is where this lands next**, and it is why the boundary is a query rather than
 a report: an agent asking "what is known about this dataset" gets claims, verdicts, and

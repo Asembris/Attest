@@ -93,9 +93,10 @@ Two properties fall out of content-addressing, and both are load-bearing:
   sentence doesn't mint a second artifact either; see
   [the design](docs/design/claim-artifact.md).)
 
-**The proof is a reader with no Attest database.** Retrieval reads **DataHub**, never Attest's store
-— `GET /claims`, `GET /claims/{claim_urn}` — and the same reader can be constructed with no store at
-all:
+**The proof is a reader with no Attest database.** The claims come from **DataHub**, never Attest's
+store — `GET /claims`, `GET /claims/{claim_urn}` — and the store is consulted only to explain the
+catalog's *silence*, never to supply a claim or a verdict. So the same reader can be constructed
+with no store at all:
 
 ```python
 reader = ClaimReader(client, store=None)      # no Attest database, at all
