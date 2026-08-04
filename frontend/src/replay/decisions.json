@@ -1,0 +1,18 @@
+[
+  {
+    "claim_index": 0,
+    "publish": true,
+    "reviewer": "attest-ui",
+    "accept_correction": true
+  },
+  {
+    "claim_index": 1,
+    "publish": true,
+    "reviewer": "attest-ui"
+  },
+  {
+    "claim_index": 2,
+    "publish": true,
+    "reviewer": "attest-ui"
+  }
+]

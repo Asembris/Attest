@@ -1,0 +1,15 @@
+{
+  "captured_at": "2026-08-04T12:34:16+00:00",
+  "run_id": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+  "datahub_core_version": "v1.5.0.6",
+  "model": "gpt-4o-mini",
+  "capturing_commit": "c9cbb5a6c57505bfe873732c6b52d8f15b4d2c19",
+  "capturing_commit_dirty": true,
+  "files": {
+    "health.json": "8d2c06e0b49da09156d4a8492294d447a036cb8e88e8bc0b401a174a806913b8",
+    "audit-parked.json": "ec9fcd68508c5d1afda45a38e8fbe6b727eefe8a4fd5842ca866f40f923308d7",
+    "approval.json": "05dd4f03a2de5d55661431a7baf110a1a021383397cb1a706e458e7a96f7c797",
+    "claims.json": "dcb08f4ce44b26387a0916cecbdec1af1041a6b9fa7a816ddaf08f75d6b56066",
+    "decisions.json": "8689418ee80b5f7f0c14bda01b1921f36a3fac9480896be8054741b5147b5101"
+  }
+}
