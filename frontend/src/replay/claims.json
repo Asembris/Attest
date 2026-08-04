@@ -15,16 +15,16 @@
           "verdict": "Supported",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Supported"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Supported",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -36,47 +36,11 @@
                   "note": "Catalog lists 1 owner(s)."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Supported",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Supported",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "SUCCESS"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         },
         {
@@ -91,16 +55,16 @@
           "verdict": "Insufficient-Coverage",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Insufficient-Coverage"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Insufficient-Coverage",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -110,43 +74,11 @@
                   "note": "Ownership aspect absent."
                 }
               ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
+              "snapshot_id": "sha256:fdd04a3cb6f1d1e0",
               "native_type": "ERROR"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         },
         {
@@ -165,16 +97,16 @@
           "verdict": "Contradicted",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Contradicted"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Contradicted",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -196,67 +128,11 @@
                   "note": "Tagged PII."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Contradicted",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Contradicted",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "FAILURE"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -288,16 +164,16 @@
           "verdict": "Supported",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Supported"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Supported",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -309,47 +185,11 @@
                   "note": "Catalog lists 1 owner(s)."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Supported",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Supported",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "SUCCESS"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -387,16 +227,16 @@
           "verdict": "Contradicted",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Contradicted"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Contradicted",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -418,67 +258,11 @@
                   "note": "Tagged PII."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Contradicted",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Contradicted",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "FAILURE"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -512,16 +296,16 @@
           "verdict": "Insufficient-Coverage",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Insufficient-Coverage"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Insufficient-Coverage",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -531,43 +315,11 @@
                   "note": "Ownership aspect absent."
                 }
               ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
+              "snapshot_id": "sha256:fdd04a3cb6f1d1e0",
               "native_type": "ERROR"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -619,16 +371,16 @@
           "verdict": "Supported",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Supported"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Supported",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -640,47 +392,11 @@
                   "note": "Catalog lists 1 owner(s)."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Supported",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Supported",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "SUCCESS"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         },
         {
@@ -695,16 +411,16 @@
           "verdict": "Insufficient-Coverage",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Insufficient-Coverage"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Insufficient-Coverage",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -714,43 +430,11 @@
                   "note": "Ownership aspect absent."
                 }
               ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
+              "snapshot_id": "sha256:fdd04a3cb6f1d1e0",
               "native_type": "ERROR"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -788,16 +472,16 @@
           "verdict": "Contradicted",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Contradicted"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Contradicted",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -819,67 +503,11 @@
                   "note": "Tagged PII."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Contradicted",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Contradicted",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "FAILURE"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -952,16 +580,16 @@
           "verdict": "Supported",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Supported"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Supported",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -973,47 +601,11 @@
                   "note": "Catalog lists 1 owner(s)."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Supported",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Supported",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "SUCCESS"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -1133,16 +725,16 @@
           "verdict": "Contradicted",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Contradicted"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Contradicted",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -1164,67 +756,11 @@
                   "note": "Tagged PII."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Contradicted",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Contradicted",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "FAILURE"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -1300,16 +836,16 @@
           "verdict": "Insufficient-Coverage",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Insufficient-Coverage"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Insufficient-Coverage",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -1319,43 +855,11 @@
                   "note": "Ownership aspect absent."
                 }
               ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
+              "snapshot_id": "sha256:fdd04a3cb6f1d1e0",
               "native_type": "ERROR"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -1419,6 +923,46 @@
     "response": {
       "claims": [
         {
+          "claim_urn": "urn:li:assertion:attest-51009f950101483a9c30",
+          "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+          "claim_type": "ownership",
+          "grain": "table",
+          "description": "Supported — The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) is owned by alice.chen.",
+          "asserted": {
+            "owner_urn": "urn:li:corpuser:alice.chen"
+          },
+          "verdict": "Supported",
+          "state": "complete",
+          "failed_step": null,
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
+          "tags": [
+            "urn:li:tag:Attest-Supported"
+          ],
+          "stale_tag": false,
+          "history": [
+            {
+              "at": "2026-08-04T22:23:23.477000Z",
+              "verdict": "Supported",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
+              "reviewer": "attest-ui",
+              "decision": "accepted",
+              "evidence": [
+                {
+                  "field": "ownership.owners[].owner.urn",
+                  "value": [
+                    "urn:li:corpuser:alice.chen"
+                  ],
+                  "note": "Catalog lists 1 owner(s)."
+                }
+              ],
+              "snapshot_id": "sha256:ead25a7b8669075c",
+              "native_type": "SUCCESS"
+            }
+          ],
+          "history_total": 1,
+          "history_truncated": false
+        },
+        {
           "claim_urn": "urn:li:assertion:attest-a6016c69300d32bf5a0a",
           "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
           "claim_type": "classification",
@@ -1434,16 +978,16 @@
           "verdict": "Contradicted",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Contradicted"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Contradicted",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -1465,143 +1009,11 @@
                   "note": "Tagged PII."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Contradicted",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Contradicted",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "FAILURE"
             }
           ],
-          "history_total": 3,
-          "history_truncated": false
-        },
-        {
-          "claim_urn": "urn:li:assertion:attest-51009f950101483a9c30",
-          "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
-          "claim_type": "ownership",
-          "grain": "table",
-          "description": "Supported — The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD) is owned by alice.chen.",
-          "asserted": {
-            "owner_urn": "urn:li:corpuser:alice.chen"
-          },
-          "verdict": "Supported",
-          "state": "complete",
-          "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
-          "tags": [
-            "urn:li:tag:Attest-Supported"
-          ],
-          "stale_tag": false,
-          "history": [
-            {
-              "at": "2026-08-04T12:25:55.117000Z",
-              "verdict": "Supported",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Supported",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Supported",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            }
-          ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -1636,16 +1048,16 @@
           "verdict": "Supported",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Supported"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Supported",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -1657,47 +1069,11 @@
                   "note": "Catalog lists 1 owner(s)."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Supported",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "SUCCESS"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Supported",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": [
-                    "urn:li:corpuser:alice.chen"
-                  ],
-                  "note": "Catalog lists 1 owner(s)."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "SUCCESS"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -1738,16 +1114,16 @@
           "verdict": "Contradicted",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Contradicted"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Contradicted",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -1769,67 +1145,11 @@
                   "note": "Tagged PII."
                 }
               ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Contradicted",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
-              "native_type": "FAILURE"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Contradicted",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
-                  "value": [
-                    "urn:li:tag:PII",
-                    "urn:li:tag:Tier1",
-                    "urn:li:tag:Verified",
-                    "urn:li:glossaryTerm:EmailAddress",
-                    "urn:li:glossaryTerm:PersonName",
-                    "urn:li:glossaryTerm:CustomerIdentifier"
-                  ],
-                  "note": "Table carries 6 label(s)."
-                },
-                {
-                  "field": "tags.tags[].tag.urn",
-                  "value": "urn:li:tag:PII",
-                  "note": "Tagged PII."
-                }
-              ],
-              "snapshot_id": "sha256:57e1feba3dcd8c8b",
+              "snapshot_id": "sha256:ead25a7b8669075c",
               "native_type": "FAILURE"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -1886,16 +1206,16 @@
           "verdict": "Insufficient-Coverage",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Insufficient-Coverage"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Insufficient-Coverage",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -1905,43 +1225,11 @@
                   "note": "Ownership aspect absent."
                 }
               ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
+              "snapshot_id": "sha256:fdd04a3cb6f1d1e0",
               "native_type": "ERROR"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
@@ -2018,16 +1306,16 @@
           "verdict": "Insufficient-Coverage",
           "state": "complete",
           "failed_step": null,
-          "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+          "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
           "tags": [
             "urn:li:tag:Attest-Insufficient-Coverage"
           ],
           "stale_tag": false,
           "history": [
             {
-              "at": "2026-08-04T12:25:55.117000Z",
+              "at": "2026-08-04T22:23:23.477000Z",
               "verdict": "Insufficient-Coverage",
-              "audit_run": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+              "audit_run": "07d64589-77a3-4810-a442-12f967ff8261",
               "reviewer": "attest-ui",
               "decision": "accepted",
               "evidence": [
@@ -2037,43 +1325,11 @@
                   "note": "Ownership aspect absent."
                 }
               ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-04T12:21:17.826000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "8a02240d-819f-47b2-806a-c66f484a781e",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
-              "native_type": "ERROR"
-            },
-            {
-              "at": "2026-08-02T18:49:40.553000Z",
-              "verdict": "Insufficient-Coverage",
-              "audit_run": "ede7a36c-bcb4-4e6c-951b-95b2bb333354",
-              "reviewer": "attest-ui",
-              "decision": "accepted",
-              "evidence": [
-                {
-                  "field": "ownership.owners[].owner.urn",
-                  "value": null,
-                  "note": "Ownership aspect absent."
-                }
-              ],
-              "snapshot_id": "sha256:ed4e8800b000e3a9",
+              "snapshot_id": "sha256:fdd04a3cb6f1d1e0",
               "native_type": "ERROR"
             }
           ],
-          "history_total": 3,
+          "history_total": 1,
           "history_truncated": false
         }
       ],
