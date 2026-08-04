@@ -105,17 +105,22 @@ for c in page.claims:
     c.artifact.claim_urn            # urn:li:assertion:attest-a6016c69300d32bf5a0a
     c.artifact.claim_type           # 'classification'   (c.artifact.grain -> 'table')
     c.artifact.verdict              # 'Contradicted' — the STORED verdict, never inferred
-    c.artifact.history              # every verdict it has ever had, append-only
+    c.artifact.history              # the newest 50 verdict events, newest first
+    c.artifact.history_total        # the catalog's own count; history_truncated if it is larger
     c.artifact.history[-1].reviewer # who published it, and on what evidence
     c.stale_tag                     # derived from the artifact alone
 ```
 
-Every claim, verdict, reviewer and full history comes out of the catalog alone. That is the actual
-test that the knowledge was **inherited** rather than merely recorded, and it runs live
+Every claim, verdict, reviewer and verdict history comes out of the catalog alone. That is the
+actual test that the knowledge was **inherited** rather than merely recorded, and it runs live
 ([`test_live.py`](tests/test_live.py)).
 
-Three details keep that read honest. The listing **paginates and round-trips the catalog's total**,
-so a claim past the read cap is *named* as truncated rather than silently absent. An
+Three details keep that read honest, and each of them is a bound *named* rather than a bound
+hidden. The listing **paginates and round-trips the catalog's total**, so a claim past the read
+cap is *named* as truncated rather than silently absent — and one level down, a claim's verdict
+history is read **newest-50-first** (`runEvents(limit: 50)`), with the catalog's own total
+round-tripped beside it, so a longer history reads as `history_truncated` rather than as the whole
+story. The **storage** is append-only and unbounded; this **reader** is bounded, and it says so. An
 Insufficient-Coverage verdict's evidence round-trips as **absence** — a `null` that stays `null`,
 never collapsed to empty — because for that verdict the catalog's silence *is* the evidence. And a
 **stale verdict tag is detected from the artifact alone**, so a store-less reader sees it too. What
@@ -145,7 +150,7 @@ returns the right answers. Concretely:
 flowchart TD
     A["Agent prose, explicit URNs"] --> B["sanitize"]
     B --> C["decompose to typed claims"]
-    C --> D["resolve: one GraphQL snapshot per run"]
+    C --> D["resolve: one GraphQL snapshot per dataset, per run"]
     D --> E["deterministic checker"]
     E --> F["Supported / Contradicted / Insufficient-Coverage"]
     F --> G["explain, then guard the prose"]
@@ -182,9 +187,12 @@ only path to a write is a human publishing a parked run — and the three DataHu
 
 Three more things hold it up in practice:
 
-- **One snapshot per run.** Every claim is decided against a single frozen read of the catalog.
-  Without it, two claims about one dataset get checked against two different states of the world and
-  the report contradicts itself while each verdict is individually "correct".
+- **One snapshot per dataset, per run.** A run reads each entity once and freezes it, so every
+  claim about that dataset is decided against that one read. It is **not** a catalog-wide atomic
+  snapshot — two claims about *different* datasets may be read moments apart. The guarantee is
+  same-dataset-within-a-run, and it is the one that matters: without it, two claims about one
+  dataset get checked against two different states of the world and the report contradicts itself
+  while each verdict is individually "correct".
 - **The prose is guarded, and the guard is finite.** Explanations pass three gates — crosscheck,
   lexical faithfulness, polarity — and any failure ships a **deterministic template** instead. The
   precise invariant, and no more: *a detected polarity contradiction cannot ship as model prose, and
@@ -245,7 +253,7 @@ Every number here is a committed JSON artifact you can open. None is typed by ha
 | **Full pipeline**, prose in, 40 cases | accuracy **1.0**, macro-F1 **1.0**, **40/40** model-authored explanations, **0** template fallbacks, **0** guard rejections, **$0.0138309**, pass@3 = 1.0 | [`full.json`](benchmark/results/full.json) · `just bench-full` |
 | **Sabotage** — one checker broken on purpose | accuracy **0.675**, macro-F1 **0.668**, Supported precision **0.536**, **13** errors named | [`core-sabotaged-classification.json`](benchmark/results/core-sabotaged-classification.json) · `just bench-sabotage` |
 | **Cross-family labels** (Nemotron, Llama family) | **39/40 agreement (97.5%)**, 1 disputed | [`calibration.json`](benchmark/results/calibration.json) · `just bench-calibrate` |
-| **External trial** — a catalog we did **not** author, **not scored** | 15 claims, **15/15** matched the pre-run reading but only **14/15** answered the question asked, **15/15** URNs verbatim, **0** template fallbacks, **$0.0077** — and **15 of 67 datasets unauditable** | [`results.json`](docs/external-trial/results.json) · `just external-trial` |
+| **External trial** — a catalog we did **not** author, **not scored** | 15 claims, **15/15** outcomes matched the pre-run reading — 14 assessments plus one expected `ClaimError`, which is not a verdict — but only **14/15** answered the question asked; **15/15** URNs verbatim, **0** template fallbacks, **$0.0077** — and **15 of 67 datasets unauditable** | [`results.json`](docs/external-trial/results.json) · `just external-trial` |
 
 **100% is a conformance gate, not a capability score — and it must be read that way.** The checkers
 are deterministic code implementing exactly the rules the labels encode, so anything below 100% is a
@@ -452,7 +460,7 @@ always-current reference.
 | `POST /audit/{run_id}/approve` | The human checkpoint. Per claim: `publish` and `accept_correction`, independently. |
 | `POST /audit/{run_id}/writeback` | Repair a partial catalog write from the stored record. Approves nothing. |
 | `GET /claims` | Published claims, **read from DataHub**. Reports where each filter was applied. |
-| `GET /claims/{claim_urn}` | One claim artifact and its whole append-only verdict history. |
+| `GET /claims/{claim_urn}` | One claim artifact and its verdict history: the newest 50 events, plus the catalog's own total and a truncation flag. |
 | `GET /catalog/search` | Candidate datasets, over the **DataHub MCP Server**. `advisory: true` on every response — discovery, never evidence. |
 
 **Every audited claim parks for a human decision, whatever its verdict** — and `publish` is separate

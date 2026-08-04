@@ -10,7 +10,7 @@ in — is [CLAUDE.md](../CLAUDE.md).
 | --- | --- |
 | [Where the model boundary is drawn](#where-the-model-boundary-is-drawn) | The four questions pushed out of the deterministic core, and why each was pushed rather than guessed at. |
 | [How Attest decides what is PII](#how-attest-decides-what-is-pii) | The three named signals, precedence when they disagree, and `COMPLETENESS_REACHES_COLUMNS`. |
-| [The snapshot cache](#the-snapshot-cache-is-a-consistency-boundary) | One frozen read per run — a consistency boundary first, a cache second. |
+| [The snapshot cache](#the-snapshot-cache-is-a-consistency-boundary) | One frozen read per dataset, per run — a consistency boundary first, a cache second. |
 | [Why a graph](#why-a-graph-and-not-a-for-loop) · [Trajectory verification](#trajectory-verification) | What the graph buys over a `for` loop, and the seven invariants asserted against the run's own trace. |
 | [Self-correction](#self-correction-and-why-it-cannot-be-gamed) · [The human checkpoint](#the-human-checkpoint) | A revision may not change the subject, and nothing reaches the catalog unpublished. |
 | [Who audits the auditor](#who-audits-the-auditor) | The three prose gates, the exact size of the claim they make, and prompt injection. |
@@ -132,9 +132,17 @@ reads** of the catalog. If someone re-tags the table in between, Attest returns 
 saw it, and together, nonsense. **A verification tool that cannot say which state of the world it
 verified against has not verified anything.**
 
-So a run resolves each entity exactly once, and every claim in that run is decided against that one
-snapshot. The report then means something precise: *these verdicts hold against the catalog as it stood
-when this run read it.* The speed is a side effect — if it were only about speed it would be optional.
+So a run resolves each entity exactly once, and every claim in that run about *that* entity is
+decided against that one snapshot. Each verdict then means something precise: *this holds against the
+catalog as it stood when this run read that dataset.* The speed is a side effect — if it were only
+about speed it would be optional.
+
+**The freeze is per entity, not catalog-wide, and the claim is exactly that size.** The cache is a
+dict keyed by URN ([`cache.py`](../src/attest/datahub/cache.py)), so two claims about *different*
+datasets may be read moments apart and there is no atomic snapshot of the catalog anywhere in the
+system. What is guaranteed is that two claims about *the same* dataset can never be decided against
+two different states of it — which is the guarantee the incoherent report above actually needs, and
+the reason one report cannot contradict itself about one dataset.
 
 **Cross-run caching would be a liability, not an optimization.** A snapshot carried into the next audit
 means verifying today's claim against a catalog that no longer exists — the exact failure Attest was
@@ -419,6 +427,16 @@ alone. That guarantee rests on two properties of the run event, both pinned agai
   A retry that appended would forge a second audit in an append-only log.
 - **A real re-audit appends.** A later audit has a later `created_at`, a different key, and a
   new event. The history is real history, not a last-write-wins field.
+
+**Append-only is a property of the STORAGE; the READ is bounded, and the two must not be
+conflated.** The query asks for `runEvents(status: COMPLETE, limit: 50)`
+([`client.py`](../src/attest/datahub/client.py)), so an artifact audited more than fifty times
+returns its **newest fifty** events and no more. Nothing is lost in the catalog, and nothing is lost
+silently either: the server's own `total` is round-tripped as `history_total`, and
+`history_truncated` is true whenever it exceeds what came back, all the way out to `GET /claims`.
+Timeseries pagination past the cap is deferred; naming the cap is not — an under-reported history
+served as the whole story would be absence read as an answer, one level down from where this project
+usually catches it.
 
 **The residual, named rather than hidden.** Two *distinct* runs that share a start-millisecond
 **and disagree** collapse to one event, and the loser's verdict is lost. This cannot be keyed

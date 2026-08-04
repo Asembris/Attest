@@ -143,7 +143,7 @@ declared policy — never by running the checker and writing down what came out.
 `human reading` column is separate on purpose: it is what a competent person reading the same
 DataHub page would say, and **where it disagrees, the disagreement is the finding.**
 
-| # | Claim | Verdict | Human reading |
+| # | Claim | Outcome | Human reading |
 | --- | --- | --- | --- |
 | `ext-fresh-01` | `order_history` updated within 24h | **Contradicted** | agrees — 4530h old |
 | `ext-fresh-02` | …refreshed at least once in two years | **Supported** | agrees — same table, opposite verdict, because freshness is arithmetic against a stated window |
@@ -161,8 +161,11 @@ DataHub page would say, and **where it disagrees, the disagreement is the findin
 | `ext-schema-02` | has an `ssn` column | **Contradicted** | agrees |
 | `ext-schema-03` | `zipcode` is `VARCHAR` | **Contradicted** | agrees — the catalog records `NUMBER(38,0)` |
 
-**All 15 verdicts matched the pre-run reading.** That sentence is doing less work than it
-looks like it is, and the next section is why.
+**All 15 outcomes matched their predeclared expectations — 14 produced an assessment, and one
+produced the expected `ClaimError`, which this architecture deliberately does not count as a
+verdict.** (`ext-own-04`: refusing to answer is not answering, so it is kept out of `audits`
+entirely and tallied in no verdict count.) That sentence is doing less work than it looks like it
+is, and the next section is why.
 
 ### 5 Insufficient-Coverage, and two of them a human would argue with
 
@@ -201,13 +204,16 @@ schema checker then answered a question nobody asked (*"does this column exist?"
 
 A naive match counter banks this as a success. It was caught by checking extracted claim type
 against intended family, and the receipt now reports **`answered_the_intended_question:
-14/15`** and **`right_by_luck: ["ext-class-01"]`** as figures separate from the verdict match,
+14/15`** and **`right_by_luck: ["ext-class-01"]`** as figures separate from the outcome match,
 never netted against it. This is `benchmark/README.md`'s own rule — *a case that is right by
 luck is counted correct AND named, because banking those flatters a broken decomposer* —
 firing on the first foreign catalog it met.
 
-**So the honest headline is 15/15 verdicts matching, of which 14 answered the question that
-was asked.**
+**So the honest headline carries two numbers and never nets them: 15/15 outcomes matched what was
+predeclared — 14 of them assessments, the 15th the expected `ClaimError`, which is not a verdict —
+and 14 of the 15 answered the question that was actually asked.** The two 14s count different
+things: the `ClaimError` (`ext-own-04`) *did* answer its intended question, by refusing it exactly
+as predicted; the case that did not is `ext-class-01`.
 
 ### The write-back failed, and the repair path is what fixed it
 
