@@ -3,5 +3,6 @@
   "version": "0.0.1",
   "model": "gpt-4o-mini",
   "datahub": "up",
-  "datahub_ui_url": "http://localhost:9002"
+  "datahub_ui_url": "http://localhost:9002",
+  "discovery": "not-contacted"
 }

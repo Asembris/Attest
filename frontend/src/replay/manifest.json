@@ -1,15 +1,15 @@
 {
-  "captured_at": "2026-08-04T12:34:16+00:00",
-  "run_id": "a722a314-c385-4ec7-95de-e9480e3c8b77",
+  "captured_at": "2026-08-04T22:33:11+00:00",
+  "run_id": "07d64589-77a3-4810-a442-12f967ff8261",
   "datahub_core_version": "v1.5.0.6",
   "model": "gpt-4o-mini",
-  "capturing_commit": "c9cbb5a6c57505bfe873732c6b52d8f15b4d2c19",
-  "capturing_commit_dirty": true,
+  "capturing_commit": "b9aa8d4a10212e806c14e3f9963df788f73736fb",
+  "capturing_commit_dirty": false,
   "files": {
-    "health.json": "5fd300196152c20404843b0880f70f17370fc6d1a75b8995bfd54c352fa88920",
-    "audit-parked.json": "e71bc00c1b53efc3a540edabf0456b408458d34485fbf75d3c972b212b99d2fe",
-    "approval.json": "e52e777bd6fe4a0da30e4b86ddffec90dd5505b7b01dd87a4e6f135673680016",
-    "claims.json": "0f3e1f83d021dbf2afa73b1445df48c49e8daaf41e0082e668b7d9454a4e3dcf",
+    "health.json": "6bb81b8e82879a4ce074fa2eb7f2b694123242b5160b6477e66d2c011fbc9430",
+    "audit-parked.json": "5dc24b58799345aba6c928ebe5c3273a381620da30621f0acf9747cf28e45016",
+    "approval.json": "de903eb96d6b5cae8d09940aabcd24e0c8c4233918320bf68df875f01c8113dd",
+    "claims.json": "d67862499c3d4962156a2050eaa63773e71d9088085d56688e1c041b651c7caa",
     "decisions.json": "25d2d35cf7cff50149fca644f07ba0b70edf1c5107c1a78ae84af5894f6e2c69"
   }
 }
