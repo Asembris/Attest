@@ -38,7 +38,9 @@ warehouse — which is most of them.
 > seam, ran it against all 16 seeded datasets on the pinned Core, and measured what its
 > responses can and cannot carry — `just spike-mcp` runs it against your own catalog. The
 > measurement kept the verdict read on GraphQL, and produced three upstream issue write-ups with
-> reproductions — two of them now filed upstream. [The evaluation](#engaging-with-the-mcp-server).
+> reproductions — two of them now filed upstream, and one of those with a fix proposed at
+> [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182) (open; not merged).
+> [The evaluation](#engaging-with-the-mcp-server).
 
 ## Zero, and what happens when we sabotage it
 
@@ -493,7 +495,7 @@ wrong verdict has the same confident shape as a right one.
 | [docs/architecture.md](docs/architecture.md) | Trust boundaries, the PII policy, the graph, the guards, resume, and the cost projection. |
 | [docs/deployment.md](docs/deployment.md) | The deployment shape, the reset design, the measured bring-up numbers, and the smoke test. |
 | [docs/mcp-evaluation.md](docs/mcp-evaluation.md) | Engaging the MCP Server: the adapter, the 16-dataset parity run, the verdict table, and why the verdict read stays on GraphQL. |
-| [docs/upstream/](docs/upstream/) | Three issue drafts for `acryldata/mcp-server-datahub`, each with a reproduction against 0.6.0. |
+| [docs/upstream/](docs/upstream/) | Three issue write-ups for `acryldata/mcp-server-datahub`, each with a reproduction against 0.6.0 — two filed ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169), [#168](https://github.com/acryldata/mcp-server-datahub/issues/168)), one with a fix proposed at [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182) (open), the third deliberately kept as a draft. |
 | [docs/datahub-setup.md](docs/datahub-setup.md) | The version pin, the seed, and the environment landmines. |
 | [docs/design/claim-artifact.md](docs/design/claim-artifact.md) | The claim-artifact design, and the probe it was measured against. |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Commands, the test tiers, and the verification cadence. |
