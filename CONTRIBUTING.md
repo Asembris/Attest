@@ -48,7 +48,7 @@ just test            # offline + integration tiers, across cores (-n auto)
 just test-offline    # the truly-offline tier alone. No DataHub, no key, never skips.
 just live            # the live tier by marker: a real model + the anti-drift pin. Costs money.
 just e2e             # the BROWSER E2E: real Edge -> real API -> real DataHub -> back out.
-just e2e-sabotage    # THE VACUITY CHECK for the E2E. Non-zero if two real bugs go uncaught.
+just e2e-sabotage    # THE VACUITY CHECK for the E2E. Non-zero if a real bug goes uncaught.
 just preflight       # lint + test + live. Before any push touching the semantic layer.
 just matrix          # the 12-cell coverage assertion alone
 just resume          # durable resume + per-run token billing
@@ -62,6 +62,8 @@ just bench-cases     # regenerate benchmark/cases.json
 just probe           # prove DataHub's read/write path
 just spike-claims    # prove ONE dataset holds TWO queryable claim artifacts
 just spike-mcp       # the MCP reader evaluation. EXITS NON-ZERO BY DESIGN — see below.
+just discover        # catalog DISCOVERY over the real MCP server, then the same URNs
+                     # verified over GraphQL. Needs `.[mcp]` + uvx. Exits ZERO.
 ```
 
 `just test -n0 …` forces serial execution for debugging: the last `-n` wins, so you get real
@@ -75,6 +77,7 @@ tracebacks, working pdb, and un-interleaved output.
 | **Integration** | `integration` | DataHub Core running | Reads only. Skips **loudly**. |
 | **Live** | `live` | DataHub + `OPENAI_API_KEY` | Spends tokens; writes to your local catalog. Skips **loudly**. |
 | **Browser E2E** | `live` | ...plus `.[e2e]` and a built UI | As above, through a real browser. `just e2e` builds the UI first. |
+| **Discovery** | `live` | DataHub + `.[mcp]` + `uvx` | Spawns the MCP server; reads only, no model. Skips **loudly** by name. |
 
 The browser E2E is part of the **live** tier by marker, so `just live` and `just preflight`
 pick it up. It needs two things the rest of that tier does not — `pip install -e ".[e2e]"`
@@ -86,6 +89,11 @@ It drives **installed Microsoft Edge**; no browser is downloaded, so the Playwri
 the corporate-CA trap never enter the picture. `playwright` is pinned in its own `e2e` extra
 and deliberately **not** in `dev`: CI installs `dev` and must never try to install or run
 this.
+
+The `mcp` extra follows the same rule for the same reason. Catalog discovery (`just discover`,
+and the URN picker's live search) needs `pip install -e '.[mcp]'` plus `uvx`, and neither is in
+`dev` — CI must never install a client or spawn an MCP server. The offline tier is run with
+`mcp` made *unimportable* to prove it does not need one: 482 passed, 0 skipped, either way.
 
 The offline tier runs on a bare runner and reads no network. If an "offline" test ever reaches for the
 network it **fails** in CI rather than skipping — that is the point of the gate. A suspiciously fast
@@ -138,11 +146,14 @@ Two commands exit non-zero **by design**, and both are tripwires rather than bug
 - **`just spike-mcp`** measures the DataHub MCP server as a catalog reader and fails because it
   [cannot carry a verdict](docs/mcp-evaluation.md). If it ever goes green, the finding has expired and
   the decision is worth reopening.
-- **`just e2e-sabotage`** re-introduces the two UI/API drift bugs that really shipped in
-  6903d6c — the `accept: boolean` 422 and the `proposals()` re-park — and fails if the
-  browser E2E does *not* go red for each. Both lived a full session in `main` while the whole
-  suite was green, and both were caught by a human clicking the app. If the E2E cannot catch
-  them it is not wired to what it claims to test.
+- **`just e2e-sabotage`** re-introduces five UI/API drift bugs and fails if the browser E2E
+  does *not* go red for each. Four are real: the `accept: boolean` 422 and the `proposals()`
+  re-park (both shipped in 6903d6c, both lived a full session in `main` while the whole suite
+  was green, both caught by a human clicking the app), the correction strand, and the
+  same-dataset receipt alias. The fifth is *prevented rather than fixed* — answering a failed
+  catalog search with a list baked into the bundle instead of a visible offline state — and it
+  is here because a rule with no falsification is a preference. If the E2E cannot catch them it
+  is not wired to what it claims to test.
 - **`just smoke-sabotage`** points the deployment smoke test at a dead GMS (must go red at the
   reachability gate, *fast* — not a downstream timeout) and at an unseeded URN (must go red at
   the demo-answers assertion), and fails if either survives or reds for the wrong reason. It is

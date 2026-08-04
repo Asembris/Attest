@@ -245,3 +245,25 @@ export async function getClaim(claimUrn: string): Promise<ClaimView> {
   if (!hit) notRecorded(`No artifact with URN ${claimUrn} is in this recording.`);
   return served(hit, 150);
 }
+
+// --- catalog discovery, which this page cannot do at all ---------------------
+
+/** REFUSED, and consistently so: this build already refuses an edited agent output.
+ *
+ *  Catalog discovery is a live query to a live MCP server against a live catalog, and a
+ *  static page has none of those. The two dishonest alternatives are both worse than a
+ *  refusal: replaying a recorded result list would present a query nobody ran as if it had
+ *  been run, and falling back to a hardcoded list of seeded URNs would show a judge a
+ *  "catalog" that is a file in this bundle.
+ *
+ *  It also has nowhere to go. Picking a URN edits the agent output, and `submitAudit` refuses
+ *  edited text because the recording carries one audit of one sentence. A picker that
+ *  inserted a URN here would only lead to that second refusal. */
+export async function searchCatalog(q: string, _limit = 10): Promise<never> {
+  notRecorded(
+    `Catalog discovery asks a live DataHub MCP Server what matches "${q}", against a live ` +
+      'catalog. This page has neither. Nothing here is simulated, and a list of datasets ' +
+      'shipped inside this bundle would not be a catalog — it would be a file. Run Attest ' +
+      'locally to search your own catalog.',
+  );
+}

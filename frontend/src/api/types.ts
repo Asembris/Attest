@@ -327,7 +327,7 @@ export interface ApprovalResponse {
   writebacks: WriteBackView[];
 }
 
-/** Liveness: Attest's own, and the catalog's, kept separate on purpose. */
+/** Liveness: Attest's own, the catalog's, and discovery's, kept separate on purpose. */
 export interface HealthResponse {
   status: string;
   version: string;
@@ -336,6 +336,40 @@ export interface HealthResponse {
   // The DataHub UI origin to deep-link to, supplied by the backend. The built SPA has no
   // runtime env, so this is how `datahubDatasetUrl` learns the host without hardcoding :9002.
   datahub_ui_url: string;
+  // Catalog discovery over the DataHub MCP Server: `disabled` | `not-installed` |
+  // `not-contacted` | `up: <server>` | `unreachable: <why>`. REPORTED, never probed — the
+  // backend does not spawn an MCP server to answer a health check. Optional, and an ABSENT
+  // value means "not reported" (a response recorded before the field existed), which is not
+  // a claim that discovery is down.
+  discovery?: string;
+}
+
+// --- catalog discovery: candidates, and nothing that is evidence -------------
+
+/** One candidate dataset from `GET /catalog/search`.
+ *
+ *  `urn` is the ONLY field anything may act on, and it is the only one the MCP transport
+ *  returns losslessly — docs/mcp-evaluation.md measured the rest (field tags and terms arrive
+ *  as display names, `type` is dropped, `lastModified` is never requested). `name` is for a
+ *  human's eyes so they can tell two URNs apart: never matched against, never stored. */
+export interface CatalogHit {
+  urn: string;
+  name: string;
+}
+
+/** Candidates, and an honest account of where they came from.
+ *
+ *  **SEARCH SUCCEEDING IS NOT VERIFICATION SUCCEEDING.** `advisory` is always true and the
+ *  UI must say so wherever these are shown: nothing here has been checked against the
+ *  catalog by a checker, and no value in it can reach a verdict. */
+export interface CatalogSearchResponse {
+  hits: CatalogHit[];
+  /** The catalog's OWN match count. `total > hits.length` means this is a page. */
+  total: number;
+  transport: string;
+  server: string;
+  advisory: boolean;
+  note: string;
 }
 
 // --- derived helpers, shared by components ---------------------------------

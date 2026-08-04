@@ -6,6 +6,7 @@
     POST /audit/{run_id}/writeback   repair a partial catalog write. Approves nothing
     GET  /claims                     claim artifacts, FROM DATAHUB. What a reader inherits
     GET  /claims/{claim_urn}         one claim, with its whole verdict history
+    GET  /catalog/search             candidate datasets, over MCP. ADVISORY, never evidence
     GET  /health                     liveness
 
 **The two halves of the thesis are the approve endpoint and the claims endpoints.**
@@ -58,6 +59,8 @@ from attest.api.schemas import (
     ApprovalRequest,
     ApprovalResponse,
     AuditRequest,
+    CatalogHitView,
+    CatalogSearchResponse,
     ClaimsResponse,
     ClaimView,
     HealthResponse,
@@ -76,6 +79,12 @@ from attest.api.service import (
 )
 from attest.config import settings
 from attest.datahub import CatalogUnavailable, DataHubClient
+from attest.discovery import (
+    Discovery,
+    DiscoveryNotConfigured,
+    DiscoveryUnavailable,
+)
+from attest.discovery.mcp import McpDiscovery
 from attest.graph import Pipeline
 from attest.llm import LLMError, ProviderRefused, ProviderUnavailable
 from attest.record import AuditRecord, EvidenceView
@@ -120,6 +129,28 @@ def get_service() -> AuditService:
 Service = Annotated[AuditService, Depends(get_service)]
 
 
+@lru_cache(maxsize=1)
+def get_discovery() -> Discovery:
+    """Catalog discovery, built once for the process. **THE ONLY EDGE INTO `attest.discovery`.**
+
+    This module is deliberately the sole importer of the discovery package in the whole of
+    `attest`, and `tests/test_discovery_boundary.py` asserts it — statically, over the import
+    graph, in the house style of `NO_LLM_IN_THE_VERDICT_PATH`. The checkers, the snapshot,
+    the run-scoped cache and the graph cannot reach it, so nothing MCP returns can reach a
+    verdict however anyone later wires the UI.
+
+    Nothing is spawned here. `McpDiscovery` starts its session on the first SEARCH, so a
+    deployment that never opens the picker never runs the server, and `/health` reports
+    last-known state rather than probing (which would spawn one per browser load).
+    """
+    return McpDiscovery()
+
+
+# Discovery, as a type. Overridden wholesale in tests — including the browser E2E, which is
+# how the TS mirror gets exercised without `just e2e` needing an MCP server up.
+Discover = Annotated[Discovery, Depends(get_discovery)]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Replay any settlement a previous process death left unfinished, ONCE, at startup.
@@ -148,6 +179,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     except Exception:  # noqa: BLE001 - startup must not fail on a recovery hiccup
         log.exception("startup settlement recovery failed; the service still starts")
     yield
+    # SHUTDOWN. Close the discovery session if one was ever opened, so the MCP child process
+    # goes with the server rather than outliving it. Exiting the session's context closes the
+    # child's stdin, which is how a stdio MCP server is asked to exit; `close()` bounds the
+    # wait and kills the loop thread if it does not. Override-aware for the same reason as
+    # the recovery above: a test's stub discovery has nothing to close, and reaching for the
+    # real one here would start a subprocess at the END of a test run.
+    #
+    # This covers an ORDERLY shutdown. A hard kill of the parent is a different question and
+    # it is answered, with a measurement, in docs/deployment.md.
+    discovery = app.dependency_overrides.get(get_discovery, get_discovery)()
+    closer = getattr(discovery, "close", None)
+    if callable(closer):
+        try:
+            closer()
+        except Exception:  # noqa: BLE001 - a wedged child must not fail the shutdown
+            log.exception("closing the discovery session failed")
 
 
 app = FastAPI(
@@ -160,8 +207,13 @@ app = FastAPI(
 
 
 @app.get("/health", response_model=HealthResponse)
-def health(service: Service) -> HealthResponse:
-    """Is Attest up, and can it see the catalog? Two questions, two answers."""
+def health(service: Service, discovery: Discover) -> HealthResponse:
+    """Is Attest up, can it see the catalog, and has discovery ever answered?
+
+    Three questions, three answers, and the third is REPORTED rather than probed. Asking
+    discovery to prove itself here would spawn an MCP server on every browser load and every
+    uptime check; `not-contacted` is the honest state of a session nobody has needed yet.
+    """
     state = service.health()
     return HealthResponse(
         status=state["status"],
@@ -169,7 +221,24 @@ def health(service: Service) -> HealthResponse:
         model=state["model"],
         datahub=state["datahub"],
         datahub_ui_url=state["datahub_ui_url"],
+        discovery=_discovery_status(discovery),
     )
+
+
+def _discovery_status(discovery: Discovery) -> str:
+    """Discovery's last-known state, and never an exception into the liveness route.
+
+    A stub without `status()` reports nothing rather than a guess — the same empty-means-not-
+    reported rule the field itself documents.
+    """
+    reporter = getattr(discovery, "status", None)
+    if not callable(reporter):
+        return ""
+    try:
+        return str(reporter())
+    except Exception:  # noqa: BLE001 - liveness must not fail on an optional subsystem
+        log.exception("discovery status could not be read")
+        return ""
 
 
 @app.post("/audit", response_model=AuditRecord, status_code=status.HTTP_201_CREATED)
@@ -434,6 +503,72 @@ def get_claim(claim_urn: str, service: Service) -> ClaimView:
         raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
     except CatalogUnavailable as exc:
         raise _catalog_is_down(exc) from exc
+
+
+@app.get("/catalog/search", response_model=CatalogSearchResponse)
+def search_catalog(
+    discovery: Discover,
+    q: Annotated[str, Query(
+        description="What to search for. A single bare word is matched as a prefix; anything "
+        "with spaces or the server's operator characters is passed through as written. Empty "
+        "lists the catalog.",
+    )] = "",
+    limit: Annotated[int, Query(ge=1, le=25)] = 10,
+) -> CatalogSearchResponse:
+    """Candidate datasets, over the **DataHub MCP Server**. ADVISORY — never evidence.
+
+    **MCP discovers. A human resolves. GraphQL verifies. Deterministic code decides.**
+
+    This is the one place Attest talks to the MCP server, and it is not the catalog read.
+    docs/mcp-evaluation.md measured what happens when an MCP response feeds a checker — 130
+    field mismatches over 16 datasets, and a TRUE claim about a correctly-tagged PII column
+    coming back **Contradicted** — and that decision stands. What crosses from here into a run
+    is exactly one value: a dataset URN a human selected. It is the one field the transport
+    returns losslessly, and it still has to appear VERBATIM in `agent_output` and be quoted
+    rather than minted by the decomposer before any claim can be about it. So a wrong pick
+    produces claims about an explicitly wrong URN, never a resolution error laundered into
+    catalog disagreement.
+
+    **An empty result is a 200, and a failure is never an empty result.** `hits: []` with
+    `total: 0` means the catalog matched nothing. A server that would not start, a call that
+    timed out, or a response that did not have the shape the server documents is a **503** —
+    because "we could not ask" reported as "nothing matched" is the collapse this whole
+    product exists to refuse, and it has already been shipped once at the model provider
+    (§18) and once at the catalog read (§20).
+    """
+    try:
+        found = discovery.search(q, limit=limit)
+    except DiscoveryNotConfigured as exc:
+        # 501, and pointedly NOT 503: `mcp` is an optional extra CI never installs, and
+        # discovery can be switched off. Retrying cannot install a package — the same
+        # reasoning that makes ProviderRefused a 502 rather than a 503.
+        raise HTTPException(
+            status.HTTP_501_NOT_IMPLEMENTED,
+            f"Catalog discovery is not available on this deployment: {exc}. Type a dataset "
+            f"URN directly — discovery is a convenience, and nothing about an audit depends "
+            f"on it.",
+        ) from exc
+    except DiscoveryUnavailable as exc:
+        # 503 + Retry-After, the same disposition as CatalogUnavailable and
+        # ProviderUnavailable, because it is the same fact: Attest could not ask. Returning
+        # an empty list here would tell a human that their catalog holds no matching dataset
+        # when the truth is that the search never happened.
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            f"Nothing was searched: {exc}. This is NOT an empty result — the catalog was "
+            f"never asked, and reporting silence as an answer is the failure Attest exists "
+            f"to catch. Type a dataset URN directly, or try again.",
+            headers={"Retry-After": str(RETRY_AFTER_SECONDS)},
+        ) from exc
+
+    return CatalogSearchResponse(
+        hits=tuple(CatalogHitView(urn=h.urn, name=h.name) for h in found.hits),
+        total=found.total,
+        transport=found.transport,
+        server=found.server,
+        advisory=found.advisory,
+        note=found.note,
+    )
 
 
 def _catalog_is_down(exc: CatalogUnavailable) -> HTTPException:

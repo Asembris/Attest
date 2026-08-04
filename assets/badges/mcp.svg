@@ -3,6 +3,7 @@
 <!-- ASSERTS: Attest built an adapter to the DataHub MCP Server and measured it. Engagement, not omission.
      TRUE BECAUSE: spikes/mcp_reader_probe.py (just spike-mcp) builds every seeded dataset's snapshot TWICE — once over the MCP server's get_entities, once over GraphQL — and diffs them field by field: 130 mismatches over 16/16 datasets on mcp-server-datahub 0.6.0 against the pinned Core v1.5.0.6, then the same gap as verdicts. Three upstream issue drafts with reproductions in docs/upstream/.
      SCOPE: claims built-and-measured ONLY. MCP is NOT in the live verdict path and this badge does not say it is — docs/mcp-evaluation.md is why.
+     STILL TRUE AFTER §22, which put the MCP server's `search` tool in the product for catalog DISCOVERY (the URN picker, `just discover`): "verdict path" is the precise wording and discovery is not it. The badge deliberately still claims only built-and-measured — understating what shipped is safe; overstating it is the failure this repo exists to catch.
      Self-hosted so it cannot 404 or rate-limit while someone is reading the page. -->
 <clipPath id="r"><rect width="256" height="20" rx="3" fill="#fff"/></clipPath>
 <g clip-path="url(#r)">

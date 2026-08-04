@@ -131,6 +131,58 @@ backend hands it the UI origin over `/health`. Without this, a dataset deep-link
 `localhost:9002` behind any real URL — the kind of drift that breaks a deployed instance while
 every local test stays green.
 
+## Catalog discovery (the DataHub MCP Server)
+
+The URN picker searches your catalog through the **DataHub MCP Server**, launched on demand as
+a child process over stdio. It is **discovery only** — nothing it returns is evidence, and the
+catalog read that decides verdicts stays on GraphQL for the reasons
+[docs/mcp-evaluation.md](mcp-evaluation.md) measured. See CLAUDE.md §22 for the boundary.
+
+| Var | Default | What it is |
+| --- | --- | --- |
+| `ATTEST_DISCOVERY_ENABLED` | `true` | set `false` to switch the picker's search off entirely |
+| `ATTEST_MCP_COMMAND` | `uvx --native-tls --from mcp-server-datahub mcp-server-datahub --transport stdio` | how the server is launched |
+| `ATTEST_MCP_STARTUP_TIMEOUT` | `30` | seconds to wait for spawn + `initialize` (measured: 3.3 s warm) |
+| `ATTEST_MCP_CALL_TIMEOUT` | `10` | seconds to wait for one search (measured: 0.13–0.34 s) |
+
+**It is optional in every direction, and nothing about an audit depends on it.** The client is
+an extra CI never installs (`pip install -e '.[mcp]'`); without it `/catalog/search` answers
+**501** and the picker shows a visible offline state with manual URN entry. A server that will
+not start answers **503 + `Retry-After`**. Neither ever answers with an empty result list or a
+list baked into the bundle — "we could not ask" and "your catalog has nothing like that" are
+different facts, and only the second is an answer.
+
+**The first search pays the spawn; nothing else does.** The session starts lazily and is reused
+(measured: 3.33 s to spawn, 125–344 ms per search), so a deployment where nobody opens the
+picker never runs an MCP server at all. `GET /health` reports discovery's last-known state and
+**never probes it** — otherwise every browser load and every uptime check would spawn one.
+
+**On the first run `uvx` downloads the server**, so the first search is slower and needs
+network. On a TLS-inspecting network that download fails until `--native-tls` is passed, which
+the default command already does (the same system-CA opt-in as Python's `truststore` and Node's
+`NODE_USE_SYSTEM_CA`).
+
+### The child process does not outlive a hard-killed Attest — MEASURED
+
+An orderly shutdown closes the session in FastAPI's `lifespan`, which closes the child's stdin
+and ends it. The question worth answering is the other one: **what if the Attest process is
+killed outright** (`taskkill /F`, a container OOM), so no teardown runs at all? A stdio child
+holds no port, so an orphan would not announce itself the way `just serve`'s `--reload` worker
+does — it would just sit there holding RAM.
+
+Measured on Windows 10, twice, by holding a live session open and hard-killing **only** the
+parent (`taskkill /F /PID <attest>`, no `/T`). The tree under it:
+
+```
+python (Attest) -> uvx.exe -> uv.exe -> mcp-server-datahub.exe -> python -> python
+```
+
+**Every descendant was gone within 2 seconds, both trials.** Killing the parent closes its
+pipe handles, the server reads EOF on stdin, and the chain exits. So there is no orphan to
+clean up and no `just port` equivalent to reach for — a null result, recorded because "we did
+not check" and "we checked and it is fine" are different facts, which is the whole argument
+this project makes about everything else.
+
 ## Reproducible installs
 
 [requirements.lock](../requirements.lock) pins the **full transitive closure** of the runtime

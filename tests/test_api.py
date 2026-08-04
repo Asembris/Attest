@@ -20,8 +20,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from attest import writeback
-from attest.api.app import app, get_service
+from attest.api.app import app, get_discovery, get_service
 from attest.api.service import AuditService
+from attest.discovery import ADVISORY_NOTE, DiscoveryNotConfigured
+from attest.discovery.mcp import McpDiscovery
 from attest.graph import Pipeline
 from attest.llm import LLM
 from attest.report import RunStatus
@@ -30,10 +32,12 @@ from attest.writeback import AUDIT_RUN, CLAIM_TYPE, SOURCE_AGENT, VERDICT
 from fakes import (
     FakeChat,
     FakeDataHub,
+    FakeMcpServer,
     claim_reply,
     dataset,
     explanation_reply,
     revision_reply,
+    search_payload,
 )
 
 SF = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.profile,PROD)"
@@ -1186,3 +1190,152 @@ def test_a_claim_the_catalog_does_not_have_is_a_404_not_an_empty_one(tmp_path):
         response = c.get("/claims/urn:li:assertion:attest-nosuchclaim")
 
     assert response.status_code == 404
+
+
+# --- GET /catalog/search: discovery, which is not verification ---------------
+#
+# These drive the REAL `McpDiscovery` — its loop thread, its supervisor, its parsing — over a
+# faked MCP transport, so what is under test is the shipped path and only the pipe is faked.
+# The status codes are the point: this route can say three different things and a caller can
+# act on exactly one of them.
+
+
+def discovering(*replies, start_faults=None):
+    """Wire the route to a real discovery handle over a scripted MCP server."""
+    server = FakeMcpServer(replies=list(replies), start_faults=start_faults)
+    found = McpDiscovery(session_factory=server.session)
+    app.dependency_overrides[get_discovery] = lambda: found
+    return server, found
+
+
+def test_a_search_returns_candidates_that_say_they_are_advisory(tmp_path):
+    """The response cannot be read as "Attest has checked these", because it says so."""
+    build(tmp_path, *SUPPORTED)
+    server, found = discovering(
+        search_payload((SF, "profile"), (EMPTY, "raw"))
+    )
+    try:
+        with TestClient(app) as c:
+            body = c.get("/catalog/search", params={"q": "profile"}).json()
+    finally:
+        found.close()
+
+    assert [h["urn"] for h in body["hits"]] == [SF, EMPTY]
+    assert body["total"] == 2
+    assert body["advisory"] is True
+    assert body["transport"] == "DataHub MCP Server"
+    assert body["server"] == "datahub v3.4.5"
+    assert body["note"] == ADVISORY_NOTE
+    # A hit carries a URN and a display name. NOTHING else — no tags, no owner, no
+    # description: every field §12 measured as flattened is a field this route does not
+    # publish, so nothing downstream can start depending on one.
+    assert set(body["hits"][0]) == {"urn", "name"}
+
+
+def test_a_search_that_matches_nothing_is_a_200_with_an_empty_list(tmp_path):
+    """The catalog was asked and said nothing matched. That is an ANSWER."""
+    build(tmp_path, *SUPPORTED)
+    server, found = discovering(search_payload())
+    try:
+        with TestClient(app) as c:
+            response = c.get("/catalog/search", params={"q": "zzznotathing"})
+    finally:
+        found.close()
+
+    assert response.status_code == 200
+    assert response.json()["hits"] == []
+    assert response.json()["total"] == 0
+
+
+def test_a_discovery_outage_is_a_503_and_never_an_empty_list(tmp_path):
+    """THE ONE THAT MATTERS. An outage rendered as "nothing found" is this project's
+    cardinal sin, already shipped once at the model provider (§18) and once at the catalog
+    read (§20). A human told their catalog has no such dataset, when it was never asked,
+    would go and create one."""
+    build(tmp_path, *SUPPORTED)
+    server, found = discovering(start_faults={1: OSError("uvx: command not found")})
+    try:
+        with TestClient(app) as c:
+            response = c.get("/catalog/search", params={"q": "profile"})
+    finally:
+        found.close()
+
+    assert response.status_code == 503
+    assert response.headers["Retry-After"] == "10"
+    detail = response.json()["detail"]
+    assert "NOT an empty result" in detail
+    assert "uvx: command not found" in detail
+
+
+def test_a_malformed_search_response_is_a_503_rather_than_a_quiet_empty_page(tmp_path):
+    """`total > 0` with no results is a broken transport, not an empty catalog."""
+    build(tmp_path, *SUPPORTED)
+    server, found = discovering({"start": 0, "count": 5, "total": 4})
+    try:
+        with TestClient(app) as c:
+            response = c.get("/catalog/search", params={"q": "profile"})
+    finally:
+        found.close()
+
+    assert response.status_code == 503
+    assert "4 matches" in response.json()["detail"]
+
+
+def test_discovery_that_is_not_installed_is_a_501_with_no_retry_after(tmp_path):
+    """Waiting cannot install an optional extra. Same split as ProviderRefused's 502."""
+    build(tmp_path, *SUPPORTED)
+
+    def refuse():
+        raise DiscoveryNotConfigured("the `mcp` client is not installed")
+
+    found = McpDiscovery(session_factory=refuse)
+    app.dependency_overrides[get_discovery] = lambda: found
+    try:
+        with TestClient(app) as c:
+            response = c.get("/catalog/search", params={"q": "profile"})
+    finally:
+        found.close()
+
+    assert response.status_code == 501
+    assert "Retry-After" not in response.headers
+    assert "Type a dataset URN directly" in response.json()["detail"]
+
+
+def test_health_reports_discovery_without_ever_starting_it(tmp_path):
+    """A liveness probe that spawned an MCP server would spawn one per browser load.
+
+    `not-contacted` is the honest state of a session nobody has needed yet — the same refusal
+    to guess as `ReadState.UNKNOWN`. The assertion that matters is `server.starts == 0`.
+    """
+    build(tmp_path, *SUPPORTED)
+    server, found = discovering(search_payload((SF, "profile")))
+    try:
+        with TestClient(app) as c:
+            body = c.get("/health").json()
+            assert body["discovery"] == "not-contacted"
+            assert server.starts == 0
+
+            # ...and once something has actually searched, it reports what answered.
+            c.get("/catalog/search", params={"q": "profile"})
+            assert c.get("/health").json()["discovery"] == "up: datahub v3.4.5"
+    finally:
+        found.close()
+    assert server.starts == 1
+
+
+def test_an_audit_still_refuses_a_urn_the_agent_never_wrote(tmp_path):
+    """Discovery cannot smuggle a URN into an audit, because a URN has to be WRITTEN.
+
+    This is the other half of the trust boundary, at the route: picking a candidate inserts
+    it into the agent's text, and a `target_urns` naming something the text does not contain
+    is refused before a model sees anything. A discovery path that could hand a URN straight
+    to an audit would be the automatic entity resolution CLAUDE.md §4 forbids.
+    """
+    build(tmp_path, *SUPPORTED)
+    with TestClient(app) as c:
+        response = c.post(
+            "/audit", json={"agent_output": SAYS, "target_urns": [EMPTY]}
+        )
+
+    assert response.status_code == 422
+    assert "must be quoted by the agent, never minted" in str(response.json()["detail"])

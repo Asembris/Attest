@@ -1,4 +1,4 @@
-"""THE VACUITY CHECK FOR THE BROWSER E2E. Re-introduce four REAL bugs; demand it goes red.
+"""THE VACUITY CHECK FOR THE BROWSER E2E. Re-introduce five REAL bugs; demand it goes red.
 
 `just e2e-sabotage`. Exits NON-ZERO if the E2E stays green under sabotage — same discipline
 as `just bench-sabotage` and `just spike-mcp`. An assertion that only ever passes is a green
@@ -6,8 +6,10 @@ light wired to nothing, and that goes double for a test whose whole justificatio
 a class of bug every other test missed.
 
 **THE SABOTAGES ARE NOT INVENTED.** The first three are UI bugs that shipped or were
-caught before submission. The fourth is the reproduced same-dataset receipt alias that this
-session fixed:
+caught before submission. The fourth is the reproduced same-dataset receipt alias. The fifth
+is the one regression the discovery feature is arranged to be unable to make — a failed
+catalog search quietly answered from a list baked into the bundle — and it is here rather
+than merely forbidden in a comment, because a rule with no falsification is a preference:
 
     1. THE 422. `DecisionRequest` carried `accept: boolean` for a session after the backend
        split it into `publish` / `accept_correction`. The backend forbids extras
@@ -27,6 +29,13 @@ session fixed:
     4. THE RECEIPT ALIAS. Two claims on one dataset received divergent publication results,
        but both cards matched the first receipt by target URN. The second card therefore
        reported a catalog failure even though its own write succeeded.
+
+    5. THE STATIC FALLBACK. The URN picker answers a FAILED catalog search with the seeded
+       list that used to be baked into the bundle, instead of a visible offline state. Never
+       shipped — this one is prevented rather than fixed — but it is the single most likely
+       "helpful" edit anyone will make to that component, and it would have the UI show a
+       human a catalog that is a FILE. An outage rendered as a plausible answer is the exact
+       collapse Attest exists to catch, committed in Attest's own interface.
 
 **The first three were found by a human clicking the app. The fourth was reproduced through
 that same browser boundary after an external audit named the source-level inference.**
@@ -57,6 +66,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[1]
 FRONTEND = REPO / "frontend"
 RESULTS = FRONTEND / "src" / "components" / "AuditResults.tsx"
+PICKER = FRONTEND / "src" / "components" / "UrnPicker.tsx"
 
 
 @dataclass(frozen=True)
@@ -69,6 +79,10 @@ class Sabotage:
     old: str
     new: str
     expect: str
+    # Further edits the same sabotage needs — an import the swapped-in symbol requires, most
+    # often. Applied to the same file, in order, and abort if any anchor is missing: a
+    # sabotage that half-applies would compile into some third thing and test nothing.
+    also: tuple[tuple[str, str], ...] = ()
 
 
 SABOTAGES = (
@@ -116,7 +130,41 @@ SABOTAGES = (
         old="writebacks?.find((w) => w.claim_index === claim.index)",
         new="writebacks?.find((w) => w.target_urn === claim.target_urn)",
         expect="the successful second card must not inherit the first claim's failed receipt",
-    ),)
+    ),
+    Sabotage(
+        name="the static fallback",
+        history=(
+            "never shipped, and prevented rather than fixed: answering a FAILED catalog "
+            "search with the seeded list that used to be in the bundle. An outage rendered "
+            "as a plausible answer, in the UI of the tool built to catch exactly that."
+        ),
+        path=PICKER,
+        old=(
+            "  return {\n"
+            "    kind: 'offline',\n"
+            "    detail: api?.detail ?? String(err),\n"
+            "    permanent: api?.status === 501,\n"
+            "  };"
+        ),
+        new=(
+            "  void api;\n"
+            "  return {\n"
+            "    kind: 'ready',\n"
+            "    hits: seededDatasets.map((d) => ({ urn: d.urn, name: d.name })),\n"
+            "    total: seededDatasets.length,\n"
+            "    transport: 'DataHub MCP Server',\n"
+            "  };"
+        ),
+        also=(
+            (
+                "import type { CatalogHit } from '../api/types';",
+                "import type { CatalogHit } from '../api/types';\n"
+                "import { seededDatasets } from '../data/catalog';",
+            ),
+        ),
+        expect="a dead discovery service must NOT render a list of datasets from the bundle",
+    ),
+)
 
 # `proposals` is exported but imported by no component, so the re-park sabotage needs the
 # import too (it swaps `awaitingDecision` -> `proposals`). The strand sabotage touches only
@@ -153,16 +201,16 @@ def run_e2e() -> tuple[bool, str]:
 
 
 def main() -> int:
-    # Byte-exact original, kept for the restore. `normalized` is the editing surface: the
-    # working tree is CRLF (core.autocrlf=true) and every anchor below is written with \n.
-    original_bytes = RESULTS.read_bytes()
-    raw = original_bytes.decode("utf-8")
-    crlf = "\r\n" in raw
-    normalized = raw.replace("\r\n", "\n")
+    # Byte-exact originals for EVERY file any sabotage touches, kept for the restore. A
+    # restore that only put back the file the last sabotage happened to edit would leave a
+    # sabotaged tree behind on any crash — the loud-then-silent shape this repo names for the
+    # TLS repair, one directory over.
+    touched = sorted({s.path for s in SABOTAGES}, key=str)
+    original: dict[Path, bytes] = {p: p.read_bytes() for p in touched}
     survived: list[str] = []
 
     print("=" * 78)
-    print("  E2E VACUITY CHECK — four real browser-boundary bugs, re-introduced")
+    print(f"  E2E VACUITY CHECK — {len(SABOTAGES)} real browser-boundary bugs, re-introduced")
     print("=" * 78)
 
     try:
@@ -171,22 +219,29 @@ def main() -> int:
             print(f"    history : {s.history}")
             print(f"    expect  : {s.expect}")
 
-            text = normalized
-            if s.old not in text:
-                raise SystemExit(
-                    f"cannot apply '{s.name}': the anchor is gone from {s.path.name}.\n"
-                    f"  looked for: {s.old!r}\n"
-                    "The UI changed shape and this sabotage no longer reproduces the bug it "
-                    "names. FIX THE SABOTAGE — do not delete it."
-                )
-            text = text.replace(s.old, s.new)
+            # `normalized` is the editing surface: the working tree is CRLF
+            # (core.autocrlf=true) and every anchor is written with \n.
+            raw = original[s.path].decode("utf-8")
+            crlf = "\r\n" in raw
+            text = raw.replace("\r\n", "\n")
+            edits = ((s.old, s.new), *s.also)
             if s.name == "the re-park":
-                text = text.replace(IMPORT_OLD, IMPORT_NEW)
+                edits = (*edits, (IMPORT_OLD, IMPORT_NEW))
+            for old, new in edits:
+                if old not in text:
+                    raise SystemExit(
+                        f"cannot apply '{s.name}': the anchor is gone from {s.path.name}.\n"
+                        f"  looked for: {old!r}\n"
+                        "The UI changed shape and this sabotage no longer reproduces the bug "
+                        "it names. FIX THE SABOTAGE — do not delete it."
+                    )
+                text = text.replace(old, new)
             out = text.replace("\n", "\r\n") if crlf else text
             s.path.write_bytes(out.encode("utf-8"))
 
             build()
             passed, out = run_e2e()
+            s.path.write_bytes(original[s.path])  # one sabotage at a time, byte-exact back
 
             if passed:
                 survived.append(s.name)
@@ -197,8 +252,13 @@ def main() -> int:
                 for ln in why[:4]:
                     print(f"              {ln.strip()[:96]}")
     finally:
-        RESULTS.write_bytes(original_bytes)  # byte-exact, whatever happened above
-        print("\n--- restored AuditResults.tsx and rebuilding the honest bundle")
+        for path, data in original.items():
+            path.write_bytes(data)  # byte-exact, whatever happened above
+        print(
+            "\n--- restored "
+            + ", ".join(p.name for p in touched)
+            + " and rebuilding the honest bundle"
+        )
         build()
 
     print("\n" + "=" * 78)

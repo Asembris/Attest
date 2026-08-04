@@ -78,6 +78,22 @@ bench = ["scikit-learn>=1.5"]
 # browser is then whatever Edge the machine has, and Edge auto-updates. Pinning playwright
 # does not pin the browser. Measured green against Edge 150.0.4078.65.
 e2e = ["playwright==1.61.0"]
+# Catalog DISCOVERY over the DataHub MCP Server (§22). The picker's live search, and the
+# `spikes/mcp_reader_probe.py` evaluation that decided the catalog read stays on GraphQL.
+#
+# DELIBERATELY NOT IN `dev`, the same reasoning as `e2e`: CI installs `.[dev]` and runs `just
+# check`, and discovery is an optional convenience that must never become something CI
+# installs or a subprocess CI spawns. The offline tier is RUN with `mcp` unimportable to prove
+# it -- 482 passed, 0 skipped, with the module hidden.
+#
+# This is the CLIENT only. The server itself is fetched by `uvx` at first use
+# (ATTEST_MCP_COMMAND), which keeps a 100+ MB DataHub SDK tree out of Attest's dependency
+# closure for a feature that answers a text box -- and keeps the launch recipe identical to
+# the one Session 17's evaluation measured against.
+#
+# FLOORED, not pinned: this is a protocol client whose stdio transport is stable, and the
+# thing it talks to is version-gated on its own (`just discover` is the tripwire that says so).
+mcp = ["mcp>=1.2"]
 
 [build-system]
 requires = ["setuptools>=68"]

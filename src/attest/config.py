@@ -86,6 +86,34 @@ class Settings(BaseSettings):
     # DataHub outage rather than a port clash.
     api_port: int = Field(default=8003, alias="ATTEST_API_PORT")
 
+    # --- catalog DISCOVERY, over the DataHub MCP Server (§22) --------------------------
+    #
+    # Discovery answers "which dataset did you mean?" for a HUMAN. It is not the catalog
+    # read: verdicts come from GraphQL, and §12 measured why. The only value that crosses
+    # from here into a run is a URN a person selected, which must then appear verbatim in
+    # the agent's text like any other. See src/attest/discovery/.
+    discovery_enabled: bool = Field(default=True, alias="ATTEST_DISCOVERY_ENABLED")
+
+    # The MCP server, launched exactly as the Session 17 probe launched it — the recipe that
+    # is already measured against Core v1.5.0.6. `--native-tls` is uv's system-CA opt-in,
+    # this network's trap one runtime further out than truststore and NODE_USE_SYSTEM_CA.
+    # Overridable so a deployment can point at an already-installed server instead of paying
+    # uvx's resolve; parsed with shlex, so it is one env var rather than an argv encoding.
+    mcp_command: str = Field(
+        default=(
+            "uvx --native-tls --from mcp-server-datahub mcp-server-datahub "
+            "--transport stdio"
+        ),
+        alias="ATTEST_MCP_COMMAND",
+    )
+    # MEASURED on Core v1.5.0.6: spawn + initialize is 3.33s warm, and a search is
+    # 125-344ms. The budgets are ~10x each, so a timeout means something is wrong rather
+    # than that the server was busy — the same reasoning as llm.READ_TIMEOUT_SECONDS.
+    mcp_startup_timeout_seconds: float = Field(
+        default=30.0, alias="ATTEST_MCP_STARTUP_TIMEOUT"
+    )
+    mcp_call_timeout_seconds: float = Field(default=10.0, alias="ATTEST_MCP_CALL_TIMEOUT")
+
     # --- the benchmark's second labeler, and the only legitimate second family ---------
     #
     # CLAUDE.md has said since Session 0 that a second provider has exactly one honest use:

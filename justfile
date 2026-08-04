@@ -84,6 +84,17 @@ spike-claims:
 spike-mcp:
     python spikes/mcp_reader_probe.py
 
+# CATALOG DISCOVERY over the REAL MCP server: the picker's search, and the handoff. Launches
+# the actual mcp-server-datahub over stdio, searches the seeded catalog, and then fetches every
+# URN it returned over GRAPHQL into a real DatasetSnapshot -- which is the whole architecture in
+# one command: MCP discovers, a human resolves, GraphQL verifies, code decides.
+#
+# The counterpart to `just spike-mcp`, which stays non-zero: that proves MCP cannot carry a
+# VERDICT, this proves it can carry a NAME. Needs DataHub, `pip install -e '.[mcp]'` and uvx;
+# no model, so no money. Skips LOUDLY by name if either requirement is missing.
+discover:
+    python -m pytest tests/test_discovery_live.py -m live -v -s
+
 # Is the catalog actually up? Checks the pinned version, not just the port.
 health:
     @(Invoke-RestMethod http://localhost:8080/config).versions.'acryldata/datahub'.version
