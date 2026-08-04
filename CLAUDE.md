@@ -1865,9 +1865,22 @@ still USE the product instead of watching a video of it. Zero backend code chang
   gets the same corpse), and `--resume` finished the run at no verdict cost. **Each read now
   runs on its own connection.**
 - **The recorded artifacts carry THREE verdict events, not one, and the banner does not pretend
-  otherwise.** The demo VIDEO records a different run against the same catalog; this is "a real
-  run's committed record", never "the demo run's". Three distinct runs appending to one
+  otherwise.** The demo VIDEO records a different run against the same catalog; the banner says
+  "a recorded audit", never "the demo run's". Three distinct runs appending to one
   content-addressed artifact is the append-only history working, rendered with the LATEST chip.
+- **THE BANNER LEADS WITH WHAT THE PAGE IS AND DEMOTES THE PROVENANCE, and it never says
+  "seeded", "sample" or "demo data".** A judge needs *recorded, real, not live* in the first
+  clause; the run id, Core version and capture date answer a question nobody has asked yet, so
+  they sit in a dim second row. And the copy may not imply synthetic data — this is a real
+  audit against a real catalog, which is the entire reason a replay of it is worth anything.
+  **The date is formatted to explicit English, NEVER `toLocaleDateString`** (which rendered
+  "4 août 2026" in an otherwise English banner on a French browser) and never via `new Date`,
+  which shifts the calendar day per reader's timezone — so it is read off the ISO string.
+  `replay_verify` asserts the three claims the banner makes and fails on a localized month.
+  The banner also MEASURES ITSELF into `--replay-banner-h`: that variable pushes the page down
+  and drops the two `sticky top-0` headers below it, and a hard-coded height guesses how the
+  copy wraps at every width — guessing low hides a sticky header at exactly the widths nobody
+  checked. The CSS values are a first-paint fallback, not the truth.
 - **WHAT THIS DOES NOT DO:** it is not a live demo and never claims to be; it covers ONE
   recorded run and a named set of `/claims` filters, refusing the rest; it proves nothing about
   what the catalog says TODAY (nothing offline can); and `just replay-verify` needs the `e2e`
