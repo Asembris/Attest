@@ -225,9 +225,23 @@ def _await_readable(base: str, run_id: str, timeout_s: float = 30) -> None:
 
 
 def _write(path: Path, payload: Any) -> str:
-    """Write one fixture and return its sha256. Stable formatting, so the hash is stable."""
+    """Write one fixture, LF-ONLY, and return the sha256 of the bytes that reach disk.
+
+    `newline=""` IS LOAD-BEARING, and leaving it out shipped a broken pin. Python's text mode
+    translates `\\n` to `\\r\\n` on Windows, so the fixtures were written CRLF and
+    `manifest.json` recorded the hashes of those CRLF bytes — while git, with
+    `core.autocrlf=true`, normalised them to LF on the way into the index. The manifest
+    therefore described bytes that existed on exactly one machine: the hash pin passed for the
+    author and failed in CI on the very first push, comparing an LF checkout against a CRLF
+    digest.
+
+    A recording's hash has to be a fact about the recording, not about the operating system
+    that wrote it. So: LF here, `text eol=lf` in `.gitattributes` so every checkout agrees, and
+    `test_replay_fixtures` fails on a stray CR rather than letting the next platform find out.
+    """
     text = json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
-    path.write_text(text, encoding="utf-8")
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 

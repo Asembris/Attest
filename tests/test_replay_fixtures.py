@@ -178,6 +178,30 @@ def test_the_manifest_hashes_match_the_files_on_disk(manifest: dict) -> None:
         )
 
 
+@pytest.mark.parametrize("name", (*HASHED, "manifest.json"))
+def test_a_fixture_contains_no_carriage_return(name: str) -> None:
+    """THE PIN ABOVE IS ONLY A PIN IF THE BYTES ARE THE SAME EVERYWHERE. They were not.
+
+    The capture wrote these through Python's text mode on Windows, which turns every `\\n` into
+    `\\r\\n`, and the manifest recorded the hashes of those CRLF bytes. Git, with
+    `core.autocrlf=true`, normalised them to LF on the way into the index. So the manifest
+    described bytes that existed on exactly ONE machine: the hash test passed for the author
+    and failed in CI on the first push, measuring an LF checkout against a CRLF digest.
+
+    That is this repo's recurring failure in a new place — a green tick about a different
+    program — and it landed in the test written to stop the fixtures being tampered with. The
+    weakening fix would be to compare hashes with line endings normalised away, which would let
+    a whitespace edit through the one check that exists to catch edits. So the bytes are made
+    canonical instead, at all three points that can move them: the capture writes LF,
+    `.gitattributes` checks out LF, and this fails on a CR that arrives by any other route.
+    """
+    assert b"\r" not in (REPLAY / name).read_bytes(), (
+        f"{name} contains a carriage return, so its bytes — and therefore its manifest hash — "
+        "depend on the platform that wrote or checked it out. Re-capture with `just "
+        "replay-capture`, which writes LF; do not normalise the hash comparison instead."
+    )
+
+
 def test_the_hash_check_catches_a_hand_edit(tmp_path: Path, manifest: dict) -> None:
     """The vacuity check for the pin above — run RED before trusting its green.
 

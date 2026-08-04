@@ -10,3 +10,14 @@
 # Scoped to this directory on purpose: the rest of the tree keeps whatever normalization it
 # has today, so nothing outside the replay moves.
 docs/replay/** -text
+
+# The replay FIXTURES are hashed byte-for-byte by manifest.json, so their bytes may not depend
+# on who checked them out. They were written through Python's text mode on Windows, which
+# turned every `\n` into `\r\n`; the manifest recorded those CRLF hashes, git normalised the
+# files to LF on the way into the index, and the pin passed for the author and failed in CI on
+# the first push — an LF checkout measured against a CRLF digest.
+#
+# `eol=lf` makes every checkout, on every platform, produce the bytes the manifest describes.
+# The capture writes LF too (`newline=""`), and test_replay_fixtures fails on a stray CR, so
+# the property is enforced at all three points rather than trusted at one.
+frontend/src/replay/*.json text eol=lf
