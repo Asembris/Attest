@@ -289,7 +289,9 @@ the compaction is a feature. Three of the four defects are fixable upstream and 
 [written up with reproductions](docs/upstream/), two of them filed upstream
 ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169),
 [#168](https://github.com/acryldata/mcp-server-datahub/issues/168); the third stays a draft
-deliberately). `just spike-mcp` **exits non-zero by design**: if it
+deliberately). A fix for #168 is proposed at
+[PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182) — open; not reviewed, not
+merged. `just spike-mcp` **exits non-zero by design**: if it
 ever goes green, the finding has expired and the decision is worth reopening. Full write-up and
 per-dataset diffs: **[docs/mcp-evaluation.md](docs/mcp-evaluation.md)**.
 
