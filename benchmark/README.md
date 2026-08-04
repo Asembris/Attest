@@ -201,6 +201,16 @@ hollow:
   different meanings, `lastModified` timestamps that mean "when the pipeline ran" rather than
   "when the data changed", and columns whose classification is *genuinely* contested by the
   people who own them. **None of that is exercised here.**
+
+  **This one has a partial answer, and it cost us something to get.**
+  [`docs/external-trial.md`](../docs/external-trial.md) runs 15 claims through the real
+  pipeline against DataHub's own `showcase-ecommerce` datapack — 67 datasets over 7
+  platforms, whose metadata nobody here wrote. It is emphatically **not** a second benchmark
+  and nothing in it is scored. What it found is that **15 of those 67 datasets cannot be
+  audited at all**: Attest's GraphQL query has no `CorpGroup` arm, and because
+  `generate_seed.py` emits `CorpUser` owners *exclusively*, no fixture, no offline test and
+  no live test in this repository could ever have surfaced it. That is this bullet, proven
+  consequential by the first instrument built to test it.
 - **The labels apply the policy; they do not validate it.** If
   "an untagged column on an unreviewed table is Insufficient-Coverage" is the *wrong rule*,
   then the checker and the labels are wrong together and score 100% doing it. That is a

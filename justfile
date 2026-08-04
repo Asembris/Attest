@@ -204,6 +204,32 @@ replay-build:
 replay-verify:
     python spikes/replay_verify.py
 
+# --- the external trial ------------------------------------------------------
+
+# Load the EXTERNAL trial catalog: DataHub's own showcase-ecommerce datapack (67 datasets,
+# 7 platforms), checksum-pinned and filtered against THIS server's aspect registry.
+#
+# Not `datahub docker ingest-sample-data`, for three stated reasons: the CLI's registry
+# fetch dies on a TLS-inspecting network and ships no offline fallback; its --pack path
+# time-shifts every timestamp to NOW, which would make every freshness verdict an artifact
+# of the ingest clock; and the pack carries DataHub Cloud aspects Core has no place for.
+# `--plan` reports what Core refuses and ingests nothing. See docs/external-trial/ingest.md.
+external-ingest *ARGS:
+    python spikes/external_ingest.py {{ARGS}}
+
+# ATTEST AGAINST A CATALOG WE DID NOT AUTHOR. 15 claims through the real pipeline, four
+# families, all three verdicts, five expected Insufficient-Coverage.
+#
+# NOT a benchmark and nothing here is scored: the golden benchmark is a conformance gate
+# where 100% is EXPECTED, and re-using that frame on unlabelled foreign claims would import
+# a scoring apparatus this run has not earned. The question is whether the verdicts are
+# DEFENSIBLE against metadata we did not design, and where Attest hits its own documented
+# limits. Publishes 3 verdicts through the real approval path (--no-publish to skip); uses a
+# TEMPORARY store, so attest.db is untouched. --dry-run resolves every target and audits
+# nothing (free). Needs `just external-ingest` first. Write-up: docs/external-trial.md.
+external-trial *ARGS:
+    python spikes/external_trial.py {{ARGS}}
+
 # --- verification ------------------------------------------------------------
 
 # Run the suite against the live seeded catalog, ACROSS CORES.

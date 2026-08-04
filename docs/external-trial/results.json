@@ -1,0 +1,848 @@
+{
+  "what_this_is": "A trial of Attest against a DataHub catalog it did not author. NOT a benchmark: nothing here is scored, and no accuracy, macro-F1 or confusion matrix is computed over it. See docs/external-trial.md.",
+  "reproduce": "just external-trial",
+  "started": "2026-08-04T18:40:30.256596+00:00",
+  "finished": "2026-08-04T18:42:27.319435+00:00",
+  "catalog": {
+    "source": "DataHub showcase-ecommerce datapack",
+    "ingest": "docs/external-trial/ingest.md",
+    "datasets_in_pack": 67,
+    "datasets_readable_by_attest": 52,
+    "datasets_refused": 15
+  },
+  "totals": {
+    "claims": 15,
+    "matched_expectation": 15,
+    "verdicts": {
+      "Contradicted": 5,
+      "Supported": 4,
+      "Insufficient-Coverage": 5,
+      "ClaimError": 1
+    },
+    "urns_transcribed_verbatim": 15,
+    "answered_the_intended_question": 14,
+    "right_by_luck": 1,
+    "right_by_luck_ids": [
+      "ext-class-01"
+    ],
+    "model_authored_explanations": 14,
+    "template_fallbacks": 0,
+    "usd": 0.00774,
+    "published": 3,
+    "published_on_first_attempt": 3
+  },
+  "predictions_made_before_the_run": [
+    {
+      "id": "pred-1",
+      "prediction": "At least one long UUID-bearing URN is garbled by the decomposer, producing an EntityNotFoundError ClaimError. Seeded URNs are short and word-like; these carry hex UUIDs."
+    },
+    {
+      "id": "pred-2",
+      "prediction": "The guard's template-fallback rate rises above the seeded catalog's 0-of-40, because faithfulness.py treats capitalized words as a factual class and this catalog's evidence is UUIDs, NUMBER(38,0), VARCHAR(16777216)."
+    },
+    {
+      "id": "pred-3",
+      "prediction": "ext-fresh-03's evidence says the aspect is ABSENT when it is present holding {time: 0}."
+    },
+    {
+      "id": "pred-4",
+      "prediction": "contains_pii='False' moves nothing (correct), and no output mentions that the catalog said something PII-adjacent Attest could not read."
+    }
+  ],
+  "discarded_claim": {
+    "prose": "The customer_id column of the S3 customers table is of type NUMBER(38,0).",
+    "predicted": "Contradicted",
+    "actual_on_tracing": "Supported",
+    "why": "Predicted Contradicted because S3 records customer_id as `int64` while Snowflake records `NUMBER(38,0)`. Tracing checkers/schema.py::_type_matches before writing the label: the matcher accepts EITHER of DataHub's two type vocabularies and strips precision, so the asserted `NUMBER(38,0)` base-matches the abstract type `NUMBER`, which is what S3 carries too. Supported \u2014 and correct. The claim was dropped rather than shipped with a wrong expectation."
+  },
+  "claims": [
+    {
+      "id": "ext-fresh-01",
+      "family": "freshness",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) is updated within the last 24 hours.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+      "expected": "Contradicted",
+      "human_reading": "Contradicted \u2014 agrees.",
+      "basis": "lastModified 2026-01-28T00:09:27Z, ~4530h before the run; the window is 24h.",
+      "probes": "",
+      "verdict": "Contradicted",
+      "matched_expectation": true,
+      "reason": "Last modified 4530.5 hours ago, which is outside the asserted 24-hour window.",
+      "evidence": [
+        {
+          "field": "properties.lastModified.time",
+          "value": "2026-01-28T00:09:27.676000+00:00",
+          "note": "Last modified 4530.5h ago; claim allows 24h."
+        }
+      ],
+      "explanation": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) was last modified 4530.5 hours ago, which is significantly outside the 24-hour freshness window asserted by the claim. Therefore, the catalog contradicts the claim regarding the dataset's update frequency.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) is updated within the last 24 hours.",
+        "claim_type": "freshness",
+        "max_age_hours": 24.0
+      },
+      "extracted_claim_type": "freshness",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "38ca56fa-8a0d-42ee-84fb-45e660aa9d12",
+      "published": true,
+      "published_on_first_attempt": true,
+      "claim_urn": "urn:li:assertion:attest-b62eaa238b1b08277ac7"
+    },
+    {
+      "id": "ext-fresh-02",
+      "family": "freshness",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) has been refreshed at least once in the past two years.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+      "expected": "Supported",
+      "human_reading": "Supported \u2014 agrees.",
+      "basis": "Same timestamp, ~4530h, inside a 17520h window. Same table as ext-fresh-01, opposite verdict: freshness is arithmetic against a stated window, not a label.",
+      "probes": "",
+      "verdict": "Supported",
+      "matched_expectation": true,
+      "reason": "Last modified 4530.5 hours ago, within the asserted 17520-hour window.",
+      "evidence": [
+        {
+          "field": "properties.lastModified.time",
+          "value": "2026-01-28T00:09:27.676000+00:00",
+          "note": "Last modified 4530.5h ago; claim allows 17520h."
+        }
+      ],
+      "explanation": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) was last modified 4530.5 hours ago. This modification falls within the 17520-hour window specified in the claim, indicating that the dataset has been refreshed at least once in the past two years.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) has been refreshed at least once in the past two years.",
+        "claim_type": "freshness",
+        "max_age_hours": 17520.0
+      },
+      "extracted_claim_type": "freshness",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "e98eb305-4073-4ee0-b7c1-7e7c207bb3e7",
+      "published": true,
+      "published_on_first_attempt": true,
+      "claim_urn": "urn:li:assertion:attest-46df7a4299eb1416f44a"
+    },
+    {
+      "id": "ext-fresh-03",
+      "family": "freshness",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_history,PROD) is refreshed daily.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_history,PROD)",
+      "expected": "Insufficient-Coverage",
+      "human_reading": "Insufficient-Coverage \u2014 agrees, but the evidence will be imprecise.",
+      "basis": "GMS returns lastModified {time: 0}. Attest reads a falsy epoch as absent, which is the right verdict from a wrong description: the aspect is PRESENT and holds a meaningless zero.",
+      "probes": "absent-vs-empty, one notch finer than snapshot.py preserves",
+      "verdict": "Insufficient-Coverage",
+      "matched_expectation": true,
+      "reason": "The catalog holds no last-modified timestamp for this dataset, so its recency cannot be confirmed or denied.",
+      "evidence": [
+        {
+          "field": "properties.lastModified.time",
+          "value": null,
+          "note": "Aspect absent \u2014 the catalog does not record when this last changed."
+        }
+      ],
+      "explanation": "The catalog is silent regarding the last-modified timestamp for the dataset urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_history,PROD). As a result, the recency of this dataset cannot be confirmed or denied, leading to an Insufficient-Coverage verdict.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_history,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_history,PROD) is refreshed daily.",
+        "claim_type": "freshness",
+        "max_age_hours": 24.0
+      },
+      "extracted_claim_type": "freshness",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_history,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "e5db98a1-0098-4a0c-b006-0c11ebadaaf1",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-fresh-04",
+      "family": "freshness",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD) is refreshed weekly.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD)",
+      "expected": "Insufficient-Coverage",
+      "human_reading": "Insufficient-Coverage \u2014 agrees.",
+      "basis": "No lastModified at all. A GENUINELY absent aspect, distinct from ext-fresh-03.",
+      "probes": "",
+      "verdict": "Insufficient-Coverage",
+      "matched_expectation": true,
+      "reason": "The catalog holds no last-modified timestamp for this dataset, so its recency cannot be confirmed or denied.",
+      "evidence": [
+        {
+          "field": "properties.lastModified.time",
+          "value": null,
+          "note": "Aspect absent \u2014 the catalog does not record when this last changed."
+        }
+      ],
+      "explanation": "The catalog is silent regarding the last-modified timestamp for the dataset urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD). As a result, the recency of this dataset cannot be confirmed or denied, leading to an Insufficient-Coverage verdict.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD) is refreshed weekly.",
+        "claim_type": "freshness",
+        "max_age_hours": 168.0
+      },
+      "extracted_claim_type": "freshness",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "be17b163-285a-409e-9530-fd5528fa5936",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-own-01",
+      "family": "ownership",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.b980a8c5-28eb-119e-f6ca-4da32732e5be,PROD) is owned by urn:li:corpuser:b2fd91.brock1@example.com.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.b980a8c5-28eb-119e-f6ca-4da32732e5be,PROD)",
+      "expected": "Supported",
+      "human_reading": "Supported \u2014 agrees.",
+      "basis": "That URN is the sole listed owner.",
+      "probes": "",
+      "verdict": "Supported",
+      "matched_expectation": true,
+      "reason": "urn:li:corpuser:b2fd91.brock1@example.com is listed as an owner in the catalog.",
+      "evidence": [
+        {
+          "field": "ownership.owners[].owner.urn",
+          "value": [
+            "urn:li:corpuser:b2fd91.brock1@example.com"
+          ],
+          "note": "Catalog lists 1 owner(s)."
+        }
+      ],
+      "explanation": "The catalog lists 'urn:li:corpuser:b2fd91.brock1@example.com' as an owner of the dataset 'urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.b980a8c5-28eb-119e-f6ca-4da32732e5be,PROD)'. This confirms that the dataset is owned by the specified user, supporting the claim made by the agent.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.b980a8c5-28eb-119e-f6ca-4da32732e5be,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.b980a8c5-28eb-119e-f6ca-4da32732e5be,PROD) is owned by urn:li:corpuser:b2fd91.brock1@example.com.",
+        "claim_type": "ownership",
+        "owner_urn": "urn:li:corpuser:b2fd91.brock1@example.com"
+      },
+      "extracted_claim_type": "ownership",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.b980a8c5-28eb-119e-f6ca-4da32732e5be,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "715bf869-8407-46f0-ab21-d2eb9ee36cef",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-own-02",
+      "family": "ownership",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD) is owned by urn:li:corpuser:b2fd91.brock1@example.com.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD)",
+      "expected": "Contradicted",
+      "human_reading": "Contradicted \u2014 agrees.",
+      "basis": "The owners list is exhaustive and holds only kirk@example.com.",
+      "probes": "",
+      "verdict": "Contradicted",
+      "matched_expectation": true,
+      "reason": "urn:li:corpuser:b2fd91.brock1@example.com is not an owner. The catalog lists urn:li:corpuser:b2fd91.kirk@example.com \u2014 and that list is exhaustive.",
+      "evidence": [
+        {
+          "field": "ownership.owners[].owner.urn",
+          "value": [
+            "urn:li:corpuser:b2fd91.kirk@example.com"
+          ],
+          "note": "Catalog lists 1 owner(s)."
+        }
+      ],
+      "explanation": "The catalog indicates that the dataset urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD) is owned by urn:li:corpuser:b2fd91.kirk@example.com. Since urn:li:corpuser:b2fd91.brock1@example.com is not listed as an owner, the claim is contradicted by the catalog facts.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD) is owned by urn:li:corpuser:b2fd91.brock1@example.com.",
+        "claim_type": "ownership",
+        "owner_urn": "urn:li:corpuser:b2fd91.brock1@example.com"
+      },
+      "extracted_claim_type": "ownership",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "a6cb56ed-498b-4fb1-9469-e610f7a08ef9",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-own-03",
+      "family": "ownership",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) is owned by urn:li:corpuser:b2fd91.brock1@example.com.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "expected": "Insufficient-Coverage",
+      "human_reading": "Insufficient-Coverage \u2014 agrees.",
+      "basis": "Ownership aspect absent. 47 of 52 readable datasets are unowned.",
+      "probes": "",
+      "verdict": "Insufficient-Coverage",
+      "matched_expectation": true,
+      "reason": "No owner is assigned to this dataset in the catalog, so the asserted owner can be neither confirmed nor denied.",
+      "evidence": [
+        {
+          "field": "ownership.owners[].owner.urn",
+          "value": null,
+          "note": "Ownership aspect absent."
+        }
+      ],
+      "explanation": "The catalog is silent regarding the ownership of the dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD). There is no owner assigned to this dataset, which means the asserted owner cannot be confirmed or denied.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) is owned by urn:li:corpuser:b2fd91.brock1@example.com.",
+        "claim_type": "ownership",
+        "owner_urn": "urn:li:corpuser:b2fd91.brock1@example.com"
+      },
+      "extracted_claim_type": "ownership",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "e2d2ccf5-c80c-419d-88ae-f42ed0fb68ba",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-own-04",
+      "family": "ownership",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.orders,PROD) is owned by urn:li:corpGroup:b2fd91.ORG_DATA_PLATFORM.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.orders,PROD)",
+      "expected": "ClaimError",
+      "human_reading": "Supported. The catalog plainly lists ORG_DATA_PLATFORM as the technical owner; a person reading the DataHub page sees it. Attest cannot.",
+      "basis": "THE HEADLINE. Attest's DATASET_QUERY asks for `owner { ... on CorpUser }` and has no CorpGroup arm, so a group owner comes back `{}` and the Session 23 guard refuses to normalize it. Fails CLOSED (correct) with a wrong diagnosis.",
+      "probes": "CorpGroup ownership \u2014 15 of 67 datasets unauditable",
+      "verdict": "ClaimError",
+      "matched_expectation": true,
+      "reason": "Malformed catalog response for urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.orders,PROD): malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})",
+      "evidence": [],
+      "explanation": "",
+      "explanation_source": "",
+      "extracted_claim": null,
+      "extracted_claim_type": "",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.orders,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "d563e6eb-4ef9-48b0-b654-5752f67d5814",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-class-01",
+      "family": "classification",
+      "prose": "The cust_email column of urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) is labelled urn:li:glossaryTerm:b2fd91.Email_Address.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "expected": "Supported",
+      "human_reading": "Supported \u2014 agrees.",
+      "basis": "Set membership over a vocabulary Attest has never seen. The GENERIC label path is portable; only the PII policy is vocabulary-bound.",
+      "probes": "",
+      "verdict": "Supported",
+      "matched_expectation": true,
+      "reason": "Column 'cust_email' exists.",
+      "evidence": [
+        {
+          "field": "schemaMetadata.fields[].fieldPath",
+          "value": [
+            "customer_id",
+            "cust_first_name",
+            "cust_last_name",
+            "nls_language",
+            "nls_territory",
+            "credit_limit",
+            "cust_email",
+            "account_mgr_id",
+            "customer_since",
+            "customer_class",
+            "suggestions",
+            "dob",
+            "mailshot",
+            "partner_mailshot",
+            "phone_number",
+            "address_line1",
+            "address_line2",
+            "address_line3",
+            "town_city",
+            "country_id",
+            "zipcode",
+            "region_id"
+          ],
+          "note": "Schema lists 22 column(s); the list is exhaustive."
+        }
+      ],
+      "explanation": "The catalog confirms that the column 'cust_email' exists in the dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD). This supports the claim that the cust_email column is present and can be associated with the label urn:li:glossaryTerm:b2fd91.Email_Address.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "raw_text": "The cust_email column of urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) is labelled urn:li:glossaryTerm:b2fd91.Email_Address.",
+        "claim_type": "schema",
+        "columns": [
+          {
+            "name": "cust_email",
+            "native_type": null
+          }
+        ]
+      },
+      "extracted_claim_type": "schema",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": false,
+      "right_by_luck": true,
+      "error": "",
+      "run_id": "875e034d-2a28-4e78-918f-58fe2417293c",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-class-02",
+      "family": "classification",
+      "prose": "The cust_email column of urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) contains PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "expected": "Insufficient-Coverage",
+      "human_reading": "PII. The column is named cust_email, holds email addresses, and carries a term whose own description reads 'Subject to PII handling requirements'.",
+      "basis": "THE SHARPEST CASE. None of policy.PII_SIGNALS fires: no urn:li:tag:PII, no term under urn:li:glossaryNode:PII (Email_Address has NO parent node at all), no hasPII property. No Verified marker, so no closed-world reasoning. Attest infers nothing from a name \u2014 by design, and here that costs it the answer.",
+      "probes": "semantic glossary-term matching (a documented deferred item)",
+      "verdict": "Insufficient-Coverage",
+      "matched_expectation": true,
+      "reason": "column 'cust_email' carries no PII signal, and the table is not marked classification-complete. None of the recognized PII signals fired (tag, term, property), but absence of a signal is not evidence of absence \u2014 nobody has reviewed it.",
+      "evidence": [
+        {
+          "field": "schemaMetadata.fields[cust_email].globalTags + .glossaryTerms",
+          "value": [
+            "urn:li:glossaryTerm:b2fd91.Email_Address"
+          ],
+          "note": "Column 'cust_email' carries 1 label(s)."
+        },
+        {
+          "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
+          "value": null,
+          "note": "Table is not marked classification-complete, so an absent label is silence, not denial."
+        }
+      ],
+      "explanation": "The catalog holds that the column 'cust_email' carries 1 label(s) identified as ['urn:li:glossaryTerm:b2fd91.Email_Address']. However, the table is not marked classification-complete, and the catalog is silent regarding any recognized PII signals, as there are no tags or glossary terms present. Therefore, the catalog does not provide sufficient evidence to classify the 'cust_email' column as containing PII.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "raw_text": "The cust_email column of urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) contains PII.",
+        "claim_type": "classification",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": true,
+        "field_path": "cust_email"
+      },
+      "extracted_claim_type": "classification",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "b26adcd2-482d-45c8-b075-b063d0649544",
+      "published": true,
+      "published_on_first_attempt": true,
+      "claim_urn": "urn:li:assertion:attest-4d4c8ad1f5f1201e07c9"
+    },
+    {
+      "id": "ext-class-03",
+      "family": "classification",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) contains no PII.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "expected": "Insufficient-Coverage",
+      "human_reading": "Contradicted. The table has cust_email, phone_number and dob columns. But Insufficient-Coverage is the CONSERVATIVE error here, not the dangerous one: Attest refuses to certify, which is the point.",
+      "basis": "No PII signal at either grain and no completeness marker anywhere in this catalog, so 'PII-free' can never be Supported here. The false-assurance guard.",
+      "probes": "",
+      "verdict": "Insufficient-Coverage",
+      "matched_expectation": true,
+      "reason": "this table carries no PII signal, and the table is not marked classification-complete. None of the recognized PII signals fired (tag, term, property), but absence of a signal is not evidence of absence \u2014 nobody has reviewed it.",
+      "evidence": [
+        {
+          "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
+          "value": [
+            "urn:li:tag:b2fd91.__default_large_table",
+            "urn:li:tag:b2fd91.__default_high_queries",
+            "urn:li:glossaryTerm:b2fd91.1598cf93-c199-43a1-8833-fce96faa9a1a",
+            "urn:li:glossaryTerm:b2fd91.e7106c45-b307-4eb6-9c8c-e7fff15f095a",
+            "urn:li:glossaryTerm:b2fd91.26e268c3-3688-4281-949e-8c1aa2600c02",
+            "urn:li:glossaryTerm:b2fd91.42266719-3cab-42b8-a8d2-49d782876dbc"
+          ],
+          "note": "Table carries 6 label(s)."
+        },
+        {
+          "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
+          "value": null,
+          "note": "Table is not marked classification-complete, so an absent label is silence, not denial."
+        }
+      ],
+      "explanation": "The catalog holds 6 label(s) for the dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD), but it is not marked classification-complete. The absence of recognized PII signals (tag, term, property) does not provide evidence of absence, as the catalog is silent on whether it contains PII. Therefore, the verdict is Insufficient-Coverage.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) contains no PII.",
+        "claim_type": "classification",
+        "labels": [
+          "urn:li:tag:PII"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "extracted_claim_type": "classification",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "03915e23-b5c9-4ff4-907f-a44da505ef5a",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-class-04",
+      "family": "classification",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.orders,PROD) is not labelled urn:li:glossaryTerm:b2fd91.1598cf93-c199-43a1-8833-fce96faa9a1a.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.orders,PROD)",
+      "expected": "Contradicted",
+      "human_reading": "Contradicted \u2014 agrees.",
+      "basis": "That term IS attached. It is the term literally named 'PII', filed under a node named 'Classification' \u2014 legible to Attest as an identifier, invisible to it as a PII signal.",
+      "probes": "",
+      "verdict": "Contradicted",
+      "matched_expectation": true,
+      "reason": "this table is tagged b2fd91.1598cf93-c199-43a1-8833-fce96faa9a1a, contradicting the claim.",
+      "evidence": [
+        {
+          "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
+          "value": [
+            "urn:li:tag:b2fd91.__default_large_table",
+            "urn:li:tag:b2fd91.__default_high_queries",
+            "urn:li:glossaryTerm:b2fd91.1598cf93-c199-43a1-8833-fce96faa9a1a",
+            "urn:li:glossaryTerm:b2fd91.42266719-3cab-42b8-a8d2-49d782876dbc",
+            "urn:li:glossaryTerm:b2fd91.26e268c3-3688-4281-949e-8c1aa2600c02"
+          ],
+          "note": "Table carries 5 label(s)."
+        }
+      ],
+      "explanation": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.orders,PROD) is tagged with urn:li:glossaryTerm:b2fd91.1598cf93-c199-43a1-8833-fce96faa9a1a, which contradicts the claim that it is not labelled with this term. The catalog holds a total of 5 labels, including the specified glossary term.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.orders,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.orders,PROD) is not labelled urn:li:glossaryTerm:b2fd91.1598cf93-c199-43a1-8833-fce96faa9a1a.",
+        "claim_type": "classification",
+        "labels": [
+          "urn:li:glossaryTerm:b2fd91.1598cf93-c199-43a1-8833-fce96faa9a1a"
+        ],
+        "present": false,
+        "field_path": null
+      },
+      "extracted_claim_type": "classification",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.orders,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "2b10aae3-636a-4e7c-9fc4-259a1c4cdff8",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-schema-01",
+      "family": "schema",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) has a cust_email column of type VARCHAR.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "expected": "Supported",
+      "human_reading": "Supported \u2014 agrees.",
+      "basis": "VARCHAR(16777216); precision is ignored by design.",
+      "probes": "",
+      "verdict": "Supported",
+      "matched_expectation": true,
+      "reason": "Column 'cust_email' exists with type VARCHAR(16777216), matching the asserted VARCHAR.",
+      "evidence": [
+        {
+          "field": "schemaMetadata.fields[].fieldPath",
+          "value": [
+            "customer_id",
+            "cust_first_name",
+            "cust_last_name",
+            "nls_language",
+            "nls_territory",
+            "credit_limit",
+            "cust_email",
+            "account_mgr_id",
+            "customer_since",
+            "customer_class",
+            "suggestions",
+            "dob",
+            "mailshot",
+            "partner_mailshot",
+            "phone_number",
+            "address_line1",
+            "address_line2",
+            "address_line3",
+            "town_city",
+            "country_id",
+            "zipcode",
+            "region_id"
+          ],
+          "note": "Schema lists 22 column(s); the list is exhaustive."
+        },
+        {
+          "field": "schemaMetadata.fields[cust_email].nativeDataType",
+          "value": "VARCHAR(16777216)",
+          "note": "DataHub abstract type: STRING."
+        }
+      ],
+      "explanation": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) includes a column 'cust_email' with a native data type of 'VARCHAR(16777216)'. This matches the asserted type of VARCHAR, supporting the claim.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) has a cust_email column of type VARCHAR.",
+        "claim_type": "schema",
+        "columns": [
+          {
+            "name": "cust_email",
+            "native_type": "VARCHAR"
+          }
+        ]
+      },
+      "extracted_claim_type": "schema",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "6c378e23-5d44-4185-a63a-22b663420061",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-schema-02",
+      "family": "schema",
+      "prose": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) has an ssn column.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "expected": "Contradicted",
+      "human_reading": "Contradicted \u2014 agrees.",
+      "basis": "The 22-column schema is exhaustive and lists no ssn.",
+      "probes": "",
+      "verdict": "Contradicted",
+      "matched_expectation": true,
+      "reason": "Column 'ssn' is not in the schema, which lists every column.",
+      "evidence": [
+        {
+          "field": "schemaMetadata.fields[].fieldPath",
+          "value": [
+            "customer_id",
+            "cust_first_name",
+            "cust_last_name",
+            "nls_language",
+            "nls_territory",
+            "credit_limit",
+            "cust_email",
+            "account_mgr_id",
+            "customer_since",
+            "customer_class",
+            "suggestions",
+            "dob",
+            "mailshot",
+            "partner_mailshot",
+            "phone_number",
+            "address_line1",
+            "address_line2",
+            "address_line3",
+            "town_city",
+            "country_id",
+            "zipcode",
+            "region_id"
+          ],
+          "note": "Schema lists 22 column(s); the list is exhaustive."
+        }
+      ],
+      "explanation": "The catalog does not include an 'ssn' column in the schema for the dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD). The schema lists 22 columns, which are 'customer_id', 'cust_first_name', 'cust_last_name', 'nls_language', 'nls_territory', 'credit_limit', 'cust_email', 'account_mgr_id', 'customer_since', 'customer_class', 'suggestions', 'dob', 'mailshot', 'partner_mailshot', 'phone_number', 'address_line1', 'address_line2', 'address_line3', 'town_city', 'country_id', 'zipcode', and 'region_id'. Since 'ssn' is not included, the claim is contradicted.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "raw_text": "The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) has an ssn column.",
+        "claim_type": "schema",
+        "columns": [
+          {
+            "name": "ssn",
+            "native_type": null
+          }
+        ]
+      },
+      "extracted_claim_type": "schema",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "66923cd1-37f0-4dd8-aff8-2a2a5f69a728",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    },
+    {
+      "id": "ext-schema-03",
+      "family": "schema",
+      "prose": "The zipcode column of urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) is of type VARCHAR.",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "expected": "Contradicted",
+      "human_reading": "Contradicted \u2014 agrees. The catalog records NUMBER(38,0), which is a questionable way to model a zipcode; Attest reports what the catalog says and does not opine on the modelling, which is correct.",
+      "basis": "native NUMBER(38,0), abstract NUMBER. Neither matches varchar.",
+      "probes": "",
+      "verdict": "Contradicted",
+      "matched_expectation": true,
+      "reason": "Column 'zipcode' is NUMBER(38,0) (NUMBER), not the asserted VARCHAR.",
+      "evidence": [
+        {
+          "field": "schemaMetadata.fields[].fieldPath",
+          "value": [
+            "customer_id",
+            "cust_first_name",
+            "cust_last_name",
+            "nls_language",
+            "nls_territory",
+            "credit_limit",
+            "cust_email",
+            "account_mgr_id",
+            "customer_since",
+            "customer_class",
+            "suggestions",
+            "dob",
+            "mailshot",
+            "partner_mailshot",
+            "phone_number",
+            "address_line1",
+            "address_line2",
+            "address_line3",
+            "town_city",
+            "country_id",
+            "zipcode",
+            "region_id"
+          ],
+          "note": "Schema lists 22 column(s); the list is exhaustive."
+        },
+        {
+          "field": "schemaMetadata.fields[zipcode].nativeDataType",
+          "value": "NUMBER(38,0)",
+          "note": "DataHub abstract type: NUMBER."
+        }
+      ],
+      "explanation": "The catalog indicates that the column 'zipcode' in urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) is of type NUMBER(38,0), not VARCHAR as claimed. This directly contradicts the assertion made by the agent regarding the data type of the zipcode column.",
+      "explanation_source": "model",
+      "extracted_claim": {
+        "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "raw_text": "The zipcode column of urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) is of type VARCHAR.",
+        "claim_type": "schema",
+        "columns": [
+          {
+            "name": "zipcode",
+            "native_type": "VARCHAR"
+          }
+        ]
+      },
+      "extracted_claim_type": "schema",
+      "extracted_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn_transcribed_verbatim": true,
+      "answered_the_intended_question": true,
+      "right_by_luck": false,
+      "error": "",
+      "run_id": "bb4e9c9c-81a6-4110-b3cb-0e92d0c3187b",
+      "published": false,
+      "published_on_first_attempt": false,
+      "claim_urn": ""
+    }
+  ],
+  "published_read_back_from_datahub_with_no_store": [
+    {
+      "claim_urn": "urn:li:assertion:attest-b62eaa238b1b08277ac7",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+      "claim_type": "freshness",
+      "description": "Contradicted \u2014 The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) is updated within the last 24 hours.",
+      "verdict": "Contradicted",
+      "reviewer": "external-trial",
+      "snapshot_id": "sha256:cb1d67a6ccfc8077",
+      "evidence": [
+        {
+          "field": "properties.lastModified.time",
+          "value": "2026-01-28T00:09:27.676000+00:00",
+          "note": "Last modified 4530.3h ago; claim allows 24h."
+        }
+      ],
+      "state": "complete",
+      "stale_tag": false,
+      "history_length": 3
+    },
+    {
+      "claim_urn": "urn:li:assertion:attest-46df7a4299eb1416f44a",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+      "claim_type": "freshness",
+      "description": "Supported \u2014 The dataset urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD) has been refreshed at least once in the past two years.",
+      "verdict": "Supported",
+      "reviewer": "external-trial",
+      "snapshot_id": "sha256:cb1d67a6ccfc8077",
+      "evidence": [
+        {
+          "field": "properties.lastModified.time",
+          "value": "2026-01-28T00:09:27.676000+00:00",
+          "note": "Last modified 4530.3h ago; claim allows 17520h."
+        }
+      ],
+      "state": "complete",
+      "stale_tag": false,
+      "history_length": 3
+    },
+    {
+      "claim_urn": "urn:li:assertion:attest-4d4c8ad1f5f1201e07c9",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "claim_type": "classification",
+      "description": "Insufficient-Coverage \u2014 The cust_email column of urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD) contains PII.",
+      "verdict": "Insufficient-Coverage",
+      "reviewer": "external-trial",
+      "snapshot_id": "sha256:06e4f0ab0651c041",
+      "evidence": [
+        {
+          "field": "schemaMetadata.fields[cust_email].globalTags + .glossaryTerms",
+          "value": [
+            "urn:li:glossaryTerm:b2fd91.Email_Address"
+          ],
+          "note": "Column 'cust_email' carries 1 label(s)."
+        },
+        {
+          "field": "tags.tags[].tag.urn + glossaryTerms.terms[].term.urn",
+          "value": null,
+          "note": "Table is not marked classification-complete, so an absent label is silence, not denial."
+        }
+      ],
+      "state": "complete",
+      "stale_tag": false,
+      "history_length": 3
+    }
+  ]
+}
