@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- RELATIVE, unlike the production index.html's rooted `/favicon.svg`. This bundle is
+         served from a SUBDIRECTORY (`/Attest/replay/` on GitHub Pages, `/replay/` when the
+         built docs/ tree is checked locally), and a rooted href would 404 in both places
+         while looking fine in neither. `base: './'` covers the bundle's own assets; these
+         are in public/ and are copied verbatim, so they are spelled relative here. -->
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="./favicon-32.png" sizes="32x32" />
+    <link rel="icon" href="./favicon-16.png" sizes="16x16" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Attest — Recorded Audit (Replay)</title>
+    <meta
+      name="description"
+      content="An interactive replay of one real Attest audit: three claims checked against a live DataHub catalog, published by a human, and read back out of the catalog. Every response is the recorded one — nothing here is live."
+    />
+    <meta property="og:title" content="Attest — Recorded Audit (Replay)" />
+    <meta property="og:image" content="./attest-social-card.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <script type="module" crossorigin src="./assets/index.replay-DdM5v5--.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-C1sfOpwv.css">
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- No-JS readers get the honest sentence rather than a blank page. Removed by the app on
+         mount; a static host cannot render React for them and should not pretend otherwise. -->
+    <noscript>
+      <p style="font-family: system-ui, sans-serif; color: #f5f6f7; background: #0a0b0d; margin: 0; padding: 24px">
+        This page replays a recorded Attest audit in the real interface, which needs JavaScript.
+        The audit it replays, the catalog it ran against, and the code are all at
+        <a style="color: #6e8fbf" href="https://github.com/Asembris/Attest">github.com/Asembris/Attest</a>.
+      </p>
+    </noscript>
+  </body>
+</html>

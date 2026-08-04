@@ -151,6 +151,48 @@ demo: ui
     @Write-Host "Attest demo -> open http://localhost:8003  (UI + API, one process)"
     python -m uvicorn attest.api.app:app --port {{env("ATTEST_API_PORT", "8003")}}
 
+# --- the replay (docs/replay/, served by GitHub Pages) -----------------------
+
+# Capture the replay fixtures from ONE REAL AUDIT through the shipped API.
+#
+# Needs DataHub up, seeded, and OPENAI_API_KEY. Runs its own uvicorn on an ephemeral port
+# with its own store, so a `just serve` on :8003 is neither used nor disturbed. It PUBLISHES,
+# which appends a permanent verdict event to three real claim artifacts -- content-addressed,
+# and `DELETE` on an assertion returns 200 and removes nothing, so only `just reset` clears
+# them. Re-run it deliberately, not idly. `--resume` re-captures only the GET /claims matrix
+# against the run already recorded, and costs no new verdict.
+replay-capture *ARGS:
+    python spikes/capture_replay.py {{ARGS}}
+
+# Build the REPLAY bundle and stage it at docs/replay/ for GitHub Pages.
+#
+# The same React app, every real component, with `api/client` aliased to `api/replayClient`
+# so every call is answered from the committed fixtures. ATTEST_REPLAY=1 is what moves
+# Tailwind's content scan onto src/replay/ -- WITHOUT it the banner's classes compile into
+# the PRODUCTION css instead, which is a real change to the shipped bundle made by a file
+# nothing imports (caught by hashing dist/; see tailwind.config.js).
+#
+# Same fresh-or-abort discipline as `just ui`: the old output goes first and a failed build
+# THROWS, so docs/replay/ can never quietly serve yesterday's bundle. `base: './'` means the
+# staged tree works at /Attest/replay/ on github.io and at /replay/ from a local static
+# server -- `just replay-verify` proves both.
+replay-build:
+    $env:NODE_USE_SYSTEM_CA="1"; $env:ATTEST_REPLAY="1"; cd frontend; if (Test-Path dist-replay) { Remove-Item -Recurse -Force dist-replay }; npm install; if ($LASTEXITCODE -ne 0) { throw "npm install failed -- refusing to leave a stale replay bundle" }; npx vite build --mode replay; if ($LASTEXITCODE -ne 0) { throw "replay build failed -- refusing to leave a stale replay bundle" }
+    if (Test-Path docs/replay) { Remove-Item -Recurse -Force docs/replay }
+    New-Item -ItemType Directory -Path docs/replay | Out-Null
+    Copy-Item -Recurse frontend/dist-replay/* docs/replay/
+    Move-Item docs/replay/index.replay.html docs/replay/index.html
+    @Write-Host "replay staged -> docs/replay/  (entry: docs/replay/index.html)"
+
+# PROVE the staged replay works: served from a subdirectory, with no network beyond itself.
+#
+# Serves docs/ two ways -- at /replay/ and at the Pages-shaped /Attest/replay/ -- drives the
+# real Edge through the whole recorded flow, and records EVERY request the page makes. A
+# single request outside the replay's own directory fails it: the point of a static replay is
+# that it needs nothing, and "no backend" is a claim to be checked rather than assumed.
+replay-verify:
+    python spikes/replay_verify.py
+
 # --- verification ------------------------------------------------------------
 
 # Run the suite against the live seeded catalog, ACROSS CORES.
