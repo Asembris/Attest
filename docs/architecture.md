@@ -29,6 +29,15 @@ confident shape as a right one.
 1. **Entity resolution** — "the customer table" → which URN? Not here. Claims arrive with an explicit
    `target_urn`, validated as a dataset URN. Keeping resolution upstream means a resolution error can
    never be laundered into catalog disagreement.
+
+   What this forbids is *automatic* resolution — the system deciding text→URN, where a wrong
+   resolution silently becomes a wrong verdict. The UI's URN picker searches the catalog through the
+   **DataHub MCP Server** and offers **candidates**; a human chooses, and the chosen URN must then
+   appear verbatim in the agent's text (the decomposer may quote a URN, never mint one). So a wrong
+   pick produces claims about an explicitly wrong URN — loud, in the report and in the published
+   artifact — which is a different failure from the silent one this rule exists to prevent. Nothing
+   the search returns is evidence, no checker can import the discovery module, and
+   [docs/mcp-evaluation.md §9](mcp-evaluation.md) is why the *catalog read* is still GraphQL.
 2. **Label opposition** — does `NonPII` contradict `PII`? Nothing in DataHub says so; they are two
    unrelated URNs. It is declared as data in [`checkers/policy.py`](../src/attest/checkers/policy.py),
    so a tag rename cannot silently flip verdicts.

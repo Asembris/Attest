@@ -13,8 +13,10 @@ built from the live catalog.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any
@@ -531,6 +533,124 @@ class FakeDataHub(FakeCatalog):
                 "tags": [{"tag": {"urn": u}} for u in sorted(self.tagged[resource_urn])]
             }
         return True
+
+
+# --- the MCP server, faked ---------------------------------------------------
+#
+# FAULT INJECTION FROM DAY ONE, and the reason is written above twice already. `FakeChat`
+# shipped without it and an OpenAI 500 walked past 23 green sessions (§18); `FakeCatalog`'s
+# READ side shipped without it and an unreachable catalog was filed as a malformed question
+# for twenty-odd more (§20). Both times the fake could not fail the way the real thing fails,
+# so no offline test could have caught it. A third transport arriving without fault injection
+# would be the same lesson going unlearned in the same file.
+#
+# What this fake CANNOT do, stated so nobody reads more into it: it opens no pipe, spawns no
+# subprocess and speaks no JSON-RPC, so it cannot reproduce a child that ignores SIGTERM, a
+# half-written frame, or a uvx resolve that hangs. That is the Session 5 rule, and it is why
+# `tests/test_discovery_live.py` and the orphan measurement in docs/deployment.md exist.
+
+
+class FakeToolResult:
+    """What `ClientSession.call_tool` hands back: text content, and an error flag.
+
+    `isError=True` with a text body is how the REAL server reports a bad filter or an unknown
+    tool — measured, not guessed: it does not raise. A fake that raised instead would leave
+    the branch that turns `isError` into `DiscoveryUnavailable` untested.
+    """
+
+    def __init__(self, text: str = "", is_error: bool = False) -> None:
+        self.content = [SimpleNamespace(text=text)]
+        self.isError = is_error
+
+
+class FakeMcpServer:
+    """A scripted MCP session, and the transport failures a real one has.
+
+    `replies` are consumed in order and the last repeats, exactly like `FakeChat`. Each is a
+    dict (serialized as the JSON body the server sends), a raw string (for a body that is not
+    JSON at all), or a `FakeToolResult` (for `isError`).
+
+    `faults` maps a 1-BASED call number to the exception that call raises; `start_faults`
+    maps a 1-based SESSION number to an exception raised while starting, which is how a
+    server that will not launch is reproduced without a subprocess. Calls and starts are both
+    RECORDED BEFORE they raise: "Attest did not retry this" is an assertion about a count,
+    and a fault that never reached the log would make it pass vacuously.
+
+    `starts` is what proves the self-healing claim — a failed session must be REBUILT on the
+    next search rather than cached as a permanent outage.
+    """
+
+    def __init__(
+        self,
+        replies: Sequence[Any] = (),
+        faults: dict[int, Exception] | None = None,
+        start_faults: dict[int, Exception] | None = None,
+        server: tuple[str, str] = ("datahub", "3.4.5"),
+        delay: float = 0.0,
+    ) -> None:
+        self.replies = list(replies)
+        self.faults = dict(faults or {})
+        self.start_faults = dict(start_faults or {})
+        self.server = server
+        self.delay = delay
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.starts = 0
+        self.stops = 0
+
+    @asynccontextmanager
+    async def session(self) -> AsyncIterator[FakeMcpServer]:
+        """The `session_factory` seam. Entered and exited by ONE task, like the real one."""
+        self.starts += 1
+        fault = self.start_faults.get(self.starts)
+        if fault is not None:
+            raise fault
+        try:
+            yield self
+        finally:
+            self.stops += 1
+
+    async def initialize(self) -> Any:
+        name, version = self.server
+        return SimpleNamespace(serverInfo=SimpleNamespace(name=name, version=version))
+
+    async def call_tool(self, name: str, args: dict[str, Any]) -> Any:
+        self.calls.append((name, dict(args)))
+        fault = self.faults.get(len(self.calls))
+        if fault is not None:
+            raise fault
+        if self.delay:
+            await asyncio.sleep(self.delay)
+        if not self.replies:
+            return FakeToolResult(json.dumps({"start": 0, "count": 0, "total": 0}))
+        reply_ = self.replies[min(len(self.calls) - 1, len(self.replies) - 1)]
+        if isinstance(reply_, FakeToolResult):
+            return reply_
+        if isinstance(reply_, str):
+            return FakeToolResult(reply_)
+        return FakeToolResult(json.dumps(reply_))
+
+
+def search_payload(*entities: tuple[str, str], total: int | None = None) -> dict[str, Any]:
+    """A `search` response in the shape the real server was MEASURED to send.
+
+    Note what is deliberately absent: a Dataset's search fragment returns `urn` and
+    `properties.name` and nothing else (`gql/search.gql`), so a fake that also handed back a
+    platform or a description would let Attest depend on fields the transport never sends.
+    """
+    results = [
+        {"entity": {"urn": urn, "properties": {"name": name}}} for urn, name in entities
+    ]
+    payload: dict[str, Any] = {
+        "start": 0,
+        "count": max(len(results), 1),
+        "total": len(results) if total is None else total,
+    }
+    if results:
+        # The server STRIPS empty arrays, so a zero-result response carries no
+        # `searchResults` key at all. Reproduced here rather than smoothed over: that
+        # absence, read against `total`, is the whole zero-results rule.
+        payload["searchResults"] = results
+    return payload
 
 
 def dataset(urn: str, **aspects: Any) -> DatasetSnapshot:

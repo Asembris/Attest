@@ -10,9 +10,11 @@ Core v1.5.0.6** as ground truth and returns one of three verdicts — Supported,
 or Insufficient-Coverage — with **zero verdicts decided by a model**. Once a human publishes
 one, Attest **writes it back into DataHub** as its own content-addressed claim artifact with
 an append-only verdict history, so the next agent inherits it from the catalog rather than
-from Attest's database. We also **built an adapter to the DataHub MCP Server, measured it
-against all 16 seeded datasets, and wrote up three upstream issues with reproductions — two of
-them filed** ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169),
+from Attest's database. The **DataHub MCP Server is in the product too — for catalog
+DISCOVERY**: the URN picker searches your catalog through it, so a human finds a dataset by
+typing part of its name (`just discover`). It is deliberately not the verdict read: we **built
+an adapter to that seam, measured it against all 16 seeded datasets, and wrote up three
+upstream issues with reproductions — two of them filed** ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169),
 [#168](https://github.com/acryldata/mcp-server-datahub/issues/168); the third is deliberately
 kept as a draft), and opened
 [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182) proposing a fix for #168
@@ -90,13 +92,25 @@ where the compaction is a feature. Three of the four mechanisms are fixable upst
 written up with reproductions. `just spike-mcp` **exits non-zero by design**: if it ever goes
 green, the finding has expired and the decision is worth reopening.
 
+**So we use the server for the job it is good at.** Attest's URN picker searches the catalog
+through the MCP server's `search` tool — **MCP discovers, a human resolves, GraphQL verifies,
+deterministic code decides**. The only value that crosses is the entity URN, which is the one
+field this transport returns intact, and it must still appear verbatim in the agent's text
+before any claim can be about it. No checker can even import the discovery module (asserted
+over the import graph), changing every other field of a search result cannot move a verdict
+(asserted by running real audits), and an outage answers 503 rather than an empty list.
+`just discover` runs it against your own catalog and **exits zero** — the counterpart to
+`just spike-mcp`, which stays non-zero: one proves the transport cannot carry a *verdict*, the
+other proves it can carry a *name*.
+
 ## Try it
 
 ```bash
-just setup && just check      # offline: no DataHub, no API key, no cost. 417 tests, never skips.
+just setup && just check      # offline: no DataHub, no API key, no cost. 482 tests, never skips.
 just up && just seed          # DataHub Core v1.5.0.6 from a vendored, pinned compose
 just demo                     # the UI and API on :8003
 just spike-mcp                # the MCP evaluation, against your own catalog. Non-zero by design.
+just discover                 # catalog discovery over the same server. Zero by design.
 ```
 
 ## What it does not do

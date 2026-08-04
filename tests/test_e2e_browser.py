@@ -601,19 +601,26 @@ def _await_dataset_visibility(
     )
 
 
-def _serve_in_process(service):
+def _serve_in_process(service, discovery=None):
     """A REAL uvicorn on a real socket, in a THREAD. Returns (base_url, stop).
 
     In-process ONLY because the fault has to be injected into the service's client, and the
     alternative is a fault hook inside product code. See the repair test's docstring.
+
+    `discovery` overrides the catalog-discovery dependency the same way. That is what lets
+    the discovery tests below execute the real TypeScript client over a real fetch WITHOUT
+    `just e2e` needing an MCP server to be running — which it must not, or the browser gate
+    starts depending on a subprocess that downloads a package.
     """
     import threading
 
     import uvicorn
 
-    from attest.api.app import app, get_service
+    from attest.api.app import app, get_discovery, get_service
 
     app.dependency_overrides[get_service] = lambda: service
+    if discovery is not None:
+        app.dependency_overrides[get_discovery] = lambda: discovery
     port = _free_port()
     config = uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
     server = uvicorn.Server(config)
@@ -1060,3 +1067,189 @@ def test_a_half_written_claim_reads_incomplete_and_a_human_repairs_it_from_the_b
         print(f"    verdict            : {got[0].artifact.verdict}")
         print(f"    history            : {len(got[0].artifact.history)} verdict (not 2)")
         print()
+
+
+# --- catalog discovery, at the browser boundary ------------------------------
+
+
+def _discovery_service(client, tmp_path, name: str):
+    """A minimal real service, because these tests are about the PICKER, not the pipeline."""
+    from attest.api.service import AuditService
+    from attest.graph import Pipeline
+    from attest.llm import LLM
+    from attest.store import AuditStore
+
+    return AuditService(
+        pipeline=Pipeline(llm=LLM(), client=client),
+        store=AuditStore(tmp_path / name),
+        client=client,
+    )
+
+
+def test_the_urn_picker_searches_the_catalog_and_says_the_results_are_advisory(
+    browser, client, tmp_path, capsys
+):
+    """The picker's whole path through the TS mirror: fetch, parse, render, insert.
+
+    **DISCOVERY IS INJECTED, NOT LAUNCHED, and that is deliberate.** The real MCP transport is
+    proven by `tests/test_discovery_live.py`, which needs uvx and downloads a server. What is
+    proven HERE is the browser boundary — that `searchCatalog` in `client.ts` and
+    `CatalogSearchResponse` in `types.ts` agree with what FastAPI actually serializes. That is
+    the drift class §14 exists for: it shipped twice (the `accept: boolean` 422, the review
+    bar), both times with a green suite, both times found by a human clicking. A new wire
+    surface that no browser executes is the same trap set again.
+
+    So the route is served by the REAL `McpDiscovery` over a scripted MCP transport: the real
+    parser, the real loop thread, the real response model, a real socket, a real fetch.
+    """
+    from tests.conftest import DOCUMENTED, OWNED_BY_CAROL
+
+    from attest.discovery.mcp import McpDiscovery
+    from fakes import FakeMcpServer, search_payload
+
+    server = FakeMcpServer(
+        replies=[
+            search_payload(
+                (DOCUMENTED, "customer_profile"),
+                (OWNED_BY_CAROL, "support_tickets"),
+            )
+        ]
+    )
+    discovery = McpDiscovery(session_factory=server.session)
+    service = _discovery_service(client, tmp_path, "discovery-ok.db")
+    base, stop = _serve_in_process(service, discovery=discovery)
+
+    page = browser.new_page()
+    calls = ApiCalls()
+    calls.attach(page)
+    console_errors: list[str] = []
+    page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+
+    try:
+        page.goto(base, wait_until="networkidle")
+
+        # THE SEARCH IS CAUGHT AT THE WIRE, before any wait on the DOM. A wire mismatch must
+        # fail as itself, not as a 30-second wait for a list that was never coming — the file
+        # header's rule, and the reason the 422 detector sits where it does.
+        page.get_by_role("button", name="Insert dataset URN").click()
+        with page.expect_response(
+            lambda r: "/catalog/search" in r.url, timeout=30_000
+        ) as caught:
+            page.get_by_label("Search the catalog").fill("customer")
+        response = caught.value
+        assert response.status == 200, (
+            f"the browser's catalog search came back {response.status}:\n"
+            f"  {response.text()[:400]}"
+        )
+        body = response.json()
+        assert body["advisory"] is True, body
+        assert [h["urn"] for h in body["hits"]] == [DOCUMENTED, OWNED_BY_CAROL]
+
+        # ADVISORY, said where the results are. A list of datasets handed over by an auditor
+        # invites the reading that the auditor checked something about them.
+        page.get_by_text("advisory", exact=False).first.wait_for(timeout=10_000)
+        page.get_by_text("nothing here is verified", exact=False).first.wait_for(timeout=10_000)
+
+        # --- and the ONE value that crosses the boundary is the URN --------------
+        page.get_by_text("customer_profile").first.click()
+        box = page.get_by_placeholder("Paste the AI agent's claims")
+        text = box.input_value()
+        assert DOCUMENTED in text, (
+            "picking a candidate did not put its URN in the agent output. The URN is the only "
+            "thing discovery hands on, and it reaches an audit only by being WRITTEN."
+        )
+
+        calls.assert_all_ok("the catalog search")
+        assert not console_errors, f"the browser logged errors: {console_errors[:3]}"
+    finally:
+        page.close()
+        stop()
+        discovery.close()
+
+    with capsys.disabled():
+        print("\n\n  URN PICKER -> GET /catalog/search -> MCP -> a URN in the textarea")
+        print(f"    hits rendered : {len(body['hits'])}, advisory: {body['advisory']}")
+        print(f"    inserted      : {DOCUMENTED.split(',')[1]}")
+
+
+def test_a_discovery_outage_is_VISIBLE_in_the_browser_and_never_a_silent_static_list(
+    browser, client, tmp_path, capsys
+):
+    """The failure path, which is the one that matters and the one nobody clicks.
+
+    Attest's entire thesis is that absence is not an answer. A picker that answered a dead
+    discovery service with a list baked into the bundle would be showing a human a catalog
+    that is a FILE — the same claim-without-evidence the checkers refuse, in the product's own
+    UI. So the outage has to be visible, it has to leave the person able to proceed by hand,
+    and it must not silently produce anything that looks like a result.
+
+    `spikes/e2e_sabotage.py` re-introduces exactly that fallback (a one-line swap in
+    `searchFailed`) and requires this test to go red.
+    """
+    from tests.conftest import DOCUMENTED
+
+    from attest.discovery.mcp import McpDiscovery
+    from fakes import FakeMcpServer
+
+    # The server will not start — the shape of `uvx` missing, or a wedged child. EVERY start
+    # fails, not just the first: the picker searches on open (listing the catalog) and again
+    # on each keystroke, and a session that failed once is deliberately REBUILT on the next
+    # search (`McpDiscovery` self-heals rather than caching an outage). Faulting only start #1
+    # therefore lets the second attempt succeed, and this test would be measuring the
+    # self-healing instead of the outage. Found by watching it do exactly that.
+    server = FakeMcpServer(
+        start_faults=dict.fromkeys(range(1, 20), OSError("uvx: command not found"))
+    )
+    discovery = McpDiscovery(session_factory=server.session)
+    service = _discovery_service(client, tmp_path, "discovery-down.db")
+    base, stop = _serve_in_process(service, discovery=discovery)
+
+    page = browser.new_page()
+    try:
+        page.goto(base, wait_until="networkidle")
+        page.get_by_role("button", name="Insert dataset URN").click()
+        with page.expect_response(
+            lambda r: "/catalog/search" in r.url, timeout=30_000
+        ) as caught:
+            page.get_by_label("Search the catalog").fill("customer")
+        response = caught.value
+
+        # 503 + Retry-After: the same disposition as an unreachable catalog, because it is
+        # the same fact — Attest could not ask.
+        assert response.status == 503, response.text()[:400]
+        assert response.headers.get("retry-after") == "10"
+
+        # WAIT FOR EITHER OUTCOME, THEN SAY WHICH ONE ARRIVED. Waiting only for the offline
+        # state would make the fallback regression fail as a 10-second timeout — legible, but
+        # a timeout is the same symptom as five other bugs, which is this file's own rule.
+        # One regex covering both branches, then the assertion that names the defect.
+        page.get_by_text(
+            re.compile(r"Catalog discovery is (offline|not available)|via DataHub MCP Server")
+        ).first.wait_for(timeout=15_000)
+
+        # NOT A RESULT LIST. Under the sabotage this is where seeded URNs appear.
+        assert page.get_by_text("via DataHub MCP Server").count() == 0, (
+            "an outage rendered results. Whatever is in that list, the catalog was never "
+            "asked for it — which is Attest reporting silence as an answer, in its own UI."
+        )
+
+        page.get_by_text("Catalog discovery is offline").wait_for(timeout=10_000)
+        assert page.get_by_text("uvx: command not found", exact=False).count() >= 1, (
+            "the offline state does not say WHY. A failure a human cannot act on is a "
+            "failure reported to nobody."
+        )
+
+        # ...and a human can still do the job by hand.
+        page.get_by_label("Dataset URN").fill(DOCUMENTED)
+        page.get_by_role("button", name="Insert", exact=True).click()
+        assert DOCUMENTED in page.get_by_placeholder("Paste the AI agent's claims").input_value()
+    finally:
+        page.close()
+        stop()
+        discovery.close()
+
+    with capsys.disabled():
+        print("\n\n  DISCOVERY OUTAGE, IN THE BROWSER")
+        print("    GET /catalog/search -> 503 + Retry-After (never an empty list)")
+        print("    the picker says it is offline, says why, and offers manual entry")
+        print("    no results are rendered, and no static list is substituted")

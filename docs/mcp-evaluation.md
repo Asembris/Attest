@@ -18,13 +18,15 @@ it are fixable upstream, and we wrote them up.
 | **Measured against** | `mcp-server-datahub` **0.6.0**, DataHub Core **v1.5.0.6** (pinned), 16 seeded datasets |
 | **Contributed back** | Three write-ups with reproductions in [`docs/upstream/`](upstream/) — two filed upstream ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169), [#168](https://github.com/acryldata/mcp-server-datahub/issues/168)), the third deliberately kept as a draft. A fix for #168 is proposed at [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182), open |
 | **Tripwire** | `just spike-mcp` exits non-zero **by design**. If it ever goes green, the finding has expired and this decision is worth reopening. |
+| **What DOES use this server** | its `search` tool, for **catalog discovery** in the URN picker — a human picking a name, never a checker reading a fact. Added after this evaluation and bounded by it: [§9](#9-what-changed-after-this-evaluation-search-for-discovery). |
 
 **Jump to:** [the result](#2-the-result) ·
 [the mechanism, at source level](#3-the-mechanism-at-source-level) ·
 [why it is a correctness finding](#4-why-this-is-a-correctness-finding-not-a-coverage-one) ·
 [what this does not prove](#6-what-this-evaluation-does-not-prove) ·
 [what we are contributing back](#7-what-we-are-contributing-back) ·
-[reproduce it](#8-reproduce-it)
+[reproduce it](#8-reproduce-it) ·
+[what changed after: search, for discovery](#9-what-changed-after-this-evaluation-search-for-discovery)
 
 ---
 
@@ -360,6 +362,13 @@ tripwire that will tell us the day the finding expires.
   [cache.py](../src/attest/datahub/cache.py) exists to hold (one run, one frozen snapshot).
   Exercising a path we just proved cannot carry a verdict, with a note explaining that it
   doesn't decide anything, is decoration.
+
+  **What we DID later ship is a different act, and §9 draws the line.** The MCP server now
+  backs the URN picker's catalog search — *discovery*, which hands a human a list of
+  candidate URNs. It is not a context path: nothing it returns is read by a checker, nothing
+  it returns is evidence, and it reads no entity an audit will read. Every mechanism measured
+  above is a loss of **field content**; the one value discovery passes on is the **entity
+  URN**, which arrives intact.
 - **We did not touch the write path.** Challenge 1 names MCP for *reading* context and
   separately rewards *writing back*. Attest's write-back is a GraphQL/OpenAPI concern
   (§10, [claim-artifact.md](design/claim-artifact.md)) and this evaluation says nothing
@@ -382,9 +391,9 @@ Naming the boundary is what makes the rest credible.
 - **It tests the one read tool an adapter would use** — `get_entities`, on explicit URNs.
   Schema fields arrive embedded in that response, so `list_schema_fields` is never called —
   the schema-truncation caveat recorded above is read off the server's source, not measured
-  here. It does not evaluate `search`, lineage, or query tools, which are not what a `Reader`
-  needs and which Attest deliberately does not want (free-text entity resolution is out of
-  scope by design — CLAUDE.md §4).
+  here. It does not evaluate lineage or query tools, which are not what a `Reader` needs.
+  **It did not evaluate `search` either — and that gap was later closed rather than left
+  standing. See [§9](#9-what-changed-after-this-evaluation-search-for-discovery).**
 - **It does not prove no adapter is possible in principle.** It proves no adapter is possible
   *on this server's responses* without inventing data the catalog did not send. Three of the
   four defects are fixable upstream, and we have written them up (§7). Were they fixed, this
@@ -421,8 +430,9 @@ than by shipping it (§3d).
 ## 8. Reproduce it
 
 ```bash
-pip install mcp          # the client; deliberately not an Attest dependency
+pip install -e '.[mcp]'  # the client; an optional extra, never a runtime dependency
 just spike-mcp           # needs live DataHub + uvx; exits non-zero BY DESIGN
+just discover            # the search path that IS shipped (§9); exits ZERO
 ```
 
 The probe prints the per-dataset diff, the mismatch summary, and the verdict table. It
@@ -433,3 +443,67 @@ uses.
 > until told to use the OS trust store — hence `--native-tls` in the probe's server
 > parameters. That is the same corporate-CA trap as Python's `truststore` injection and
 > Node's `NODE_USE_SYSTEM_CA`, a third runtime over. See CLAUDE.md's landmines.
+
+---
+
+## 9. What changed after this evaluation: `search`, for DISCOVERY
+
+**Everything above still stands.** The catalog READ is GraphQL, `just spike-mcp` still exits
+non-zero by design, and no MCP response has ever reached a checker. What was added later is a
+different act on a different tool, and the distinction is worth stating precisely because
+"we use MCP now" and "we read the catalog over MCP" are not the same sentence.
+
+> **MCP discovers. A human resolves. GraphQL verifies. Deterministic code decides.**
+
+The URN picker in Attest's UI searches your catalog through this server's `search` tool
+(`GET /catalog/search` → [`src/attest/discovery/`](../src/attest/discovery/)). It used to
+filter a static list generated from the seed manifest — a list that describes one seeded
+catalog and is useless against any real DataHub. Search is the fix, and an LLM-facing,
+human-in-the-loop lookup is precisely the job this server is built for.
+
+### Why the finding above does not apply to it
+
+| | The adapter this document refused | The discovery path that shipped |
+| --- | --- | --- |
+| What is consumed | every field of a `DatasetSnapshot` | one field: `entity.urn` |
+| What §12's mechanisms damage | tags→display names, `type` dropped, `lastModified` absent, absent≡empty | **none of it** — the URN arrives intact |
+| Who decides | a checker, deterministically | a **human**, by clicking |
+| What a wrong answer costs | a confident false verdict, silently | a URN the person can see is wrong, in their own text |
+| Reads an entity an audit will read | yes — the §2c consistency boundary | no — it runs before any audit exists |
+
+Every mechanism measured in [§3](#3-the-mechanism-at-source-level) is a loss of **field
+content**. The entity URN is not field content — it is the identity the response is keyed by,
+and it comes back byte-identical. `tests/test_discovery_live.py` proves that where it matters:
+every URN the MCP server returns is fetched over GraphQL into a real `DatasetSnapshot`. If the
+identifier were lossy, that fetch would fail.
+
+### And the boundary is asserted, not described
+
+- **Nothing in the verdict path can import the discovery module.** Walked over the real import
+  graph from the checkers, the snapshot, the run-scoped cache and the pipeline —
+  `tests/test_discovery_boundary.py`, in the house style of `NO_LLM_IN_THE_VERDICT_PATH`.
+  Exactly one module in `attest` imports it, and it is the HTTP layer.
+- **Changing every field of a search result except the URN cannot change a verdict.** Proven
+  by running real audits over mutated payloads — including one carrying a `NonPII` tag, a
+  wrong owner and a description reading "THIS TABLE CONTAINS NO PII". None of it reaches
+  anything, and the non-vacuity proof is that changing the URN *does* change the audit.
+- **A picked URN is not a resolved entity.** It must appear **verbatim in the agent's text**
+  (`api/schemas.py`) and the decomposer may quote a URN but never mint one. So a wrong pick
+  produces claims about an explicitly wrong URN — visible in the report and in the published
+  artifact — rather than a resolution error laundered into catalog disagreement, which is what
+  CLAUDE.md §4 exists to prevent.
+- **An outage is never an empty result.** The server strips empty arrays, so a zero-match
+  response and a response that lost its results differ by one key; `total` is the
+  discriminator. Empty is a 200, malformed and unreachable are a 503, and a missing client
+  library is a 501. Rendering any of the last three as "your catalog has nothing like that"
+  would be this project's cardinal sin in its own read path — the same collapse Attest already
+  shipped once at the model provider (CLAUDE.md §18) and once at the catalog read (§20), which
+  §4 above predicted would happen here.
+
+### What this does not claim
+
+It does not claim the parity finding expired — it has not, and the tripwire still says so. It
+does not claim discovery is verification: every response carries `advisory: true` and the UI
+says so where the results are. And it does not make MCP load-bearing: without the optional
+client the search answers **501**, the picker offers manual URN entry, and audits are
+completely unaffected.

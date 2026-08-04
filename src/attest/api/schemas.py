@@ -402,6 +402,67 @@ class ClaimsResponse(BaseModel):
     retrieval: RetrievalView
 
 
+class CatalogHitView(BaseModel):
+    """One candidate dataset from discovery. A URN, and a name that is not evidence.
+
+    `urn` is the ONLY field anything may act on, and it is the only one the MCP transport
+    returns losslessly (§12 measured the rest: field tags and terms arrive as display names,
+    `type` is commented out of the server's own fragment, `lastModified` is never asked for).
+    `name` is the catalog's display name, shown so a human can tell two URNs apart.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    urn: str = Field(
+        description="The dataset's canonical URN. The one value that crosses from discovery "
+        "into an audit — and only after a human picks it AND writes it into the agent text, "
+        "where it must appear verbatim.",
+    )
+    name: str = Field(
+        default="",
+        description="The catalog's display name for the entity, or empty when it has none. "
+        "For display only: never matched against, never stored, never evidence.",
+    )
+
+
+class CatalogSearchResponse(BaseModel):
+    """Candidate datasets, and an honest account of where they came from.
+
+    **SEARCH SUCCEEDING IS NOT VERIFICATION SUCCEEDING**, and this response is built so a
+    caller cannot confuse the two. `advisory` is a constant `True` on the wire rather than a
+    caveat in the docs — the same argument as `RetrievalView` reporting where each predicate
+    was applied. A list of datasets returned by an auditor invites the reading that the
+    auditor has checked something about them. It has not: it has asked a catalog search
+    engine what matches some text.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    hits: tuple[CatalogHitView, ...] = ()
+    total: int = Field(
+        default=0,
+        description="The catalog's OWN match count. `total > len(hits)` means this is a "
+        "page and a dataset past it is absent from the LISTING, not from the catalog — the "
+        "same round-trip as RetrievalView.total, for the same reason.",
+    )
+    transport: str = Field(
+        default="",
+        description="Which transport answered. Named because it is NOT the one Attest reads "
+        "verdicts through: see docs/mcp-evaluation.md.",
+    )
+    server: str = Field(
+        default="",
+        description="The MCP server as it identified itself at `initialize`, e.g. "
+        "`datahub v3.4.5`. Provenance for a human; nothing reads it.",
+    )
+    advisory: bool = Field(
+        default=True,
+        description="Always true. Nothing in this response has been verified against the "
+        "catalog by a checker, and no value in it can reach a verdict.",
+    )
+    note: str = ""
+
+
 class HealthResponse(BaseModel):
     """Liveness. Attest's own, and the catalog's, kept separate on purpose.
 
@@ -421,4 +482,14 @@ class HealthResponse(BaseModel):
         default="http://localhost:9002",
         description="The DataHub UI origin the frontend should deep-link to. Backend-supplied "
         "so the built SPA does not hardcode a host that breaks behind a real URL.",
+    )
+    discovery: str = Field(
+        default="",
+        description="Catalog discovery (the DataHub MCP Server, §22): `disabled`, "
+        "`not-installed`, `not-contacted`, `up: <server>`, or `unreachable: <why>`. "
+        "**Reported, never probed** — a health check that spawned the server would spawn one "
+        "on every browser load, and `not-contacted` is the honest answer to a question nobody "
+        "has asked yet. Empty means the field was not reported at all, which is what a "
+        "response recorded before this field existed says; it is not a claim that discovery "
+        "is down.",
     )

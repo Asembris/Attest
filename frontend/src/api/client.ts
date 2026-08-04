@@ -14,6 +14,7 @@
 import type {
   ApprovalResponse,
   AuditRecord,
+  CatalogSearchResponse,
   ClaimFilters,
   ClaimsResponse,
   ClaimView,
@@ -131,4 +132,26 @@ export async function listClaims(filters: ClaimFilters = {}): Promise<ClaimsResp
  *  segment (`{claim_urn:path}`) rather than making callers double-encode. */
 export async function getClaim(claimUrn: string): Promise<ClaimView> {
   return parse<ClaimView>(await fetch(`/claims/${claimUrn}`));
+}
+
+// --- catalog discovery -------------------------------------------------------
+
+/** Candidate datasets, over the **DataHub MCP Server**. ADVISORY — never evidence.
+ *
+ *  MCP discovers. A human resolves. GraphQL verifies. Deterministic code decides. The only
+ *  value that crosses from a search result into an audit is the URN a person picks, and it
+ *  still has to be written into the agent text, where the backend requires it verbatim.
+ *
+ *  **A failure here is never an empty list.** The route answers 503 when the search could not
+ *  happen and 501 when discovery is not installed on this deployment, and the caller MUST
+ *  render that as a visible offline state rather than falling back to a hardcoded list. A
+ *  stale list shown in place of an outage is a UI asserting something nobody checked — which
+ *  is the failure the whole product exists to catch. `/catalog` must also be in
+ *  vite.config.ts's dev proxy, or `vite dev` 404s while the built demo works. */
+export async function searchCatalog(
+  q: string,
+  limit = 10,
+): Promise<CatalogSearchResponse> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  return parse<CatalogSearchResponse>(await fetch(`/catalog/search?${params}`));
 }

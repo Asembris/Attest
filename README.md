@@ -34,11 +34,14 @@ warehouse — which is most of them.
 > GraphQL, decides in code, and — once a human publishes — writes each verdict back as its own
 > content-addressed **claim artifact** with an append-only verdict history.
 >
-> **The DataHub MCP Server was engaged, not skipped.** We built an adapter to its one-method
-> seam, ran it against all 16 seeded datasets on the pinned Core, and measured what its
-> responses can and cannot carry — `just spike-mcp` runs it against your own catalog. The
-> measurement kept the verdict read on GraphQL, and produced three upstream issue write-ups with
-> reproductions — two of them now filed upstream, and one of those with a fix proposed at
+> **The DataHub MCP Server is in the product — for discovery — and was measured before it was
+> trusted.** It backs the URN picker's catalog search, so a human finds a dataset by typing part
+> of its name (`just discover`). It does **not** back the verdict read: we built an adapter to
+> that one-method seam, ran it against all 16 seeded datasets on the pinned Core, and measured
+> that its responses cannot carry a deterministic verdict (`just spike-mcp`, non-zero by design).
+> **MCP discovers; a human resolves; GraphQL verifies; deterministic code decides.** The
+> measurement also produced three upstream issue write-ups with reproductions — two filed
+> upstream, one with a fix proposed at
 > [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182) (open; not merged).
 > [The evaluation](#engaging-with-the-mcp-server).
 
@@ -297,6 +300,43 @@ merged. `just spike-mcp` **exits non-zero by design**: if it
 ever goes green, the finding has expired and the decision is worth reopening. Full write-up and
 per-dataset diffs: **[docs/mcp-evaluation.md](docs/mcp-evaluation.md)**.
 
+### ...and where the MCP server *is* used: discovery
+
+> **MCP discovers. A human resolves. GraphQL verifies. Deterministic code decides.**
+
+The finding above is about **verdicts**. It is not a reason to skip the server for the job it is
+actually good at. Attest's URN picker searches your catalog through this server's `search` tool
+(`GET /catalog/search`), so a human can find a dataset by typing part of its name instead of pasting
+a 90-character URN. It replaced a static list generated from the seed manifest — a list that is
+useless against any real catalog.
+
+**Nothing it returns is evidence, and the boundary is asserted rather than described.** Every
+mechanism the evaluation measured is a loss of *field content*; the only value discovery passes on is
+the **entity URN**, which arrives intact — and which must still appear verbatim in the agent's text,
+where the decomposer may quote a URN but never mint one. So a wrong pick produces claims about an
+explicitly wrong URN, visible in the report, rather than a silent resolution error.
+
+- **No checker, snapshot, cache or graph node can import the discovery module** — walked over the
+  real import graph, in the style of `NO_LLM_IN_THE_VERDICT_PATH`. Exactly one module imports it, and
+  it is the HTTP layer.
+- **Changing every field of a search result except the URN cannot change a verdict** — proven by
+  running real audits over mutated payloads, with the non-vacuity proof that changing the URN *does*
+  change the audit.
+- **An outage is never an empty list.** Unreachable is a `503 + Retry-After`, a missing optional
+  client is a `501`, and only a real zero-match answer is a `200` with no hits. The picker shows a
+  visible offline state with manual URN entry — never a fallback to a list baked into the bundle,
+  which the fifth `just e2e-sabotage` re-introduces and requires the browser test to catch.
+
+The browser test for it found something on its first run: the picker's dropdown had **never been
+visible**. It was clipped out of existence by the hero card's `overflow-hidden`, and
+`elementFromPoint` on a result row returned the background canvas — measured on the *committed
+pre-change bundle*, so it was not a regression, just a control no test had ever clicked. It is a
+portal now.
+
+`just discover` runs it against your own catalog and **exits zero** — the counterpart to
+`just spike-mcp`, which stays non-zero: one proves this transport cannot carry a *verdict*, the other
+proves it can carry a *name*. Details: [docs/mcp-evaluation.md §9](docs/mcp-evaluation.md).
+
 ## DataHub integration
 
 ```mermaid
@@ -384,7 +424,7 @@ definitive catalog wipe.
 
 `just spike-mcp` re-runs the **MCP Server evaluation** against your own catalog — the adapter,
 all 16 seeded datasets, the field-parity diff, and the same gap expressed as verdicts. It
-**exits non-zero by design** (needs `pip install mcp` and `uvx`), because a green run would
+**exits non-zero by design** (needs `pip install -e '.[mcp]'` and `uvx`), because a green run would
 mean the finding had expired.
 
 Version pin and environment landmines:
@@ -393,7 +433,7 @@ Version pin and environment landmines:
 
 ## API
 
-Seven routes. `just serve`, then [localhost:8003/docs](http://localhost:8003/docs) for the generated,
+Eight routes. `just serve`, then [localhost:8003/docs](http://localhost:8003/docs) for the generated,
 always-current reference.
 
 | Route | What it does |
@@ -405,6 +445,7 @@ always-current reference.
 | `POST /audit/{run_id}/writeback` | Repair a partial catalog write from the stored record. Approves nothing. |
 | `GET /claims` | Published claims, **read from DataHub**. Reports where each filter was applied. |
 | `GET /claims/{claim_urn}` | One claim artifact and its whole append-only verdict history. |
+| `GET /catalog/search` | Candidate datasets, over the **DataHub MCP Server**. `advisory: true` on every response — discovery, never evidence. |
 
 **Every audited claim parks for a human decision, whatever its verdict** — and `publish` is separate
 from `accept_correction`, because "your claim was wrong, and the fix you proposed is also wrong" is a
@@ -438,9 +479,10 @@ wrong verdict has the same confident shape as a right one.
 - **There is no `attest.confidence`.** The verdicts are code; there *is* no confidence. The third
   verdict already carries the only uncertainty in the system. A `0.95` would be a number invented to
   look like an ML system — the precise thing this project exists to catch.
-- **The MCP adapter was built and measured; verdict reads stay on GraphQL.** Parity fails on
+- **The MCP server backs catalog DISCOVERY, not verdict reads.** Parity fails on
   16/16 seeded datasets and four of five true claims change verdict, one of them Supported →
-  Contradicted. The cut is real — and it is a
+  Contradicted, so the *verdict* read stays on GraphQL. The picker's search runs over MCP and
+  nothing it returns is evidence. The cut is real — and it is a
   [result we produced](#engaging-with-the-mcp-server), not a path we skipped.
 - **Ownership *type*** (technical vs business vs steward) is ignored, and **cross-dialect type
   equivalence** (`int8` ~ `BIGINT`) is not attempted. Both need a schema change or a model of each

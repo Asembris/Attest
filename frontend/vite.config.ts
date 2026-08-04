@@ -72,6 +72,7 @@ export default defineConfig(({ mode }) => {
         '/health': 'http://localhost:8003',
         '/audit': 'http://localhost:8003',
         '/claims': 'http://localhost:8003',
+        '/catalog': 'http://localhost:8003',
       },
     },
   };

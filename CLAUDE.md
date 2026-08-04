@@ -365,6 +365,15 @@ table" → a URN) is deliberately **out of scope**, not an oversight. Keeping re
 upstream means a resolution error can never be laundered into catalog disagreement.
 `BaseClaim.target_urn` validates that it is a dataset URN.
 
+**What this forbids is AUTOMATIC resolution, and the distinction matters (§22).** The failure
+being prevented is *the system* deciding text→URN, where a wrong resolution becomes a wrong
+verdict with nothing in the report showing it happened. A picker that offers CANDIDATES and
+lets a **human** choose is a different act: the pick still has to appear verbatim in the
+agent's text and still has to be quoted rather than minted by the decomposer, so a wrong pick
+produces claims about an explicitly wrong URN — loud, in the report and in the published
+artifact. That is why catalog search (§22) does not breach this rule, and why a free-text
+"resolve this sentence to a URN" step still would.
+
 **5. The 12-cell coverage matrix is the ground-truth design.** 4 claim types × 3 verdicts,
 and all 12 must stay live-reachable against the seeded catalog.
 [tests/test_coverage.py](tests/test_coverage.py) fails loudly if any cell goes dark
@@ -633,6 +642,8 @@ invariants worth not rediscovering:
   scoped, built against, and measured, and a measured architectural decision belongs in the
   log's numbered sections beside the others, not in a list of things that bite. **Do not
   reopen it as a checkbox.** `just spike-mcp` exits non-zero by design and is the tripwire.
+  **The MCP server IS in the product, for DISCOVERY only — §22.** That is the URN picker's
+  catalog search, not a catalog read: `just discover` exits ZERO and is its tripwire.
 - **The MCP server posts usage telemetry to Mixpanel on startup** (`/mp/engage`, `/mp/track`),
   before it is asked to do anything. It only surfaced here because the TLS interception made
   it fail loudly in the logs; on a normal network it is silent. `DATAHUB_TELEMETRY_ENABLED=false`
@@ -671,6 +682,10 @@ src/attest/
     client.py          GraphQL client over httpx. Raises EntityNotFoundError.
     snapshot.py        Normalized read model. Preserves "absent" vs "empty".
     cache.py           ONE RUN's view of the catalog. A consistency boundary, not a cache.
+  discovery/           CATALOG DISCOVERY. MCP discovers; a human resolves; GraphQL verifies.
+                       The ONLY value that crosses into a run is a URN a person picked. No
+                       checker, snapshot, cache or graph node may import this — asserted.
+    mcp.py             The stdio session to the DataHub MCP Server. One tool, one field.
   api/
     app.py             FastAPI. The checkpoint does not soften here. /claims reads DATAHUB.
     service.py         Run, persist, approve, write back, retrieve. Audits run CONCURRENTLY:
@@ -737,7 +752,9 @@ just capture   # regenerate tests/fixtures/snapshots/ from the live catalog (run
 just spike-claims    # prove ONE dataset holds TWO queryable claim artifacts (Session 15)
 just spike-mcp # can the MCP server serve a faithful DatasetSnapshot? NO. Exits non-zero BY
                # DESIGN: it is the receipt for the GraphQL read, and the tripwire if that
-               # ever changes. Needs `pip install mcp` + uvx. See docs/mcp-evaluation.md.
+               # ever changes. Needs `pip install -e '.[mcp]'` + uvx. See docs/mcp-evaluation.md.
+just discover  # the search path that IS shipped (§22): the real MCP server finds seeded
+               # datasets, and every URN it returns is then verified over GraphQL. Exits ZERO.
 just probe     # prove DataHub's read/write path
 just health    # is the pinned version actually running?
 just serve     # run the API on :8003 (docs at /docs). 8003 is pinned: DataHub owns 8080/9002
@@ -1195,6 +1212,22 @@ submission asset, not an apology. **Do not reopen this as a checkbox.**
   Considered and refused: running the inverting transport purely to say we touched it is the
   hollow checkbox integration the finding argues against, and a second read of the same
   catalog re-opens the §2c consistency boundary (one run, one frozen snapshot).
+  **AMENDED BY §22, and the amendment is narrow: this forbids a CONTEXT PATH — MCP data
+  feeding a snapshot, an explanation, or anything a checker reads. It does not forbid
+  DISCOVERY**, which consumes one field (the entity URN, the one this transport does not
+  damage), reads no entity an audit will read, and ends at a human clicking a name. Both
+  clauses of the refusal are still true of it and neither bites: it is not "purely to say we
+  touched it" (it replaces a static list that is useless against a real catalog), and it is
+  not a second read of the same catalog.
+- **It did NOT evaluate `search`**, and that gap was closed rather than left standing — see
+  §22. The sentence that used to sit here ("...which Attest deliberately does not want —
+  free-text entity resolution is out of scope by design, §4") **overstated §4 and has been
+  corrected in this file and in docs/mcp-evaluation.md.** §4 forbids AUTOMATIC resolution:
+  the system deciding text→URN, where a wrong resolution silently becomes a wrong verdict.
+  A picker offering candidates that a HUMAN chooses from, whose pick must then survive the
+  verbatim-quote rule, is not that — it is the shape the URN picker has had since Session 9,
+  with only the source of the list changing. Recording that the decision moved, and why, is
+  worth more than a log that pretends it never did.
 - **What it does NOT prove:** not that the server is defective for its intended use (the
   compaction is a *feature* for an agent assembling prose context); not that no adapter is
   possible in principle — only that none is possible on this server's responses without
@@ -1886,6 +1919,188 @@ still USE the product instead of watching a video of it. Zero backend code chang
   what the catalog says TODAY (nothing offline can); and `just replay-verify` needs the `e2e`
   extra and Edge, so like `just e2e` it is not in CI.
 
+**22. MCP DISCOVERS. A HUMAN RESOLVES. GRAPHQL VERIFIES. CODE DECIDES (Session 28). The
+DataHub MCP Server is now in the product — for DISCOVERY only, and the boundary is asserted
+rather than described.** The URN picker searches the live catalog through the MCP server's
+`search` tool; the catalog READ that decides verdicts is unchanged and still GraphQL, for
+exactly the reasons §12 measured. `src/attest/discovery/`, `GET /catalog/search`,
+`just discover`.
+
+- **WHY IT IS PRODUCT WORK AND NOT OPTICS.** The picker filtered a STATIC list generated from
+  `seed/ground_truth.json` — the seeded catalog, compiled into the bundle. Against any real
+  DataHub it offers URNs that do not exist and hides every URN that does. Search is the fix,
+  and a human-in-the-loop, LLM-facing lookup is exactly the job the MCP server is built for —
+  which is the same sentence §12 uses to explain why it is the WRONG transport for a checker.
+  One transport, two consumers, opposite verdicts, and both are in this repo with receipts.
+
+- **§12 SAID "DO NOT ADD MCP AS A DEMONSTRATED-BUT-NON-VERDICT CONTEXT PATH", AND THAT
+  SENTENCE WAS AMENDED RATHER THAN QUIETLY STEPPED AROUND.** So was a sentence in §12's
+  boundary list which read that Attest "deliberately does not want" `search` because §4 puts
+  free-text entity resolution out of scope. Both amendments are in this file and in
+  docs/mcp-evaluation.md §9, stated as reasoning, because a log recording a decision that
+  moved and why is worth more than one pretending it never did — and a judge who greps for
+  MCP must not find the engineering log contradicting the feature.
+  - **§4 forbids AUTOMATIC resolution**: the system deciding text→URN, where a wrong
+    resolution silently becomes a wrong verdict. This is candidates proposed, a human
+    picking, and the pick surviving the verbatim-quote rule. **A wrong pick yields claims
+    about an explicitly wrong URN** — in the report, in `target_urn`, in the published
+    artifact — never a resolution error laundered into catalog disagreement.
+  - **§12 forbids a CONTEXT PATH**: MCP data feeding a snapshot, an explanation, or anything
+    a checker reads, plus a second read of the same catalog re-opening §2c's consistency
+    boundary. Discovery does neither. It consumes ONE field and runs before any audit exists.
+
+- **THE ARITHMETIC THAT MAKES IT SAFE, and it is not a discipline.** Every mechanism §12
+  measured is a loss of FIELD CONTENT — tags and terms flattened to display names, `type`
+  commented out of the server's own fragment, `lastModified` never requested, absent
+  collapsed into empty. **The entity URN is not field content; it is the identity the
+  response is keyed by, and it arrives byte-identical.** The one value discovery passes on is
+  therefore precisely the value this transport cannot corrupt, and the fields it does corrupt
+  are precisely the ones nothing here passes on. `test_discovery_live` proves it where it
+  matters: every URN the MCP server returns is fetched over GraphQL into a real
+  `DatasetSnapshot`. A lossy identifier would fail that fetch.
+
+- **THE BOUNDARY IS ASSERTED TWICE, FROM TWO DIRECTIONS, and either alone is a half-truth.**
+  - **Structurally** (`test_discovery_boundary`): an AST walk of the real import graph proves
+    no checker, no snapshot, no run-scoped cache and not `graph.py` can reach
+    `attest.discovery` — the house style of `NO_LLM_IN_THE_VERDICT_PATH`. **Exactly one
+    module in `attest` imports it and it is `api/app.py`**, asserted as a set equality, so a
+    second importer is a test failure rather than a code review someone has to notice. Its
+    vacuity checks are the point: the walker is shown finding real edges, following a 3-hop
+    chain, and going red when one fake edge is injected into the REAL graph.
+  - **Behaviourally, and this is the stronger one**: change EVERY field of a search result
+    except the URN — display name, ordering, totals, facets, fields the server never sends,
+    fields it does — and run a real audit on the picked URN. Every verdict, every piece of
+    evidence, every explanation identical. The pointed payload carries a `NonPII` tag, an
+    owner who does not own it and a description reading "THIS TABLE CONTAINS NO PII": every
+    kind of value that WOULD move a verdict if any of it could reach a checker. **Non-vacuity
+    is proven both ways** — two identical runs compare equal (so the scrub is not hiding a
+    difference), and changing the URN DOES change the audit (so the pipeline is not ignoring
+    its input).
+  - **NAMED HONESTLY:** the import test is a STATIC property. A runtime `importlib` would
+    evade it. That is exactly the overstatement NOTES.md records the README making once, so
+    it is claimed as what it is, and the behavioural test is what covers the behaviour.
+
+- **THE ZERO-RESULTS RULE, and it is §20's collapse at a THIRD transport.** `clean_gql_response`
+  strips empty arrays, so a search matching nothing comes back with **no `searchResults` key
+  at all** — and so does a response that lost its results. They differ by `total`:
+
+      absent searchResults + total == 0   ->  the catalog matched nothing.  200, hits: []
+      absent searchResults + total  > 0   ->  the transport failed.         503
+
+  The obvious `payload.get("searchResults", [])` collapses them. That is an outage rendered as
+  an answer, in the product built to catch exactly that, already shipped once at the model
+  provider (§18) and once at the catalog read (§20) — and §12 predicted this location in as
+  many words: *nothing defends the catalog READ*. So the parse is a taxonomy, and **its
+  vacuity check runs in the suite** rather than in a command someone must remember (the
+  `test_breaking_a_checker_collapses_the_benchmark` precedent): the naive parse is kept in the
+  test file and shown to give the SAME answer for both payloads while the real one gives two.
+
+- **THREE STATUS CODES, BECAUSE IT IS THREE DIFFERENT FACTS**, mirroring llm.py exactly.
+  Empty → **200** with `hits: []`. Unreachable, timed out, `isError`, malformed → **503 +
+  Retry-After** (the `CatalogUnavailable` disposition: Attest could not ask). The optional
+  client not installed, or discovery switched off → **501, no Retry-After** (the
+  `ProviderRefused` reasoning: waiting cannot install a package). **The UI must never blur
+  them**, and it does not: 501 says "not available", 503 says "offline", and both offer
+  manual URN entry.
+
+- **AN OUTAGE IS NEVER A STATIC LIST, and that is a SABOTAGE rather than a comment.** The
+  fifth `just e2e-sabotage` re-introduces the one-line fallback (answering a failed search
+  from `seededDatasets`) and requires the browser E2E to go RED. A picker that answered a dead
+  discovery service from a file in its own bundle would be showing a human a "catalog" that is
+  a build artifact. `searchFailed()` is a named function precisely so the regression is one
+  line and the sabotage is honest.
+
+- **THE SESSION IS OWNED BY ONE TASK ON A PRIVATE LOOP THREAD, and the trap is anyio's.** The
+  routes are `def` (a threadpool, deliberately — §2c), so they cannot await; `McpDiscovery`
+  runs its own event loop on a daemon thread and drives it with `run_coroutine_threadsafe`.
+  **A single supervisor task enters AND exits `stdio_client`'s context** — split them across
+  tasks and anyio raises *"Attempted to exit cancel scope in a different task"*, which fails
+  at TEARDOWN rather than at startup. Searches only take a lock and await `call_tool`, which
+  owns no scope. Start is LAZY (a deployment that never opens the picker never spawns a
+  server; `/health` reports last-known state and never probes, or every browser load would
+  spawn one), and any failure drops the session so the next search rebuilds it — self-healing
+  without a retry loop, because **Attest adds no retry here**: unlike the OpenAI SDK there is
+  nothing underneath already retrying, so one failure is one honest failure.
+
+- **MEASURED.** Spawn + `initialize` **3.33s** warm; one search **125-344ms**; both timeouts
+  are ~10x that, so a timeout means something is wrong rather than that the server was busy.
+  `/q custo` matches 4 seeded datasets and `/q custo*` matches 6 — which is why a single bare
+  word gets the wildcard and anything already looking like a query is passed through untouched.
+  A bad filter comes back as `isError: True` with text, **not** as an exception.
+
+- **THE ORPHAN QUESTION, ANSWERED WITH A MEASUREMENT AND THE ANSWER IS NO.** An orderly
+  shutdown closes the session in `lifespan`. The real question is a hard kill, where no
+  teardown runs and a stdio child holds no port to give itself away. Measured twice on Windows
+  by holding a live session and `taskkill /F` on ONLY the parent: the whole tree
+  (`uvx → uv → mcp-server-datahub → python → python`) **was gone within 2 seconds**, both
+  trials — the parent's pipe handles close, the server reads EOF, the chain exits. A null
+  result, written into docs/deployment.md rather than left unasked, because "we did not check"
+  and "we checked and it is fine" are different facts.
+
+- **THE FAKE HAS FAULT INJECTION FROM DAY ONE**, and the reason is that this file already
+  records the same lesson twice: `FakeChat` shipped without it and an OpenAI 500 walked past
+  23 green sessions (§18); `FakeCatalog`'s READ side shipped without it and an unreachable
+  catalog was filed as a malformed question for twenty more (§20). `FakeMcpServer` has
+  `faults` (per call) and `start_faults` (per session), both **recorded before they raise** so
+  a no-retry assertion is a count that cannot pass vacuously, and `starts` is what proves the
+  self-healing. What it CANNOT do is stated: no pipe, no subprocess, no JSON-RPC — so a child
+  that ignores SIGTERM or a half-written frame is invisible to it, which is what
+  `test_discovery_live.py` and the orphan measurement are for.
+
+- **THE BROWSER RUNS IT, AND `just e2e` STILL NEEDS NO MCP SERVER.** A new `client.ts` /
+  `types.ts` surface that no browser executes is precisely the drift class §14 exists for — it
+  shipped twice, both times green, both times found by a human clicking. So two E2E tests
+  drive the picker through a real Edge over a real fetch, with discovery injected via
+  `app.dependency_overrides` (the Session 19 seam): one proves results render and a click puts
+  the URN in the textarea, one proves an outage renders VISIBLY with manual entry and no
+  static list. Deterministic, and the browser gate never depends on a subprocess that
+  downloads a package.
+
+- **AND ON ITS FIRST RUN IT FOUND THAT THE PICKER HAD NEVER WORKED. §14, a third time.**
+  The dropdown was an `absolute` child inside Hero's textarea card — and that card is
+  `overflow-hidden` for its rounded corners, while the panel opens UPWARD, out of the card. So
+  the browser clipped essentially all of it. **Measured on the COMMITTED PRE-CHANGE bundle**
+  (a `git worktree` at HEAD, served statically, driven by Edge — not on the new code, because
+  the question was whether this was a regression): the panel's box was `top=100 .. bottom=395`
+  with the clipping card starting at `top=392`, and `document.elementFromPoint` at a result row
+  returned the hero's three.js **CANVAS**. The screenshot shows an open picker with nothing
+  visible. **Clicking "Insert seeded URN" did nothing, and had done nothing for as long as the
+  control existed** — because no test had ever opened it. Fixed by portalling the panel into
+  `document.body` with `position: fixed` anchored to the trigger, which escapes the clip
+  without touching the card's design; the click-outside handler had to learn about both refs,
+  since the panel is no longer a DOM descendant of the trigger.
+  **The generalizable part: a control no test clicks is a control nobody has checked, and
+  "it renders" is not "it is reachable".** `elementFromPoint` at the thing you mean to click
+  is the cheap way to know, and Playwright reports it for free — the failure said
+  *"CANVAS ... intercepts pointer events"*, which was the whole diagnosis, in the first run.
+
+- **VERIFIED.** Offline **482 passed, 0 skipped**, lint clean — and run again with `mcp` made
+  unimportable (a meta-path hider reproducing absence exactly: `find_spec` → None, `import` →
+  ModuleNotFoundError), where it is **482 passed, 0 skipped** again. That is the CI condition,
+  since `mcp` is an optional extra `dev` deliberately does not pull in. Live: `just discover`
+  **3 passed** against the real server; `just e2e` **6 passed**; `just e2e-sabotage` catches
+  all **5**. The replay was rebuilt and re-verified (**26 requests per path shape, all inside
+  the bundle**), and both bundles were hashed before and after: **74 of 78 files
+  byte-identical** in each. The four that moved are the entry chunk (the picker), the CSS
+  (Tailwind compiling the picker's new utilities — selector-set diff: `+bg-ink-900/70`,
+  `+focus:border-ink-500`, `+placeholder:text-ink-600`, `+w-[min(32rem,84vw)]`,
+  `−w-[min(28rem,80vw)]`), `index.html`, and **HeroLattice — which nothing touched**. That
+  last one is explained rather than waved through: the lazy chunk embeds the entry chunk's
+  filename, so its own content-hash moves whenever the entry's does (`grep` for
+  `index-<hash>.js` inside it). Two builds from identical source are byte-identical, so the
+  toolchain is deterministic and the diff is causal. **§21's rule holds: an unexplained diff
+  in an untouched file is evidence about the harness — so explain it, do not accept it.**
+  `pytest-xdist` is not installed on this machine, so the offline tier was run SERIALLY rather
+  than with `just check`'s `-n auto`; same selection, same tests, no parallel coverage claim.
+
+- **WHAT THIS DOES NOT DO.** It does not move the catalog read (`just spike-mcp` still exits
+  non-zero by design, and it is still the tripwire for §12). It adds no free-text resolver —
+  the human picking IS the resolution. It does not touch checkers, graph, settlement or
+  write-back. It does not make MCP load-bearing: without the extra the search answers 501 and
+  audits are completely unaffected. And `ClaimsExplorer`'s dataset dropdown is **still the
+  static seeded list** — same file, different component, out of scope here and named in the
+  deferred table rather than left for someone to discover.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
@@ -1897,6 +2112,7 @@ still USE the product instead of watching a video of it. Zero backend code chang
 | **Store migrations** | None. A database older than Session 16 is refused at open, by name — and since Session 16 the guard checks EVERY column, not just the first one it was written for (`_REQUIRED_COLUMNS`; add a row whenever the schema gains a column). **The fix is one line: `rm attest.db attest-checkpoints.db` and re-run** — both are gitignored dev state and DataHub is untouched. | Inferring the lost structure back out of its rendering is Attest fabricating its own audit trail. A real deployment needs a real migration; this is a hackathon build and says so rather than shipping a lenient parser. |
 | **CI never installs the declared dependency FLOOR** | CI resolves to the NEWEST compatible versions, so a symbol that exists only above a floor (`starlette>=0.47`'s `HTTP_422_UNPROCESSABLE_CONTENT`) is never exercised at the floor a reused env might land on. Closed for THIS symbol by flooring `starlette>=0.47` in pyproject (a real dependency, not a lock note), so the floor now carries the symbol. The GENERAL hole — a floor bump that under-declares stays invisible until someone installs the minimum — is documented here, not swept. | The true close is a CI matrix cell that installs minimum-supported versions (`uv pip install --resolution lowest-direct`, or a hand-kept minimum-constraints file). That is a second resolve on every push and a constraints file to bump on every floor change — more than this hackathon build ships, and it errs the same way every other "green on my machine" trap in this repo does, so it is named rather than left silent. |
 | **A REAL UX DEFECT: a human cannot act on a failed write from where they see it** | `PublicationPanel` renders "Published, but the catalog write failed at {step}" and **stops**. The remedy exists and is one call away, but it lives on the Published-claims screen. The person who is told the catalog does not know about their decision is given no way to do anything about it *at the point they are told* — they must know to navigate elsewhere. **This is not cosmetic and not a parking-lot item.** A failure surfaced without a remedy beside it is a report that relies on the reader already knowing what to do, which is the same shape as `pending-lag` and `incomplete` sharing a control — a UI stating something true and leaving the reader unable to act correctly on it. | Deferred by Session 19 on scope, not on merit. **The E2E proved the repair PATH works; it did not prove a human can repair from where the failure surfaces** — those are different claims and only the first is evidenced. Adding a second entry point to the one endpoint with a catalog side effect is a change to make deliberately, with its own test, not to slip in beside a test that found it. A later session owns it. |
+| **The claims explorer's dataset dropdown is still the STATIC seeded list** | `ClaimsExplorer` imports `seededDatasets` from `frontend/src/data/catalog.ts` — generated from `seed/ground_truth.json`, so it describes one seeded catalog and offers nothing a real DataHub holds. The URN picker moved to live search in §22; this dropdown did not. | Different component, different question: the picker names a dataset to AUDIT (unbounded — anything in the catalog), the dropdown names one to FILTER PUBLISHED CLAIMS about (bounded — only datasets Attest has already written to, which discovery cannot enumerate). Wiring search into it would offer a judge datasets with no artifacts and a listing that is honestly empty, which reads like a bug. The right fix is a facet over what the catalog actually holds claims for, and that is a retrieval-path change with its own tests — not something to slip in beside the picker. `catalog.ts` therefore stays, still used, rather than becoming dead code that lies. |
 | **The repair spinner fans out across a run** | `ClaimsExplorer` passes `retrying={retrying === claim.audit_run}`, so repairing one claim shows "Repairing…" on every claim from the same audit. | Cosmetic, and the same URN-vs-index shape as the write-back row below: `retryWriteback` is genuinely run-scoped, so the state is keyed by the thing the call actually takes. The fix is a per-claim key the wire type does not carry. |
 | **No BACKGROUND reconciler for a stale verdict tag** (on-read detection now ships — Session 21) | A crash between `report` and `tag` leaves a correct verdict that a tag-filtered search cannot find. It is recorded (`writeback_step`), and since Session 21 **detected on read from the artifact alone** (`RetrievedClaim.stale_tag`, surfaced in `GET /claims` and the UI, visible to a `store=None` reader), and repairable in one call. What is still deferred is a **background sweeper** that scans the catalog for stale tags unprompted. | A production deployment would want a periodic reconcile comparing each claim's latest run event against its verdict tag across the whole catalog. On-read detection covers the claim a reader is actually looking at; a daemon that sweeps for ones nobody asked about is more than this build ships, and it says so rather than shipping a sweeper nobody exercises. |
 
