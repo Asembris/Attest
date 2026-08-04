@@ -1789,6 +1789,90 @@ response`, three times.
   it FAIL HONESTLY and fast. No Attest-level retry, no queue, no degraded mode, and the
   deterministic core, the trajectory rules and token accounting are untouched.
 
+**21. THE REPLAY (Session 27). The real UI, driven by a committed recording of one real run,
+served statically at `docs/replay/` — so a judge who will not run an 8 GB Docker stack can
+still USE the product instead of watching a video of it. Zero backend code changed.**
+
+`spikes/capture_replay.py` (`just replay-capture`), `frontend/src/api/replayClient.ts`,
+`just replay-build`, `just replay-verify`, `tests/test_replay_fixtures.py`.
+
+- **HONESTY IS THE DESIGN, not a disclaimer bolted on.** This project's thesis is that an
+  unverified claim is not a verified one; a replay that let a reader believe they were driving
+  a live system would be making exactly that unfounded claim, on the most public page it has.
+  So a fixed, non-dismissible banner names it on every view, and the two places the build
+  *could* lie are refusals rather than simulations:
+  - **A decision set other than the recorded one is REFUSED (409), with the reason.** The
+    captured approval is what one human's decision really produced, including three real
+    catalog writes. Replaying it for a judge who chose to WITHHOLD a verdict would render
+    "published" as the consequence of a decision nobody made — a fabricated consequence, in
+    the one flow whose entire point is that consequences are real and a human owns them.
+  - **A `GET /claims` filter outside the recorded matrix is REFUSED, never an empty list.**
+    "Nothing was recorded for this query" and "the catalog holds nothing" are different facts,
+    and collapsing them is this product's cardinal sin committed in its own read path. The
+    copy says so in as many words.
+  - **`submitAudit` refuses edited text** rather than returning a recorded verdict about a
+    sentence nobody audited, and `mockData` is aliased so the Hero textarea shows the
+    recording's own `source_text` — showing one text and auditing another is the single lie
+    this build is arranged to be unable to tell.
+  - **Nothing captured is edited afterwards.** `health.datahub_ui_url` says `localhost:9002`,
+    so the "View in DataHub" deep-links are dead for a remote reader; that is the real response
+    and the banner says where they point. A doctored URL would be a fabricated body.
+- **BOTH RECORDS ARE CAPTURED, and deriving one from the other was refused.** `AuditProgress`
+  replays the PARKED record (`POST /audit`) and `AuditResults` shows the SETTLED one
+  (`/approve`). Flipping `publication.status` back to `pending` to synthesise the first from
+  the second would be Attest fabricating its own audit trail.
+- **THE SEAM IS A BUILD MODE AND AN ALIAS, NEVER AN `import.meta.env` BRANCH — and this is the
+  part a future session must not "tidy".** `vite build --mode replay` resolves `api/client` to
+  `api/replayClient` and `data/mockData` to `replay/mockData`. A conditional inside a component
+  would put replay code in the PRODUCTION module graph and leave the shipped bundle's honesty
+  resting on dead-code elimination. With the alias, no component contains a line of
+  replay-awareness and the default build is provably unmoved: **MEASURED — all 78 files of
+  `frontend/dist` byte-identical with the change stashed and applied.**
+- **MEASURING THAT CAUGHT A REAL LEAK, and it is why the measurement is the method.** Tailwind
+  compiles from a `content` glob (`./src/**/*.{js,ts,jsx,tsx}`), so merely ADDING
+  `src/replay/ReplayBanner.tsx` compiled the banner's classes into the shipped
+  `index-*.css` — a real change to the production bundle, made by a file no production module
+  imports, in a build nothing about the replay was supposed to touch. **No test would ever have
+  caught it**; only hashing `dist/` before and after did. `tailwind.config.js` now excludes
+  `src/replay` unless `ATTEST_REPLAY=1`. *Adding a file can change the bundle. Hash it.*
+- **A NULL RESULT WORTH KEEPING: `core.autocrlf=true` invalidated the first two comparisons.**
+  A fresh `git worktree` checkout gets CRLF while the working copy holds LF, so the baseline
+  differed in `favicon.svg` — a file nothing had touched — and `git stash` then rewrote EOLs the
+  other way. Both runs "proved" a difference that was not there. **Compare builds from ONE tree
+  with EOL held constant**, and treat an unexplained diff in an untouched file as evidence about
+  the harness, not the change. `.gitattributes` marks `docs/replay/** -text` for the same
+  reason: normalization would serve bytes the verifier never drove.
+- **`just replay-verify` IS THE PROOF, and it drives the refusals too.** Two static servers —
+  `/replay/` and the Pages-shaped `/Attest/replay/` — real Edge through the whole recorded flow
+  from each, **every** request recorded and checked against the replay's own directory prefix
+  (not merely its origin, which would let a stray `/health` through). **MEASURED: 26 requests
+  per shape, all inside the bundle; the only `fetch(` in the JS is Vite's modulepreload
+  polyfill.** `base: './'` is what makes one bundle serve both shapes; a rooted base works in
+  exactly one and is silently broken in the other.
+- **THE FIXTURES ARE EXACTLY AS HONEST AS `tests/test_replay_fixtures.py`** — the
+  `test_fixture_drift.py` argument one layer up. Offline tier (no DataHub, no key, no network):
+  every fixture parses through the REAL pydantic response models, so a wire-type change goes red
+  and forces a RE-CAPTURE rather than a hand patch; the manifest's sha256 per file catches an
+  edit that every structural check waves through (**proven red by flipping one recorded verdict
+  in `approval.json`**); and the four fixtures are cross-checked as views of ONE run. Both
+  alarms have vacuity checks.
+- **THE CAPTURE IS RESUMABLE, and that is not a convenience.** Each capture PUBLISHES, which
+  appends a permanent verdict event to three content-addressed artifacts on a real catalog —
+  `DELETE` returns 200 and removes nothing; only `just reset` clears them. So each fixture is
+  written the moment it exists and `--resume` re-captures only the `/claims` matrix. It earned
+  its keep immediately: a pooled `httpx` connection hung past 90s on a request the server never
+  logged (a keep-alive socket the server had already closed — every retry over the same pool
+  gets the same corpse), and `--resume` finished the run at no verdict cost. **Each read now
+  runs on its own connection.**
+- **The recorded artifacts carry THREE verdict events, not one, and the banner does not pretend
+  otherwise.** The demo VIDEO records a different run against the same catalog; this is "a real
+  run's committed record", never "the demo run's". Three distinct runs appending to one
+  content-addressed artifact is the append-only history working, rendered with the LATEST chip.
+- **WHAT THIS DOES NOT DO:** it is not a live demo and never claims to be; it covers ONE
+  recorded run and a named set of `/claims` filters, refusing the rest; it proves nothing about
+  what the catalog says TODAY (nothing offline can); and `just replay-verify` needs the `e2e`
+  extra and Edge, so like `just e2e` it is not in CI.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
