@@ -12,15 +12,21 @@
  *
  * The `!important` is deliberate: Tailwind's `.top-0` has identical specificity, and source
  * order between two generated stylesheets is not a thing to rely on.
+ *
+ * THE VALUES BELOW ARE A FIRST-PAINT FALLBACK, NOT THE TRUTH. `ReplayBanner` measures itself
+ * and writes the real height into this variable, because how the copy wraps depends on the
+ * viewport and on the copy — and a hard-coded height that guesses low hides a sticky header
+ * behind the banner at exactly the widths nobody checked. These two numbers only have to be
+ * close enough that nothing jumps before the first measurement lands.
  */
 
 :root {
-  --replay-banner-h: 42px;
+  --replay-banner-h: 52px;
 }
 
 @media (max-width: 860px) {
   :root {
-    --replay-banner-h: 62px;
+    --replay-banner-h: 76px;
   }
 }
 

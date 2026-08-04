@@ -119,9 +119,27 @@ def _banner(page: object, where: str) -> None:
     if not banner.is_visible():
         raise AssertionError(f"{where}: the REPLAY banner is not visible")
     text = banner.inner_text()
-    for phrase in ("Replay", "Nothing here is live", "A real run's committed record"):
+    # The three claims the banner has to make, in the words it makes them in: what the page
+    # is, that the responses are real, and that none of it is live. The provenance row is
+    # deliberately NOT checked phrase-by-phrase — it is detail, and pinning it here would make
+    # every copy edit a test edit for no gain.
+    claims = (
+        "Replay",
+        "A recorded audit",
+        "Every response is a real one",
+        "Nothing here is live",
+    )
+    for phrase in claims:
         if phrase.lower() not in text.lower():
             raise AssertionError(f"{where}: the banner does not say {phrase!r}:\n{text}")
+    # The capture date must not render in the VIEWER's locale — a French browser showed
+    # "4 août 2026" in an otherwise English banner, which is what `toLocaleDateString` does.
+    for month in ("janvier", "février", "mars", "avril", "juin", "juillet", "août"):
+        if month in text.lower():
+            raise AssertionError(
+                f"{where}: the banner rendered a localized month ({month!r}), so the date is "
+                f"being formatted per viewer rather than fixed to English:\n{text}"
+            )
 
 
 def _walk_recorded_run(page: object, calls: Requests) -> None:
