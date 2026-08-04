@@ -1029,7 +1029,9 @@ to start obeying Attest's own rule about absence.**
 Session 15 proved Attest *writes* results back. Challenge 1's thesis has two halves —
 *"writes results back **so the next person or agent inherits the knowledge**"* — and an
 artifact nobody can query inherits nothing. [retrieval.py](src/attest/retrieval.py) is the
-second half: `GET /claims`, `GET /claims/{claim_urn}`, reading **DataHub**, never the store.
+second half: `GET /claims`, `GET /claims/{claim_urn}`, reading claims from **DataHub**, never from
+the store — which is consulted only to explain the catalog's silence, per the three-state read
+below.
 
 - **THE THREE-STATE READ IS THE LOAD-BEARING PART, and there are FOUR states because an
   absent verdict is not one fact.** The catalog can be silent about a claim's verdict for
@@ -1211,7 +1213,7 @@ submission asset, not an apology. **Do not reopen this as a checkbox.**
 - **Do NOT "close the gap" by adding MCP as a demonstrated-but-non-verdict context path.**
   Considered and refused: running the inverting transport purely to say we touched it is the
   hollow checkbox integration the finding argues against, and a second read of the same
-  catalog re-opens the §2c consistency boundary (one run, one frozen snapshot).
+  catalog re-opens the §2c consistency boundary (one run, one frozen read per entity).
   **AMENDED BY §22, and the amendment is narrow: this forbids a CONTEXT PATH — MCP data
   feeding a snapshot, an explanation, or anything a checker reads. It does not forbid
   DISCOVERY**, which consumes one field (the entity URN, the one this transport does not
