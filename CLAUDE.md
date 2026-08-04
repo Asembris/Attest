@@ -1200,8 +1200,10 @@ submission asset, not an apology. **Do not reopen this as a checkbox.**
   possible in principle — only that none is possible on this server's responses without
   inventing data the catalog did not send. Three defects are written up
   ([docs/upstream/](docs/upstream/)), and two of them are FILED upstream — #169 (schema-field
-  data loss) and #168 (dataset `lastModified`); the third stays a draft deliberately. Were they
-  fixed, this should be revisited.
+  data loss) and #168 (dataset `lastModified`); the third stays a draft deliberately. **#168 now
+  has a proposed fix at PR #182** (opened 2026-08-04, open; not reviewed, not merged) — three
+  lines in the Dataset arm of `entityPreview` plus tests. Were they fixed, this should be
+  revisited.
 
 **13. THE REPO TELLS THE CURRENT TRUTH (Session 18). Docs rebuilt to match the shipped
 feature, on receipts only.**

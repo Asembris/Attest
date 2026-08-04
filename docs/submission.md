@@ -14,8 +14,10 @@ from Attest's database. We also **built an adapter to the DataHub MCP Server, me
 against all 16 seeded datasets, and wrote up three upstream issues with reproductions — two of
 them filed** ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169),
 [#168](https://github.com/acryldata/mcp-server-datahub/issues/168); the third is deliberately
-kept as a draft) — the measurement is why the verdict read stays on GraphQL, and it is runnable
-as `just spike-mcp`.
+kept as a draft), and opened
+[PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182) proposing a fix for #168
+(open; not reviewed, not merged). The measurement is why the verdict read stays on GraphQL,
+and it is runnable as `just spike-mcp`.
 
 ## The problem
 

@@ -162,3 +162,46 @@ which half is wrong is a real question. The committed receipts are single-run; t
 k-run **by design** (§7 — one run's dispute list is not a fact about the labels), so
 reconciling means deciding whether the displayed table stays two single-run rows or becomes a
 k-run summary. That is a claim about what is being shown, and it wants a session, not a patch.
+
+## Upstream PR #182 is OPEN at submission time, and its red CI cell is not ours to chase
+
+**State.** <https://github.com/acryldata/mcp-server-datahub/pull/182> — *"Expose Dataset
+properties.lastModified through get_entities"*, opened **2026-08-04** against
+`acryldata/mcp-server-datahub` from a fork, proposing a fix for
+[#168](https://github.com/acryldata/mcp-server-datahub/issues/168). **State at submission:
+OPEN. Not reviewed, not approved, not merged, no maintainer response.** The body carries
+`Closes #168`, which would close that issue only *if* the PR were merged. One commit: three
+lines in the Dataset arm of `entityPreview` (`lastModified { time }`) plus
+`tests/test_mcp/test_dataset_last_modified.py`. Measured locally before pushing:
+`pytest tests/test_mcp` 505 passed (499 baseline + 6 new), and `ruff format --check`,
+`ruff check` and `mypy` all clean.
+
+Every Attest-side reference to it says exactly **"opened"** / **"a fix is proposed"** and names
+the state. Nothing may be warmed to "accepted", "acknowledged" or "under review" without a
+maintainer event to point at.
+
+**Two things about their CI, both expected and neither a defect in the change.**
+
+1. The `integration-test` matrix has a `longtail` cell reading `secrets.LONGTAIL_GMS_URL` /
+   `LONGTAIL_GMS_TOKEN`. Fork PRs never receive repository secrets, so that cell is **expected
+   red on any fork PR**, for a reason that has nothing to do with this change. The two OSS
+   cells need no secrets.
+2. Their CI runs **only** `pytest tests/test_mcp_integration.py`, so the six tests the PR adds
+   do not execute in their CI at all — they run under `make test`. The same is true of PR
+   #149's test, which is the precedent this one follows.
+
+**Trigger.** A maintainer responds, the PR changes state, or CI goes red on something inside
+`src/` or the added test file.
+
+**Lever (NOT built).** Making the longtail cell green, or adding an assertion to
+`tests/test_mcp_integration.py` so the change is covered by the CI job that actually runs.
+
+**Why it stays on the shelf.** The longtail cell **cannot** be made green from a fork — the
+secrets are the maintainers' to grant, and pushing at it would be chasing someone else's
+configuration. And an assertion in their integration file would have to claim that *their* live
+instance holds a `lastModified` for the test URN, which was never measured against either the
+longtail or the OSS-sample catalog. That is an unverified live assertion on a gate — the
+flaky-live-gate failure this repo refuses everywhere else, and the same reason `test_live.py`
+asserts the property that holds every time rather than a specific correction outcome. If a
+maintainer asks for integration coverage, the honest move is to ask which instance and measure
+it first, not to guess.

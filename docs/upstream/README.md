@@ -2,7 +2,10 @@
 
 **Status: drafts 1 and 2 are FILED upstream** — [#169](https://github.com/acryldata/mcp-server-datahub/issues/169)
 and [#168](https://github.com/acryldata/mcp-server-datahub/issues/168), opened 2026-08-02, no
-maintainer response yet. **Draft 3 is deliberately NOT filed** and stays a draft — see below.
+maintainer response yet. **A fix for #168 is proposed at
+[PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182)**, opened 2026-08-04 —
+open; not reviewed, not merged. **Draft 3 is deliberately NOT filed** and stays a draft — see
+below.
 
 These came out of [`docs/mcp-evaluation.md`](../mcp-evaluation.md) — the measured finding
 that the DataHub MCP server's read tools cannot serve a lossless structured read of a
@@ -13,7 +16,7 @@ dataset. All three are reproducible against `mcp-server-datahub` **0.6.0** + Dat
 | Draft | Title | Upstream | Confidence it is a defect |
 | --- | --- | --- | --- |
 | [1](issue-1-schema-field-data-loss.md) | Schema fields drop `type` and return tag/term display names instead of URNs | Filed: [#169](https://github.com/acryldata/mcp-server-datahub/issues/169) | **High.** The data is already in the response; `type` is commented out and its reader still exists. |
-| [2](issue-2-dataset-lastmodified.md) | Dataset `properties.lastModified` is never requested by any tool | Filed: [#168](https://github.com/acryldata/mcp-server-datahub/issues/168) | **High.** Exactly the shape of upstream #118, which has a PR. |
+| [2](issue-2-dataset-lastmodified.md) | Dataset `properties.lastModified` is never requested by any tool | Filed: [#168](https://github.com/acryldata/mcp-server-datahub/issues/168); fix proposed: [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182), open | **High.** Exactly the shape of upstream #118, which has a PR. |
 | [3](issue-3-absent-vs-empty.md) | `clean_gql_response` strips nulls and empties, collapsing "absent" and "empty" | Not filed | **Low-medium, and weaker than we first thought.** A real ambiguity, but no measured wrong answer, the rationale is documented, and it may be working as intended. Framed as a question. |
 
 **On draft 3, and why it is worth reading before filing.** The first version of this finding
