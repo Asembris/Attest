@@ -1,0 +1,37 @@
+/* REPLAY-ONLY LAYOUT. Loaded by the replay entry alone; the production bundle never sees it.
+ *
+ * The banner is `position: fixed` because it has to survive every scroll on every view. Three
+ * things in the app then need to know it is there, and all three are handled HERE rather than
+ * by editing a component — the production path stays untouched, which is the whole constraint.
+ *
+ *   1. the page starts below it            (body padding)
+ *   2. `min-h-screen` sections stop being a viewport TALLER than the space they have, which
+ *      would otherwise add a scrollbar to every screen that has nothing to scroll
+ *   3. the two `sticky top-0` headers (AuditResults, ClaimsExplorer) stick BELOW the banner
+ *      instead of sliding under it and disappearing
+ *
+ * The `!important` is deliberate: Tailwind's `.top-0` has identical specificity, and source
+ * order between two generated stylesheets is not a thing to rely on.
+ */
+
+:root {
+  --replay-banner-h: 42px;
+}
+
+@media (max-width: 860px) {
+  :root {
+    --replay-banner-h: 62px;
+  }
+}
+
+body {
+  padding-top: var(--replay-banner-h);
+}
+
+.min-h-screen {
+  min-height: calc(100vh - var(--replay-banner-h));
+}
+
+.sticky.top-0 {
+  top: var(--replay-banner-h) !important;
+}
