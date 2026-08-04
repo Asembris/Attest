@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Radio } from 'lucide-react';
+import { AlertTriangle, Radio } from 'lucide-react';
 import { replayManifest } from '../api/replayClient';
 
 // THE BANNER, AND IT IS NOT A DISCLAIMER — it is the product's own thesis applied to itself.
@@ -49,8 +49,21 @@ function captureDate(iso: string): string {
   return `${Number(day)} ${MONTHS[Number(month) - 1] ?? month} ${year}`;
 }
 
+// The repository this recording was produced in. Hardcoded because there is nothing to derive
+// it from — `git remote` is not a fact a static bundle carries — and because a wrong value is
+// visible the moment anyone follows the link. Shape verified against the live host: a 40-char
+// SHA under `/commit/` resolves, and the short form in the label is the same commit.
+const REPO_URL = 'https://github.com/Asembris/Attest';
+
 export default function ReplayBanner() {
   const ref = useRef<HTMLDivElement>(null);
+  // THE PROVENANCE THE HASHES CANNOT COVER. `manifest.files` proves the recorded responses
+  // have not been edited since capture; it says nothing about which code produced them. That
+  // is this commit — so if the capture ran against a tree that did not match it, the SHA
+  // beside the hashes is approximate, and a reader has no way to tell. `capture_replay.py`
+  // refuses such a capture and a test refuses to ship one, but if either is ever bypassed the
+  // page has to say so ITSELF rather than let the link imply a provenance nobody verified.
+  const dirty = replayManifest.capturing_commit_dirty;
 
   // THE BANNER PUBLISHES ITS OWN HEIGHT, and that is not polish. `replay.css` uses
   // `--replay-banner-h` to push the page down and to drop the two `sticky top-0` headers
@@ -92,10 +105,30 @@ export default function ReplayBanner() {
           </span>
         </p>
         <p className="mt-0.5 font-mono-nums text-[10.5px] leading-snug text-ink-400">
-          run {replayManifest.run_id.slice(0, 8)} · DataHub Core{' '}
-          {replayManifest.datahub_core_version} · {captureDate(replayManifest.captured_at)} ·
-          &ldquo;View in DataHub&rdquo; links point at the local catalog that produced this record
+          run {replayManifest.run_id.slice(0, 8)} · built by{' '}
+          <a
+            href={`${REPO_URL}/commit/${replayManifest.capturing_commit}`}
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-ink-600 underline-offset-2 hover:text-ink-200"
+          >
+            {replayManifest.capturing_commit.slice(0, 7)}
+          </a>{' '}
+          · DataHub Core {replayManifest.datahub_core_version} ·{' '}
+          {captureDate(replayManifest.captured_at)} · &ldquo;View in DataHub&rdquo; links point at
+          the local catalog that produced this record
         </p>
+        {dirty && (
+          <p className="mt-1 flex items-start gap-1.5 text-[11px] leading-snug text-insufficient-200">
+            <AlertTriangle size={12} className="mt-0.5 shrink-0 text-insufficient" />
+            <span>
+              <span className="font-medium">Provenance incomplete.</span> This was captured from a
+              working tree with uncommitted changes, so the commit above is not exactly the code
+              that produced these responses. The recorded responses are still real and still
+              unedited — their hashes are pinned — but the link names approximate provenance.
+            </span>
+          </p>
+        )}
       </div>
     </div>
   );

@@ -232,6 +232,32 @@ def test_the_manifest_records_what_this_was_captured_against(manifest: dict) -> 
     assert manifest["captured_at"]
 
 
+def test_the_recording_was_captured_from_a_clean_tree(manifest: dict) -> None:
+    """THE PROVENANCE PIN. The hashes prove the BYTES; only this says whose CODE made them.
+
+    `test_the_manifest_hashes_match_the_files_on_disk` proves no fixture has been edited since
+    capture. It says nothing about what produced them — and the manifest answers that with a
+    commit SHA, which the replay banner shows and links. Captured from a tree carrying
+    uncommitted changes, that SHA names code that did not produce these fixtures: a reader who
+    trusts the hashes has no reason to suspect the commit beside them is approximate. On a
+    project whose thesis is that an unverified claim is not a verified one, an unverifiable
+    provenance claim on the most public page it has is the self-inflicted version of the bug.
+
+    So the capture refuses a dirty tree, and this refuses to ship a recording taken past that
+    refusal with `--allow-dirty`. Note what it does NOT claim: that the commit exists, that it
+    is an ancestor of HEAD, or that the tree at that commit would produce these bytes. Git is
+    not consulted here — the offline tier runs on checkouts (shallow ones in CI) where that
+    question has no reliable answer. This pins the one fact the capture is in a position to
+    record honestly.
+    """
+    assert manifest["capturing_commit_dirty"] is False, (
+        "this replay was captured from a working tree with uncommitted changes, so "
+        f"`capturing_commit` ({manifest['capturing_commit'][:7]}) names code that did not "
+        "produce these fixtures. Re-capture with `just replay-capture` from a clean tree at "
+        "the commit that carries the recording."
+    )
+
+
 def test_a_fixture_that_stopped_matching_the_wire_types_fails_loudly() -> None:
     """The vacuity check for the model-parsing tests.
 

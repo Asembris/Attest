@@ -21,6 +21,14 @@ WHAT IS DELIBERATELY NOT DONE.
     produced a proposal is the model's call at run time; `decisions.json` records what was
     actually submitted, and the replay client refuses any other decision set against it.
 
+A DIRTY WORKING TREE IS REFUSED. The manifest names the commit this recording was produced
+by, and the replay banner shows it; captured from a tree that does not match that commit, the
+SHA names code that did not produce these fixtures. The hashes would still prove the fixture
+bytes are unedited and the provenance beside them would still be approximate — a hole in the
+one claim the artifact exists to make. `--allow-dirty` is the local-experiment escape hatch
+and launders nothing: the flag stays true and the banner renders it as a warning. See
+`_provenance`, which also explains why the flag used to be true on every capture ever taken.
+
 THE PROCESS BOUNDARY IS HERE, not in the capture logic. This launches the SHIPPED uvicorn
 command on an ephemeral port with its own store, exactly as `spikes/smoke_runner.py` does —
 so a stray `just serve` on :8003 is neither used nor disturbed. The catalog it reads and
@@ -251,6 +259,62 @@ def _git(*args: str) -> str:
     ).stdout.strip()
 
 
+def _dirty_paths() -> list[str]:
+    """Every path git reports as modified, staged or untracked, with its status code intact.
+
+    NOT via `_git`, which strips — and strip eats the leading space of porcelain's two-column
+    status code, so the first entry rendered as `M file` (staged) while identical unstaged
+    entries below it rendered ` M file`. A refusal that misreports the state of the first path
+    it names is a diagnostic arguing with itself.
+    """
+    out = subprocess.run(
+        ["git", "status", "--porcelain"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout
+    return [line for line in out.splitlines() if line.strip()]
+
+
+def _provenance(allow_dirty: bool) -> tuple[str, bool]:
+    """The commit this recording was produced BY, and whether the tree actually matched it.
+
+    MEASURED HERE, BEFORE THE SERVER STARTS AND BEFORE A SINGLE FIXTURE IS WRITTEN — and the
+    timing is the whole fix, not a detail. The manifest used to compute this at the END of
+    `capture()`, AFTER the five fixtures had been written to the working tree. Those writes
+    dirty the tree by construction: every capture mints a new run id and new timestamps, so
+    the bytes always move. `capturing_commit_dirty` was therefore **structurally true on
+    every capture**, including a perfectly clean one. It was not recording the provenance of
+    the CODE; it was recording the capture's own output, one line after producing it.
+
+    That is worse than a missing check, because the field looked like a provenance guarantee
+    and was one the capture could never satisfy. And it sits on the artifact whose entire
+    purpose is provenance: the manifest's hashes prove the fixture BYTES have not been edited
+    since capture, and this flag is the only thing that says the CODE which produced them is
+    the code at `capturing_commit`. A reader who trusts the hashes has no reason to suspect
+    the commit beside them is approximate.
+
+    So the question is asked once, at the only moment it has an answer: before this script
+    touches anything. A dirty tree is REFUSED rather than recorded, because a recording whose
+    provenance is already known to be unverifiable is not worth the three permanent verdict
+    events it appends to a real catalog. `--allow-dirty` exists for local experimentation and
+    does not launder anything — the flag stays true and the banner says so, visibly.
+    """
+    dirty = _dirty_paths()
+    if dirty and not allow_dirty:
+        listed = "\n  ".join(dirty[:20])
+        more = f"\n  ... and {len(dirty) - 20} more" if len(dirty) > 20 else ""
+        raise SystemExit(
+            "REFUSING to capture from a dirty working tree.\n\n"
+            f"  {listed}{more}\n\n"
+            "The manifest records the commit this recording was produced by, and the replay "
+            "banner shows it. Captured from a tree that does not match that commit, the SHA "
+            "names code that did not produce these fixtures — a provenance claim with a hole "
+            "in it, on the artifact whose whole purpose is provenance.\n\n"
+            "Commit or stash the above and re-run. `--allow-dirty` captures anyway for local "
+            "experimentation; the manifest keeps `capturing_commit_dirty: true` and the "
+            "banner renders a visible warning, so such a capture cannot be shipped quietly."
+        )
+    return _git("rev-parse", "HEAD"), bool(dirty)
+
+
 def _run_audit(client: httpx.Client) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
     """The expensive, unrepeatable half: one real audit and one real human decision."""
     parked = _body(
@@ -298,7 +362,7 @@ def _run_audit(client: httpx.Client) -> tuple[dict[str, Any], list[dict[str, Any
     return parked, decisions, approval
 
 
-def capture(base: str, resume: bool) -> None:
+def capture(base: str, resume: bool, provenance: tuple[str, bool]) -> None:
     with httpx.Client(base_url=base, timeout=300) as client:
         health = _body(client.get("/health"), "GET /health")
         if health.get("datahub") != "up":
@@ -347,8 +411,10 @@ def capture(base: str, resume: bool) -> None:
             "versions"
         ]["acryldata/datahub"]["version"],
         "model": health["model"],
-        "capturing_commit": _git("rev-parse", "HEAD"),
-        "capturing_commit_dirty": bool(_git("status", "--porcelain")),
+        # Both read off the tree as it stood BEFORE this script wrote anything — see
+        # `_provenance`. Computed here they would describe the fixtures just written.
+        "capturing_commit": provenance[0],
+        "capturing_commit_dirty": provenance[1],
         "files": hashes,
     }
     _write(OUT / "manifest.json", manifest)
@@ -357,12 +423,18 @@ def capture(base: str, resume: bool) -> None:
     for name, digest in hashes.items():
         print(f"     {digest[:16]}  {name}")
     print(f"     run {run_id}  ·  DataHub Core {manifest['datahub_core_version']}")
+    print(f"     commit {provenance[0][:7]}  ·  dirty {str(provenance[1]).lower()}")
 
 
 def main() -> int:
-    resume = "--resume" in sys.argv[1:]
+    args = sys.argv[1:]
+    resume = "--resume" in args
     if resume and not (OUT / "audit-parked.json").exists():
         raise SystemExit("--resume needs a previous capture's audit-parked.json; there is none.")
+
+    # FIRST, before the server, the audit and the three permanent verdict events. A capture
+    # that is going to be refused must be refused while refusing is still free.
+    provenance = _provenance(allow_dirty="--allow-dirty" in args)
 
     STATE.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -381,7 +453,7 @@ def main() -> int:
     print(f"capture server on {base}  ·  store {STATE}  ·  :8003 untouched")
     try:
         _wait_for_server(proc, base)
-        capture(base, resume)
+        capture(base, resume, provenance)
     finally:
         _stop(proc)
     return 0

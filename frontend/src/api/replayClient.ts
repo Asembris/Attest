@@ -55,13 +55,21 @@ const RECORDED_CLAIMS = claims_ as unknown as {
   response: ClaimsResponse;
 }[];
 
-/** When this recording was made, and against what. Rendered by the replay banner. */
+/** When this recording was made, and against what. Rendered by the replay banner.
+ *
+ *  `capturing_commit_dirty` is in this type because the banner has to be ABLE to say it. It is
+ *  false on any shipped recording — `capture_replay.py` refuses a dirty tree and
+ *  `test_replay_fixtures.py` refuses to ship a capture taken past that refusal with
+ *  `--allow-dirty` — but a field the UI cannot read is a guarantee resting on two checks
+ *  nobody can see from the page. Omitting it was how the flag stayed true for every capture
+ *  ever taken without anything rendering a word about it. */
 export const replayManifest = manifest_ as {
   captured_at: string;
   run_id: string;
   datahub_core_version: string;
   model: string;
   capturing_commit: string;
+  capturing_commit_dirty: boolean;
   files: Record<string, string>;
 };
 
