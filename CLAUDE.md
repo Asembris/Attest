@@ -2101,11 +2101,136 @@ exactly the reasons §12 measured. `src/attest/discovery/`, `GET /catalog/search
   static seeded list** — same file, different component, out of scope here and named in the
   deferred table rather than left for someone to discover.
 
+**23. THE EXTERNAL TRIAL (Session 29). Attest run against a catalog we did NOT author — and
+it found, before a single audit ran, a gap our own seed could never have exposed. NOT a second
+benchmark, and nothing in it is scored.** `spikes/external_trial.py` (`just external-trial`),
+`spikes/external_ingest.py` (`just external-ingest`), receipt at `docs/external-trial/results.json`,
+write-up at [docs/external-trial.md](docs/external-trial.md). **No source changed.**
+
+- **WHY IT IS NOT A BENCHMARK, and the framing is load-bearing.** Every number this project
+  has is measured against a catalog `generate_seed.py` wrote, with labels applying a policy we
+  wrote — benchmark/README.md says so, and that caveat is the project's weakest point. But the
+  golden benchmark is a CONFORMANCE GATE where **100% is the expected result**, and computing
+  accuracy / macro-F1 / a confusion matrix over 15 unlabelled foreign claims would import that
+  scoring apparatus onto a run that has not earned it and undercut our own methodology
+  argument. So nothing here is scored. The question is only: **are the verdicts DEFENSIBLE
+  against metadata we did not design, and where does Attest hit its own documented limits?**
+
+- **THE HEADLINE: 15 of 67 datasets are UNAUDITABLE, and no test here could ever have caught
+  it.** `client.DATASET_QUERY` asks for `owner { ... on CorpUser { urn ... } }` and has **no
+  `CorpGroup` arm**, so a group-owned dataset returns `{"owner": {}, "ownershipType": {...}}`
+  and Session 23's `_urns` guard refuses to normalize it → `MalformedResponseError` →
+  `ClaimError`. Three separable facts, and keeping them separate is the finding:
+  **(a) the guard did its job** — it failed CLOSED, where the pre-Session-23 behaviour was a
+  confident `Contradicted` naming the empty-string URN; **(b) the DIAGNOSIS is wrong** — it
+  says *malformed catalog response*, the response is fine and the QUERY is incomplete, and
+  Attest cannot tell the difference; **(c) `seed/generate_seed.py` emits owners through
+  `make_user_urn` EXCLUSIVELY**, so every seeded dataset, every captured fixture, the whole
+  offline tier, the live tier and the 12-cell matrix contain corpuser owners and nothing else.
+  Everything is green and the gap is invisible from inside. **This is Session 5's rule one
+  level up: a fake cannot fail the way the real thing fails — and a SEED cannot exercise a
+  shape it never emits.**
+- **DOCUMENTED, NOT FIXED, deliberately.** Changing the catalog read days from submission,
+  with no fixture anywhere exercising group ownership, would rest the fix's correctness on the
+  same seed that hid the problem. A gap our own instrument found and named is worth more than
+  a quiet patch. Whoever fixes it must add a group-owned seed dataset FIRST.
+
+- **THE CATALOG: DataHub's own `showcase-ecommerce` datapack**, 67 datasets over 7 platforms,
+  checksum-pinned. Three deliberate departures from `datahub docker ingest-sample-data`, each
+  with a reason: **truststore injected** (its registry fetch goes over `requests`/certifi and
+  the bundled fallback `registry.json` is NOT in the wheel — the **fourth** runtime in this
+  repo to need the OS trust store, and CLAUDE.md's rule held: reach for the flag before
+  debugging an "outage"); **original timestamps PRESERVED** (`--pack` sets
+  `no_time_shift: false`, which would make every freshness verdict an artifact of the ingest
+  clock and the receipt unreproducible by construction); and **Cloud-only aspects filtered by
+  the SERVER's own registry** (`get_entity_aspect_specs`, the same call `datahub datapack
+  load` makes) — **measured: 3571/3819 MCPs accepted, 248 refused**, none of them an aspect
+  Attest reads. The `dataQualityCheck` landmine was CHECKED FOR before ingesting and does not
+  fire on this pack (0 occurrences); it is about the older showcase datapacks.
+
+- **THE VOCABULARY IS A NEAR-MISS ON ALL THREE PII SIGNALS, which is the on-thesis result.**
+  No `urn:li:tag:PII` anywhere. A glossary term named literally **`PII`** on 51 of 52 readable
+  datasets — filed under a node named **`Classification`**, not under `urn:li:glossaryNode:PII`.
+  `contains_pii` where policy.py names `hasPII` (and set `"False"`, which fires nothing anyway).
+  **No `Verified` marker anywhere**, so closed-world reasoning is never licensed and *"contains
+  no PII"* can never be Supported on this catalog. And `Email_Address` / `Phone_Number` exist as
+  terms whose own descriptions read *"Subject to PII handling requirements"* — **with no parent
+  node at all**. So `cust_email` returns **Insufficient-Coverage** where a human says PII. That
+  is the deferred item *Semantic glossary-term matching* occurring in the wild; the declared
+  position is unchanged, but the price is now measured rather than hypothetical.
+- **The GENERIC label path is portable; only the PII POLICY is vocabulary-bound.** A
+  classification claim naming a foreign term URN outright is decided by set membership and
+  comes back Supported. Worth stating, because "Attest could not read this catalog" would be
+  false.
+
+- **`ext-class-01` WAS RIGHT BY LUCK, and the receipt says so rather than banking it.** The
+  decomposer turned *"the cust_email column of X is labelled <term urn>"* into a **schema**
+  claim (`columns: [{name: cust_email, native_type: null}]`), dropping the term URN entirely;
+  the schema checker answered *"does this column exist?"*, said **Supported**, and that is the
+  verdict the trial expected. A naive counter banks it. So the runner compares extracted claim
+  TYPE against intended family and reports **`answered_the_intended_question: 14/15`** and
+  **`right_by_luck: ["ext-class-01"]`** as figures SEPARATE from the verdict match, never
+  netted against it — benchmark/README.md's own rule firing on the first foreign catalog it
+  met. **The honest headline is 15/15 verdicts matching, of which 14 answered the question
+  asked.**
+
+- **THE WRITE-BACK FAILED, AND THE REPAIR PATH IS WHAT FIXED IT — the §10 eventual-consistency
+  landmine at a scale the seed never produces.** All three publishes failed at `report`
+  (*"Assertion ... does not exist or is not associated with any entity"*) while
+  `get_assertion` returned the artifact in full and `dataset.assertions()` returned `total: 0`.
+  Seeding writes ~90 entities; this ingest wrote **3563**, and the assertion→dataset index took
+  far longer than `writeback.py`'s 30s retry. A repair at ~2 minutes failed identically; **the
+  same repair, unchanged, succeeded at ~12 minutes.** Nothing was faked: the approval stood,
+  the store recorded that the catalog did not know it, and `service.retry_writeback` re-ran the
+  idempotent write onto the same content-addressed artifact. The runner now waits it out
+  through that same path and **gives up loudly rather than hanging**. This is the failure a
+  bulk-loaded production catalog shows and a seeded one never will.
+
+- **PREDICTIONS WERE RECORDED IN THE RUNNER BEFORE THE RUN, and two of them were WRONG.** Held:
+  `ext-fresh-03`'s evidence says the aspect is ABSENT when GMS returned a present `lastModified`
+  holding `{time: 0}` (right verdict, imprecise description — absent-vs-empty one notch finer
+  than snapshot.py preserves); and `contains_pii` moved nothing. **Failed, both in Attest's
+  favour:** no URN was garbled (**15/15 verbatim**, including hex-UUID Tableau URNs), and there
+  were **0 template fallbacks** (14 model-authored; the polarity guard rejected 4 first drafts
+  and every one passed on retry). Reporting the misses is the point of writing them down first.
+
+- **A 16th CLAIM WAS DRAFTED, TRACED, AND THROWN AWAY**, and it is in the write-up because
+  dropping it is the methodology being honest about itself: *"S3 `customers.customer_id` is
+  `NUMBER(38,0)`"*, predicted **Contradicted** (S3 records `int64`), refuted by reading
+  `_type_matches` before writing the label — the matcher accepts either DataHub vocabulary and
+  strips precision, so it base-matches the abstract type `NUMBER` and is **Supported**. A trial
+  whose labels are written after seeing the output measures nothing.
+
+- **PUBLISHED, and read back by a reader with NO STORE.** Three verdicts — one per verdict type,
+  including the Insufficient-Coverage — through the real `service.approve` path (nothing calls
+  `write_claim_artifact` directly), then read back with `ClaimReader(client, store=None)`: all
+  `state: complete`, with verdict, reviewer, structured evidence and `snapshot_id`. Two
+  freshness claims about the SAME dataset with OPPOSITE verdicts coexist as distinct artifacts —
+  §10's thesis holding on a catalog it was not designed against. **`history_length` is 3 because
+  the trial ran three times against one catalog**: content-addressed URNs meant every run
+  appended to the SAME artifact rather than minting a new one, which is the append-only history
+  demonstrated by accident.
+
+- **MEASURED:** 15 claims, **$0.00774**, 117s, `gpt-4o-mini`, Core v1.5.0.6. Verdicts:
+  5 Contradicted, 4 Supported, 5 Insufficient-Coverage, 1 ClaimError. A **TEMPORARY** store, so
+  `attest.db` is untouched. Two claims reached `STOOD_FIRM` with nothing arranged for it.
+- **WHAT IT DOES NOT PROVE, and the write-up leads with it:** one small curated demo catalog is
+  not "works in production"; `showcase-ecommerce` is FOREIGN, which is the property being
+  tested, but it is not MESSY and not hostile; 15 claims are a sample of nothing; **the claims
+  were written by the same person who wrote the checkers**, so the trial moves the CATALOG
+  outside our control and not the claims; and it validates no policy — if "a term filed under no
+  node implies nothing" is the wrong rule, `ext-class-02` is wrong and the receipt records it as
+  correct-by-policy.
+- **`just discover` FAILS while this catalog is loaded** — its live test asserts a seeded URN is
+  in the top 10 hits for `custo` and then resolves every hit over GraphQL, which now includes
+  group-owned dbt datasets that raise. Expected, named in both docs, cleared by `just reset`.
+
 ## Known deferred items — document, don't fix
 
 | Item | Today | Why deferred |
 | --- | --- | --- |
-| **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. |
+| **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. **MEASURED IN THE WILD (§23):** an external catalog files `Email_Address` under no node at all, with a description reading "Subject to PII handling requirements", and `cust_email` therefore returns Insufficient-Coverage where a human says PII. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. The external trial measures the price of that position; it does not change it. |
+| **`CorpGroup` owners cannot be read at all** (§23) | `client.DATASET_QUERY` has only a `... on CorpUser` arm, so a group-owned dataset returns `{"owner": {}}`, `_urns` raises, and every claim about it is a `ClaimError`. **Measured: 15 of 67 datasets in an external catalog, unauditable.** Fails CLOSED (correct) with a wrong diagnosis — it blames the response, and the response is fine. | Found by the external trial days from submission, with **no fixture anywhere that exercises group ownership** — `generate_seed.py` emits `make_user_urn` owners exclusively, which is exactly why nothing caught it. Fixing the read on the strength of the same seed that hid the problem is the wrong trade. **Whoever fixes it must add a group-owned seed dataset FIRST**, then the `... on CorpGroup` arm, then re-capture the fixtures. |
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
 | **A step's `inputs` / `outputs` across a restart** | Not persisted, so a *replayed* step carries them empty. **The boundary is ASSERTED, not just documented:** `test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs` strips the summaries out of a real run's trace and demands the record, the receipts, the summary and the trajectory verdict are all unmoved. | They are a log convenience, and nothing a reader sees may read them. If something ever does, a resumed run starts reporting something an unrestarted one does not — silently, only after a restart, with every other test green, because every other test runs in one process and never replays. That is the TLS bug's shape exactly, which is why this one is nailed down rather than trusted. The test is non-vacuous by construction: it first asserts a step summary is **truthy** (`cached: True`, which is why the fixture uses two claims over one dataset — a one-claim run leaves every summary falsy) and only then strips the summaries and demands the record, receipts, printable summary and trajectory verdict are all unmoved, so if a receipt or a trajectory rule began reading `step.outputs` the equality checks would go red. |
