@@ -29,6 +29,10 @@ datapacks/
 # committed — its build output is not.
 frontend/node_modules/
 frontend/dist/
+# The replay build's intermediate output. `just replay-build` stages it into docs/replay/,
+# which IS committed — GitHub Pages serves main//docs and has no build step, so the only way
+# a static page reaches a judge is if its built bytes are in the repo.
+frontend/dist-replay/
 
 # Generated seed output — rebuild with: python seed/generate_seed.py
 # The generator is the source of truth, not its output. Both files carry

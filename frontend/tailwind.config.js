@@ -1,6 +1,21 @@
+// THE REPLAY DIRECTORY IS OUT OF THE PRODUCTION CONTENT SCAN, and finding that out is the
+// reason this comment exists. Tailwind generates utilities from whatever its `content` glob
+// matches, so simply ADDING `src/replay/ReplayBanner.tsx` to the tree compiled that banner's
+// classes into the shipped `index-*.css` — a real change to the production bundle, made by a
+// file no production module imports. Caught by hashing dist/ before and after; it would never
+// have shown up in any test, and the bundle the submission was verified against would have
+// quietly moved underneath it.
+//
+// PostCSS does not know Vite's mode, so the switch is an env var the replay build sets
+// (`just replay-build`). Same seam as vite.config.ts's alias, spelled the way this tool
+// allows.
+const replay = process.env.ATTEST_REPLAY === '1';
+
 /** @type {import('tailwindcss').Config} */
 export default {
-  content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
+  content: replay
+    ? ['./index.replay.html', './src/**/*.{js,ts,jsx,tsx}']
+    : ['./index.html', './src/**/*.{js,ts,jsx,tsx}', '!./src/replay/**'],
   theme: {
     extend: {
       colors: {

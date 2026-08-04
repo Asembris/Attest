@@ -13,6 +13,10 @@
     "moduleDetection": "force",
     "noEmit": true,
     "jsx": "react-jsx",
+    /* The replay build imports its committed fixtures as modules (src/replay/*.json). Vite
+       already bundles JSON; this only lets `npm run typecheck` see them. Type-checking only —
+       esbuild ignores it, so the production bundle is byte-for-byte unaffected (verified). */
+    "resolveJsonModule": true,
 
     /* Linting */
     "strict": true,
