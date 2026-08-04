@@ -26,7 +26,9 @@ by, and the replay banner shows it; captured from a tree that does not match tha
 SHA names code that did not produce these fixtures. The hashes would still prove the fixture
 bytes are unedited and the provenance beside them would still be approximate — a hole in the
 one claim the artifact exists to make. `--allow-dirty` is the local-experiment escape hatch
-and launders nothing: the flag stays true and the banner renders it as a warning. See
+and launders nothing: the flag stays true and the banner renders it as a warning. What is
+checked is the CODE — everything but this script's own output directory, which it is about to
+overwrite and which a `--resume` necessarily finds dirty (see `_dirty_paths`). See
 `_provenance`, which also explains why the flag used to be true on every capture ever taken.
 
 THE PROCESS BOUNDARY IS HERE, not in the capture logic. This launches the SHIPPED uvicorn
@@ -260,15 +262,38 @@ def _git(*args: str) -> str:
 
 
 def _dirty_paths() -> list[str]:
-    """Every path git reports as modified, staged or untracked, with its status code intact.
+    """Every path git reports as dirty, EXCEPT this script's own output directory.
+
+    THE EXCLUSION IS THE BOUNDARY BETWEEN THE CODE AND THE RECORDING, and it is load-bearing
+    rather than a convenience. What the manifest claims is that `capturing_commit` names the
+    code that produced these fixtures, so what has to be clean is the CODE. The five files in
+    `OUT` are what this script WRITES; their state before it runs is not a fact about the
+    provenance of anything.
+
+    Without the exclusion `--resume` is impossible from ANY tree, which was found the first
+    time a capture actually failed. A crashed capture leaves its own partially-written
+    fixtures behind, so the tree is dirty with exactly the output the resume exists to finish
+    — and that is precisely the moment it matters, because the crashed attempt has already
+    spent three permanent verdict events on a real catalog. The escape hatch would have been
+    `--allow-dirty`, which sets the flag and defeats the entire point: a guard whose only
+    survivable path is the one that launders what it was built to catch.
 
     NOT via `_git`, which strips — and strip eats the leading space of porcelain's two-column
     status code, so the first entry rendered as `M file` (staged) while identical unstaged
     entries below it rendered ` M file`. A refusal that misreports the state of the first path
     it names is a diagnostic arguing with itself.
+
+    NAMED HONESTLY: this does not prove the carried-forward fixtures are unedited. The
+    manifest's hashes prove they are unedited SINCE capture, and nothing here proves a
+    hand-edit made BEFORE a resume — which was equally true before this guard existed. The
+    claim is about the code, and it is the only one this check is in a position to make.
     """
     out = subprocess.run(
-        ["git", "status", "--porcelain"], cwd=REPO, capture_output=True, text=True, check=True
+        ["git", "status", "--porcelain", "--", f":(exclude){OUT.relative_to(REPO).as_posix()}"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return [line for line in out.splitlines() if line.strip()]
 
