@@ -44,8 +44,11 @@ header.hero{padding:96px 0 88px}
 .btns{display:flex;flex-wrap:wrap;gap:14px;margin-top:36px}
 .btn{display:inline-block;font-family:var(--mono);font-size:14px;letter-spacing:.08em;padding:13px 26px;border:1px solid var(--text);color:var(--text)}
 .btn:hover{background:var(--text);color:var(--base);text-decoration:none}
+.btn.primary{background:var(--text);color:var(--base)}
+.btn.primary:hover{background:none;color:var(--text)}
 .btn.ghost{border-color:var(--line);color:var(--muted)}
 .btn.ghost:hover{border-color:var(--muted);background:none;color:var(--text)}
+.btn-note{margin-top:18px;font-size:14.5px;max-width:58ch}
 /* failure */
 .fail-grid{display:grid;grid-template-columns:1fr 1fr;gap:32px;margin-top:40px}
 .fail{border:1px solid var(--line);padding:28px}
@@ -128,10 +131,11 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
   <h1 class="tagline">Verify what your AI claims about your data.</h1>
   <p>An auditor for AI agents that make claims about data. Verdicts are decided in deterministic code — zero decided by a model — published by a human, and written back into DataHub as durable assertions.</p>
   <div class="btns">
+    <a class="btn primary" href="./replay/">Explore the recorded audit</a>
     <a class="btn" href="#demo">Watch the demo</a>
-    <a class="btn" href="./replay/">Explore the recorded audit</a>
     <a class="btn ghost" href="https://github.com/Asembris/Attest">View the code</a>
   </div>
+  <p class="muted btn-note">The replay is the real interface, driven by one real audit captured off the wire — nothing to install, nothing live. It refuses any question it has no recorded answer for rather than inventing one.</p>
 </header>
 
 <section id="failure">
@@ -222,11 +226,11 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
       </div>
       <div class="stat">
         <div class="v"><span class="num" data-final="16">16</span>/16</div>
-        <div class="l">seeded datasets where MCP transport parity fails</div>
+        <div class="l">seeded datasets where the MCP read diverges from the GraphQL one — measured, then written up</div>
       </div>
       <div class="stat">
         <div class="v">2</div>
-        <div class="l">issues filed upstream</div>
+        <div class="l">issues filed upstream, one with a fix proposed</div>
       </div>
     </div>
   </div>
@@ -268,20 +272,46 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
 <section id="mcp">
   <div class="wrap reveal">
     <p class="eyebrow">06 · Engaging with the MCP server</p>
-    <h2>We measured the named path.</h2>
-    <p>Rather than skip the hackathon’s named integration, we built an adapter to the DataHub MCP Server and measured it. The server runs — compatibility isn’t the finding. Parity against the GraphQL read path fails on 16 of 16 seeded datasets, and four of five true claims change verdict.</p>
-    <p>A transport that is lossy for a language model is <em>inverting</em> for a checker. Attest’s live read path is GraphQL; the MCP adapter ships as a measured, documented alternative.</p>
+    <h2>MCP discovers. A human resolves. GraphQL verifies. Deterministic code decides.</h2>
+    <p>The DataHub MCP Server is <em>in</em> the product. It backs Attest’s URN picker, so a human finds a dataset by typing part of its name against the live catalog instead of pasting a 90-character URN — replacing a static list generated from our own seed, which describes one catalog and is useless against any other. <span class="k">just discover</span> runs it against yours and exits zero.</p>
+    <p>Nothing it returns is evidence, and that boundary is asserted rather than described. The only value discovery passes on is the entity URN, which must still appear <em>verbatim</em> in the agent’s own text before any claim can be made about it. So a wrong pick produces claims about an explicitly wrong URN — visible in the report and in the published artifact — never a resolution error laundered into catalog disagreement. No checker, snapshot, cache or pipeline node can import that module; the import graph is walked and asserted.</p>
+    <p>It does not back the <em>verdict</em> read, and that is a conclusion the measurement forced rather than a preference we started with. Attest’s catalog read already had the one-method seam an adapter would implement, so we built to it and ran the real server against all 16 seeded datasets. The server runs — compatibility is the failure everyone expects here and is not what happened; every call answered, for every dataset, without error. Field parity against the reference read diverges on <strong>16 of 16 datasets</strong> (130 mismatches), and <strong>four of five true claims change verdict</strong> — including <span class="k">customer_profile.email is PII</span> reading back Contradicted.</p>
+    <p>Its read tools are built to feed a language model, and each optimisation for that job removes something a deterministic checker needs. That makes this a finding about <em>structured consumers</em>, not a defect for the server’s intended use, where the compaction is a feature: a transport that is lossy for a language model is <em>inverting</em> for a checker, because the checker’s precision is exactly what makes it unable to shrug. Three of the four mechanisms behind it are fixable upstream, so we wrote them up with reproductions.</p>
     <div class="issues">
       <a class="issue" href="https://github.com/acryldata/mcp-server-datahub/issues/168">Issue #168 — filed upstream</a>
       <a class="issue" href="https://github.com/acryldata/mcp-server-datahub/issues/169">Issue #169 — filed upstream</a>
       <a class="issue" href="https://github.com/acryldata/mcp-server-datahub/pull/182">PR #182 — opened upstream, open</a>
     </div>
+    <p class="muted" style="margin-top:26px;font-size:15px"><span class="k">just spike-mcp</span> exits non-zero by design: the day it goes green, the finding has expired and the decision is worth reopening. Full write-up and per-dataset diffs: <a href="https://github.com/Asembris/Attest/blob/main/docs/mcp-evaluation.md">docs/mcp-evaluation.md</a>.</p>
+  </div>
+</section>
+
+<section id="external">
+  <div class="wrap reveal">
+    <p class="eyebrow">07 · Outside our own catalog</p>
+    <h2>We ran it somewhere we did not control.</h2>
+    <p>Every number above was measured against a catalog we wrote, with labels applying a policy we wrote. The benchmark says that about itself, and it is the honest weak point. So Attest was also run against <strong>DataHub’s own <span class="k">showcase-ecommerce</span> datapack</strong> — 67 datasets over 7 platforms, metadata nobody here wrote a line of. Fifteen claims, $0.0077, 117 seconds.</p>
+    <p>Nothing in it is scored: no accuracy, no macro-F1, no confusion matrix. The golden benchmark is a conformance gate where 100% is the expected result, and importing that apparatus onto fifteen unlabelled claims on a foreign catalog would measure nothing. The question was narrower — does Attest produce defensible verdicts against metadata it did not design, and where does it hit its own limits? It found one before a single audit ran.</p>
+    <div class="fail-grid">
+      <div class="fail">
+        <h3>15 OF 67 DATASETS UNAUDITABLE</h3>
+        <p class="claim">A gap our own seed could never expose.</p>
+        <p>Attest’s GraphQL query has no <span class="k">CorpGroup</span> arm, so a group-owned dataset arrives with an empty owner object and every claim about it is refused. The guard failed <em>closed</em>, which is correct. Its diagnosis — <em>malformed catalog response</em> — is wrong: the response is fine, the query is incomplete, and Attest cannot tell the difference. No test here could have caught it. The seed emits <span class="k">corpuser</span> owners exclusively, so the offline tier, the live tier and the 12-cell matrix are all green and the gap is invisible from inside. Documented, not fixed: a fix resting on the same seed that hid it is not a fix.</p>
+      </div>
+      <div class="fail">
+        <h3>ONE CLAIM WAS RIGHT BY LUCK</h3>
+        <p class="claim">Counted correct, and named.</p>
+        <p>A sentence about a column’s glossary label came back from the decomposer as a <em>schema</em> claim, dropping the term URN entirely. The schema checker then answered a question nobody asked — <em>does this column exist?</em> — and returned the verdict the trial expected. So the receipt carries two figures and never nets them: <strong>15/15 outcomes matched what was predeclared</strong>, fourteen assessments and one expected <span class="k">ClaimError</span>, which is not a verdict — and <strong>14 of the 15 answered the question actually asked</strong>. Banking the other one would flatter a broken decomposer.</p>
+      </div>
+    </div>
+    <p style="margin-top:36px">The catalog is a near-miss on all three PII signals Attest recognises: a glossary term named literally <span class="k">PII</span>, filed under a node called <span class="k">Classification</span>; <span class="k">contains_pii</span> where the policy names <span class="k">hasPII</span>; and no completeness marker anywhere. So a column named <span class="k">cust_email</span>, carrying a term whose own description reads “Subject to PII handling requirements”, comes back Insufficient-Coverage where a person would say PII. That is a declared position — structure is a declaration, a name is a guess — meeting a real catalog. The trial does not resolve it. It shows the price, with a receipt.</p>
+    <p class="muted">One small curated datapack is not “works in production”, fifteen claims are not a sample of anything, and the claims were still written by the same person who wrote the checkers — the trial moves the catalog outside our control, not the claims. <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial.md">The write-up</a>, and <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial/results.json">the receipt every figure opens in</a>.</p>
   </div>
 </section>
 
 <section id="try">
   <div class="wrap reveal">
-    <p class="eyebrow">07 · Try it</p>
+    <p class="eyebrow">08 · Try it</p>
     <h2>Runs on your machine, by design.</h2>
     <div class="code">
       <button class="copy" type="button" data-copy>COPY</button>
@@ -289,7 +319,7 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
 just up &amp;&amp; just seed          <span class="cmt"># DataHub Core v1.5.0.6, vendored pinned compose</span>
 just demo                     <span class="cmt"># UI and API on :8003</span></code></pre>
     </div>
-    <p class="muted" style="margin-top:18px;font-size:15px">Needs ~8&nbsp;GB free; the first bring-up pulls ~12.6&nbsp;GB and takes about 4.5 minutes. Local by design — a per-machine catalog is what gives every reader a clean story.</p>
+    <p class="muted" style="margin-top:18px;font-size:15px">Needs ~8&nbsp;GB free. The first bring-up pulls ~12.6&nbsp;GB of images, which is network-dependent; a cold boot to a healthy GMS after that is ~4.5 minutes. Local by design — a per-machine catalog is what gives every reader a clean story.</p>
   </div>
 </section>
 
