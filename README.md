@@ -297,9 +297,9 @@ removes something a deterministic checker needs. A dataset's `lastModified` is r
 Field tags are flattened to display names (`urn:li:tag:PII` → `"PII"`), so a column's glossary term
 can no longer reach the hierarchy that makes it a signal at all.
 
-**Measured on `mcp-server-datahub` 0.6.0 against the pinned Core: parity fails on 16/16 seeded
-datasets (130 field mismatches), and four of five true claims change verdict — including
-`customer_profile.email is PII` reading back Contradicted.** That last one is a *correctness*
+**Measured on `mcp-server-datahub` 0.6.0 (pinned, like the Core it runs against): parity fails
+on 16/16 seeded datasets (130 field mismatches), and four of five true claims change verdict —
+including `customer_profile.email is PII` reading back Contradicted.** That last one is a *correctness*
 failure, the worst thing this product can do, and it is Attest's own thesis biting Attest: the tag
 arrives unrecognisable, the column reads unlabelled, the table is `Verified`, and our own hard-won
 completeness rule turns the loss into a **denial**. A transport that is lossy for an LLM is not
@@ -442,7 +442,8 @@ definitive catalog wipe.
 `just spike-mcp` re-runs the **MCP Server evaluation** against your own catalog — the adapter,
 all 16 seeded datasets, the field-parity diff, and the same gap expressed as verdicts. It
 **exits non-zero by design** (needs `pip install -e '.[mcp]'` and `uvx`), because a green run would
-mean the finding had expired.
+mean the finding had expired. The server version it launches is **pinned**, so a green run means
+exactly that and never "a newer server got resolved".
 
 Version pin and environment landmines:
 [docs/datahub-setup.md](docs/datahub-setup.md); deployment shape, reset design and measured numbers:

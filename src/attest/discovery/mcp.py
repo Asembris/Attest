@@ -9,7 +9,8 @@ transport.
 The tool, read off the server rather than assumed
 --------------------------------------------------------------------------------
 
-`mcp-server-datahub` 0.6.0 against Core v1.5.0.6 registers six read tools, and the one used
+`mcp-server-datahub` 0.6.0 — the version `settings.mcp_command` PINS, for the reasons stated
+there — against Core v1.5.0.6 registers six read tools, and the one used
 here is `search` (`mcp_server.register_search_tools`; `enhanced_search` takes the same name
 only when `SEMANTIC_SEARCH_ENABLED` is set, which is Cloud-only). Its declared input schema,
 measured live, is `query` / `filter` / `num_results` / `sort_by` / `sort_order` / `offset`,

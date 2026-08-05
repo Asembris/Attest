@@ -99,9 +99,24 @@ class Settings(BaseSettings):
     # this network's trap one runtime further out than truststore and NODE_USE_SYSTEM_CA.
     # Overridable so a deployment can point at an already-installed server instead of paying
     # uvx's resolve; parsed with shlex, so it is one env var rather than an argv encoding.
+    #
+    # THE VERSION IS PINNED (`==0.6.0`), and it is the same argument as the Core pin and the
+    # `langgraph-checkpoint-sqlite` pin: **every claim Attest makes about this server is
+    # version-bounded.** The parity finding is 130 mismatches on 0.6.0 (docs/mcp-evaluation.md),
+    # `just spike-mcp` exits non-zero BY DESIGN and is the tripwire that says the day that
+    # finding expires, and PR #182 proposes a fix to this very codebase. Unpinned, `uvx`
+    # resolves whatever is newest at first use — so a judge running the demo next week could
+    # get a server none of those receipts describe, and if our own upstream fix lands, the
+    # tripwire and `just discover` start behaving differently than documented, SILENTLY. A
+    # tripwire wired to a moving target is a green light wired to nothing.
+    #
+    # Pinning is a FREEZE, not a downgrade: 0.6.0 is the current latest on PyPI (checked
+    # 2026-08-05), so this changes nothing today and holds it that way. Bump it deliberately,
+    # with `just spike-mcp` and `just discover` re-run and the measured figures re-taken, or
+    # not at all.
     mcp_command: str = Field(
         default=(
-            "uvx --native-tls --from mcp-server-datahub mcp-server-datahub "
+            "uvx --native-tls --from mcp-server-datahub==0.6.0 mcp-server-datahub "
             "--transport stdio"
         ),
         alias="ATTEST_MCP_COMMAND",

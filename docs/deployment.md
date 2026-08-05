@@ -141,7 +141,7 @@ catalog read that decides verdicts stays on GraphQL for the reasons
 | Var | Default | What it is |
 | --- | --- | --- |
 | `ATTEST_DISCOVERY_ENABLED` | `true` | set `false` to switch the picker's search off entirely |
-| `ATTEST_MCP_COMMAND` | `uvx --native-tls --from mcp-server-datahub mcp-server-datahub --transport stdio` | how the server is launched |
+| `ATTEST_MCP_COMMAND` | `uvx --native-tls --from mcp-server-datahub==0.6.0 mcp-server-datahub --transport stdio` | how the server is launched — **version-pinned**, see below |
 | `ATTEST_MCP_STARTUP_TIMEOUT` | `30` | seconds to wait for spawn + `initialize` (measured: 3.3 s warm) |
 | `ATTEST_MCP_CALL_TIMEOUT` | `10` | seconds to wait for one search (measured: 0.13–0.34 s) |
 
@@ -161,6 +161,51 @@ picker never runs an MCP server at all. `GET /health` reports discovery's last-k
 network. On a TLS-inspecting network that download fails until `--native-tls` is passed, which
 the default command already does (the same system-CA opt-in as Python's `truststore` and Node's
 `NODE_USE_SYSTEM_CA`).
+
+### The server version is pinned, and why
+
+`--from mcp-server-datahub==0.6.0`, not a bare `--from mcp-server-datahub`. **Every claim
+Attest makes about this server is version-bounded**: the parity finding is 130 mismatches
+measured on 0.6.0, `just spike-mcp` exits non-zero *by design* as the tripwire that will say
+the day that finding expires, and [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182)
+proposes a fix to this same codebase. Unpinned, `uvx` resolves whatever is newest at first
+use — so a judge running the demo could get a server none of the receipts describe, and if the
+upstream fix lands, `just spike-mcp` and `just discover` start behaving differently than
+documented, **silently**. A tripwire pointed at a moving target is a green light wired to
+nothing, which is the same argument that pins DataHub Core (see
+[datahub-setup.md](datahub-setup.md)) and `langgraph-checkpoint-sqlite`.
+
+It is a **freeze, not a downgrade**: 0.6.0 was the latest release on PyPI when this was
+pinned (checked 2026-08-05), so it changes nothing today and holds it that way. Measured, it
+costs no cold-start penalty — the pinned and unpinned launches are indistinguishable inside
+run-to-run variance, because `uvx` caches the resolved environment either way (spawn +
+`initialize` + first search: 3.35–6.12 s over three cold sessions; warm searches 63–89 ms).
+
+**What the pin does NOT bound, stated plainly:** it fixes the top-level package, not its
+dependency closure. `uvx` still resolves that fresh — measured today, `mcp-server-datahub
+0.6.0` pulls `acryl-datahub 1.7.0`, `fastmcp 3.4.5`, `mcp 1.29.0`. So the server's *own* code
+is frozen and the libraries under it are not. Pinning the closure would need a lockfile for a
+tool `uvx` fetches at run time, which is more than this build ships; naming the limit is the
+honest alternative to implying a guarantee the pin does not give.
+
+**`GET /health` still reports the version the running server announced at `initialize`, not
+the pin**, and that is deliberate — there are *three* version spaces here and only one of them
+is the pin:
+
+| What | Value today | Where it comes from |
+| --- | --- | --- |
+| the pin | `mcp-server-datahub==0.6.0` | `ATTEST_MCP_COMMAND` — the PyPI package |
+| what `/health` shows | `datahub v3.4.5` | the `initialize` handshake — the **fastmcp framework** version, under the name the server registers itself as |
+| the catalog | Core `v1.5.0.6` | DataHub itself |
+
+That middle row is the whole argument. Session 17 recorded `datahub v3.4.4` from the *same*
+server package: the number moved because **fastmcp** moved, not because the server did. So
+substituting the pin into the health string would put a package version where a framework
+version goes, and a reader comparing the two would conclude the pin was not in force. More
+decisively still, `ATTEST_MCP_COMMAND` is overridable — a deployment pointing at an
+already-installed server would have `/health` reciting a pin that is genuinely not in force,
+which is a field that *lies*. The live value is the measurement; the pin is a launch fact, and
+it lives in the config where it is actually true.
 
 ### The child process does not outlive a hard-killed Attest — MEASURED
 
