@@ -93,6 +93,23 @@ dialog.lightbox::backdrop{background:rgba(10,11,13,.8)}
 .issues{display:flex;gap:14px;flex-wrap:wrap;margin-top:24px}
 .issue{font-family:var(--mono);font-size:13.5px;border:1px solid var(--line);padding:10px 18px;color:var(--accent)}
 .issue:hover{border-color:var(--accent);text-decoration:none}
+/* the four stages, as real markup: boxes plus inline-SVG connectors, no JS, no palette.
+   The verdict colours mean three specific things in this product; this is accent + hairline. */
+.flow{display:grid;grid-template-columns:1fr auto 1fr auto 1fr auto 1fr;margin:34px 0 34px}
+.fl{border:1px solid var(--line);padding:20px 18px}
+.fl-k{font-family:var(--mono);font-size:13px;letter-spacing:.12em;color:var(--accent)}
+.fl-r{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-top:7px}
+.fl p{font-size:13.5px;line-height:1.55;color:rgba(245,246,247,.78);margin:13px 0 0;max-width:none}
+.fl-x{display:flex;align-items:center;justify-content:center;padding:0 12px;color:var(--muted);opacity:.5}
+.fl-x svg{width:22px;height:12px;display:block}
+/* external trial */
+/* separators, not cell borders: a wrapped row of cells leaves hanging borders and a
+   ragged right edge at 390px, where this wraps to three rows. */
+.strip{display:flex;flex-wrap:wrap;align-items:center;gap:7px 15px;width:max-content;max-width:100%;border:1px solid var(--line);padding:13px 21px;margin:32px 0 30px;font-family:var(--mono);font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.strip b{color:var(--text);font-weight:400}
+.strip .sep{opacity:.45}
+.caveat{border-left:2px solid var(--line);padding:2px 0 2px 22px;margin-top:36px}
+.caveat .ck{font-family:var(--mono);font-size:11.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
 /* try it */
 .code{position:relative;border:1px solid var(--line);background:#0F1116;margin-top:36px;padding:26px 28px;overflow-x:auto}
 .code pre{margin:0;font-family:var(--mono);font-size:14.5px;line-height:1.9;color:var(--text)}
@@ -107,6 +124,11 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
 @media (prefers-reduced-motion:no-preference){
   html.js .reveal{opacity:0;transform:translateY(16px);transition:opacity .5s ease-out,transform .5s ease-out}
   html.js .reveal.in{opacity:1;transform:none}
+}
+@media (max-width:900px){
+  .flow{grid-template-columns:1fr}
+  .fl-x{padding:12px 0}
+  .fl-x svg{transform:rotate(90deg)}
 }
 @media (max-width:820px){
   section{padding:64px 0}
@@ -273,6 +295,31 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
   <div class="wrap reveal">
     <p class="eyebrow">06 · Engaging with the MCP server</p>
     <h2>MCP discovers. A human resolves. GraphQL verifies. Deterministic code decides.</h2>
+    <div class="flow">
+      <div class="fl">
+        <div class="fl-k">MCP</div>
+        <div class="fl-r">discovery · advisory</div>
+        <p>Searches the live catalog by name and offers candidate datasets.</p>
+      </div>
+      <div class="fl-x"><svg viewBox="0 0 22 12" fill="none" aria-hidden="true"><path d="M0 6H18" stroke="currentColor"/><path d="M14 2l4 4-4 4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="fl">
+        <div class="fl-k">A human</div>
+        <div class="fl-r">selects the URN</div>
+        <p>Picks one. It must then appear verbatim in the agent’s own text.</p>
+      </div>
+      <div class="fl-x"><svg viewBox="0 0 22 12" fill="none" aria-hidden="true"><path d="M0 6H18" stroke="currentColor"/><path d="M14 2l4 4-4 4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="fl">
+        <div class="fl-k">GraphQL</div>
+        <div class="fl-r">authoritative evidence</div>
+        <p>Reads the snapshot every claim about that dataset is decided against.</p>
+      </div>
+      <div class="fl-x"><svg viewBox="0 0 22 12" fill="none" aria-hidden="true"><path d="M0 6H18" stroke="currentColor"/><path d="M14 2l4 4-4 4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+      <div class="fl">
+        <div class="fl-k">Checkers</div>
+        <div class="fl-r">the verdict, in code</div>
+        <p>Date math, set membership, string comparison. No model decides.</p>
+      </div>
+    </div>
     <p>The DataHub MCP Server is <em>in</em> the product. It backs Attest’s URN picker, so a human finds a dataset by typing part of its name against the live catalog instead of pasting a 90-character URN — replacing a static list generated from our own seed, which describes one catalog and is useless against any other. <span class="k">just discover</span> runs it against yours and exits zero.</p>
     <p>Nothing it returns is evidence, and that boundary is asserted rather than described. The only value discovery passes on is the entity URN, which must still appear <em>verbatim</em> in the agent’s own text before any claim can be made about it. So a wrong pick produces claims about an explicitly wrong URN — visible in the report and in the published artifact — never a resolution error laundered into catalog disagreement. No checker, snapshot, cache or pipeline node can import that module; the import graph is walked and asserted.</p>
     <p>It does not back the <em>verdict</em> read, and that is a conclusion the measurement forced rather than a preference we started with. Attest’s catalog read already had the one-method seam an adapter would implement, so we built to it and ran the real server against all 16 seeded datasets. The server runs — compatibility is the failure everyone expects here and is not what happened; every call answered, for every dataset, without error. Field parity against the reference read diverges on <strong>16 of 16 datasets</strong> (130 mismatches), and <strong>four of five true claims change verdict</strong> — including <span class="k">customer_profile.email is PII</span> reading back Contradicted.</p>
@@ -290,6 +337,15 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
   <div class="wrap reveal">
     <p class="eyebrow">07 · Outside our own catalog</p>
     <h2>We ran it somewhere we did not control.</h2>
+    <div class="strip">
+      <span><b>67</b> datasets</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span><b>7</b> platforms</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span><b>15</b> claims</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span>metadata we didn’t author</span>
+    </div>
     <p>Every number above was measured against a catalog we wrote, with labels applying a policy we wrote. The benchmark says that about itself, and it is the honest weak point. So Attest was also run against <strong>DataHub’s own <span class="k">showcase-ecommerce</span> datapack</strong> — 67 datasets over 7 platforms, metadata nobody here wrote a line of. Fifteen claims, $0.0077, 117 seconds.</p>
     <p>Nothing in it is scored: no accuracy, no macro-F1, no confusion matrix. The golden benchmark is a conformance gate where 100% is the expected result, and importing that apparatus onto fifteen unlabelled claims on a foreign catalog would measure nothing. The question was narrower — does Attest produce defensible verdicts against metadata it did not design, and where does it hit its own limits? It found one before a single audit ran.</p>
     <div class="fail-grid">
@@ -305,7 +361,11 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
       </div>
     </div>
     <p style="margin-top:36px">The catalog is a near-miss on all three PII signals Attest recognises: a glossary term named literally <span class="k">PII</span>, filed under a node called <span class="k">Classification</span>; <span class="k">contains_pii</span> where the policy names <span class="k">hasPII</span>; and no completeness marker anywhere. So a column named <span class="k">cust_email</span>, carrying a term whose own description reads “Subject to PII handling requirements”, comes back Insufficient-Coverage where a person would say PII. That is a declared position — structure is a declaration, a name is a guess — meeting a real catalog. The trial does not resolve it. It shows the price, with a receipt.</p>
-    <p class="muted">One small curated datapack is not “works in production”, fifteen claims are not a sample of anything, and the claims were still written by the same person who wrote the checkers — the trial moves the catalog outside our control, not the claims. <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial.md">The write-up</a>, and <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial/results.json">the receipt every figure opens in</a>.</p>
+    <div class="caveat">
+      <p class="ck">What this does not prove</p>
+      <p class="muted">One small curated datapack is not “works in production”, fifteen claims are not a sample of anything, and the claims were still written by the same person who wrote the checkers — the trial moves the catalog outside our control, not the claims.</p>
+    </div>
+    <p class="muted" style="margin-top:26px;font-size:15px"><a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial.md">The write-up</a>, and <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial/results.json">the receipt every figure opens in</a>.</p>
   </div>
 </section>
 
