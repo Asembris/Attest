@@ -43,8 +43,8 @@ purely to be able to say MCP was touched. Three things make discovery a differen
      discovery consumes an identifier that arrives intact and nothing else.
   2. **It is not a second read of an audited entity.** Search runs on a human's keystroke,
      before any run exists, and never inside `Pipeline.run()`. The §2c consistency boundary
-     — one run, one frozen snapshot — is untouched, because discovery resolves no entity.
-     It proposes candidates.
+     — one run, one frozen read per entity — is untouched, because discovery resolves no
+     entity. It proposes candidates.
   3. **Nothing it returns is evidence.** No checker, no snapshot, no cache and no graph node
      can reach this package, and `tests/test_discovery_boundary.py` asserts that
      structurally, in the house style of `NO_LLM_IN_THE_VERDICT_PATH`.
@@ -180,6 +180,14 @@ class DiscoveryResult:
     # The MCP server that answered, as it identified itself at `initialize` (e.g.
     # "datahub v3.4.5"). Reported, never asserted on: it is provenance for a human, and the
     # tripwire that says which server produced a list if one ever looks wrong.
+    #
+    # NOT the pinned version, and do not "fix" it to agree with one. `settings.mcp_command`
+    # pins the PyPI package (`mcp-server-datahub==0.6.0`); this string is what the handshake
+    # announces, which is the **fastmcp framework** version under the name the server
+    # registers itself as. Measured: the same pinned 0.6.0 server reported `v3.4.4` in
+    # Session 17 and `v3.4.5` today, because fastmcp moved and the server did not. This is
+    # the live measurement; the pin is a launch fact and lives in the config, which is also
+    # the only place it stays true when someone overrides the command.
     server: str = ""
     advisory: bool = True
     note: str = field(default=ADVISORY_NOTE)

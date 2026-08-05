@@ -15,7 +15,7 @@ it are fixable upstream, and we wrote them up.
 | --- | --- |
 | **Status** | Decided, with evidence. A measured result, not a preference. |
 | **Spike** | [`spikes/mcp_reader_probe.py`](../spikes/mcp_reader_probe.py) — `just spike-mcp` |
-| **Measured against** | `mcp-server-datahub` **0.6.0**, DataHub Core **v1.5.0.6** (pinned), 16 seeded datasets |
+| **Measured against** | `mcp-server-datahub` **0.6.0** (pinned), DataHub Core **v1.5.0.6** (pinned), 16 seeded datasets |
 | **Contributed back** | Three write-ups with reproductions in [`docs/upstream/`](upstream/) — two filed upstream ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169), [#168](https://github.com/acryldata/mcp-server-datahub/issues/168)), the third deliberately kept as a draft. A fix for #168 is proposed at [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182), open |
 | **Tripwire** | `just spike-mcp` exits non-zero **by design**. If it ever goes green, the finding has expired and this decision is worth reopening. |
 | **What DOES use this server** | its `search` tool, for **catalog discovery** in the URN picker — a human picking a name, never a checker reading a fact. Added after this evaluation and bounded by it: [§9](#9-what-changed-after-this-evaluation-search-for-discovery). |
@@ -384,10 +384,15 @@ Naming the boundary is what makes the rest credible.
   that it is lossy for *structured* consumers. For an agent assembling context to reason
   over, the compaction is a feature, and the token budgets exist for a real reason.
 - **It is one server version against one DataHub version** — `mcp-server-datahub` 0.6.0
-  against Core v1.5.0.6. Both move. `just spike-mcp` is the tripwire: it exits **non-zero by
-  design**, so if it ever goes green the finding has expired and this decision is worth
-  reopening. That is the same discipline as `test_fixture_drift.py` — an assertion that only
-  ever passes is a green light wired to nothing.
+  against Core v1.5.0.6. Both move. **Both are therefore pinned**, in the probe's launch
+  arguments and in `ATTEST_MCP_COMMAND` (`--from mcp-server-datahub==0.6.0`): unpinned, `uvx`
+  resolves whatever is newest at first use, and the tripwire below would quietly start testing
+  a server this document does not describe — flipping either way for a reason nobody could
+  reconstruct. `just spike-mcp` is that tripwire: it exits **non-zero by design**, so if it
+  ever goes green the finding has expired and this decision is worth reopening. That is the
+  same discipline as `test_fixture_drift.py` — an assertion that only ever passes is a green
+  light wired to nothing — and the pin is what makes a green run *mean* something rather than
+  merely report a version bump.
 - **It tests the one read tool an adapter would use** — `get_entities`, on explicit URNs.
   Schema fields arrive embedded in that response, so `list_schema_fields` is never called —
   the schema-truncation caveat recorded above is read off the server's source, not measured
@@ -438,6 +443,12 @@ just discover            # the search path that IS shipped (§9); exits ZERO
 The probe prints the per-dataset diff, the mismatch summary, and the verdict table. It
 downloads the MCP server on first run and reads the same 16 seeded datasets the benchmark
 uses.
+
+Both the probe and the shipped discovery path launch the server **version-pinned** —
+`uvx --native-tls --from mcp-server-datahub==0.6.0 mcp-server-datahub --transport stdio` — so
+a reproduction runs against the version measured here rather than whatever is newest today.
+To test a newer server deliberately, override `ATTEST_MCP_COMMAND` (or edit the probe's
+`PARAMS`) and re-take the numbers.
 
 > **Note for this network:** `uvx` ships its own Rust root store and fails TLS interception
 > until told to use the OS trust store — hence `--native-tls` in the probe's server

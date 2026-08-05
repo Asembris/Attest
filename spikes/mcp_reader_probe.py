@@ -28,8 +28,14 @@ rather than discovered as an ImportError.
 THE RESULT: 130 mismatches over 16 datasets. Every dataset fails.
 --------------------------------------------------------------------------------
 
-Measured against mcp-server-datahub 0.6.0 (protocol server name `datahub` v3.4.4)
-against the pinned Core v1.5.0.6. The server RUNS against Core — it detects OSS
+Measured against mcp-server-datahub 0.6.0 — PINNED in PARAMS below — against the pinned
+Core v1.5.0.6. The handshake announces itself as `datahub v3.4.4`, and that number is NOT
+the server's: FastMCP fills in its OWN version when the server does not set one, so it
+tracks fastmcp, not mcp-server-datahub. (Verified: on the same pinned 0.6.0 the server
+object reports name `datahub`, version == `fastmcp.__version__`, which reads 3.4.5 today.)
+Do not read it as evidence about which server ran; the pin is that evidence.
+
+The server RUNS against Core — it detects OSS
 correctly (`is_oss=True`, `is_cloud=False`) and answers every call. The wall is not
 compatibility. It is that **the MCP server is built to feed a language model, and
 every transformation it makes for that purpose destroys something a deterministic
@@ -152,12 +158,19 @@ SEED = os.path.join(os.path.dirname(__file__), "..", "seed", "ground_truth.json"
 # corporate-CA trap, one runtime further out than the Python truststore injection and the
 # Node NODE_USE_SYSTEM_CA flag: uv ships its own Rust root store and does not consult the
 # OS one until told to. Same root cause, third runtime.
+#
+# PINNED to the version this file's report was measured against. The whole point of this
+# probe is that it exits non-zero BY DESIGN — a tripwire that goes green the day the finding
+# expires. An unpinned `--from` resolves whatever is newest at first use, so the tripwire
+# would silently start testing a server the report above does not describe, and could flip
+# either way for a reason nobody could reconstruct. Bump this deliberately, re-run, and
+# re-take the numbers; the pin is what makes "it went green" mean something.
 PARAMS = StdioServerParameters(
     command="uvx",
     args=[
         "--native-tls",
         "--from",
-        "mcp-server-datahub",
+        "mcp-server-datahub==0.6.0",
         "mcp-server-datahub",
         "--transport",
         "stdio",
