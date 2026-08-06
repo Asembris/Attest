@@ -42,6 +42,17 @@ const replayAliases = [
 // endpoint rather than a missing line of config, and the demo it is missing from works fine.
 export default defineConfig(({ mode }) => {
   const replay = mode === 'replay';
+  // THE TAILWIND SCAN IS DERIVED FROM THE MODE, NOT REMEMBERED. `tailwind.config.js` only
+  // adds `src/replay/**` to its `content` glob when ATTEST_REPLAY=1 — without that, the
+  // banner's utility classes compile into the PRODUCTION css instead (§21, caught by hashing
+  // dist/). The justfile sets it; a bare `npm run build:replay` did not, and the result is a
+  // replay bundle whose banner has no styling at all: silent, and only visible by looking.
+  // PostCSS resolves tailwind.config.js inside THIS process, after the config factory has
+  // run, so setting it here reaches it. The production path is untouched — this line does not
+  // execute unless the mode is `replay`, which is why `dist/` stays byte-identical.
+  if (replay) {
+    process.env.ATTEST_REPLAY = '1';
+  }
   return {
     plugins: [react()],
     optimizeDeps: {
