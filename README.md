@@ -11,7 +11,7 @@
 model — and publishes each verdict back into DataHub, so the next agent inherits it from the
 catalog, not from Attest.**
 
-[![offline checks](https://img.shields.io/github/actions/workflow/status/Asembris/Attest/ci.yml?branch=main&label=offline%20checks&labelColor=22262D)](https://github.com/Asembris/Attest/actions/workflows/ci.yml)
+[![checks](https://img.shields.io/github/actions/workflow/status/Asembris/Attest/ci.yml?branch=main&label=checks&labelColor=22262D)](https://github.com/Asembris/Attest/actions/workflows/ci.yml)
 [![verdicts decided by a model: 0](assets/badges/verdicts-by-a-model.svg)](#why-the-verdict-is-trustworthy)
 [![checks: sabotage-verified](assets/badges/sabotage-verified.svg)](#receipts-not-headlines)
 [![MCP Server: adapter built + measured](assets/badges/mcp.svg)](#engaging-with-the-mcp-server)
@@ -417,7 +417,12 @@ python -m venv .venv
 .venv\Scripts\activate       # Windows;  source .venv/bin/activate on macOS/Linux
 just setup                   # installs the package + dev deps AND the datahub CLI / seed deps
 just check                   # lint + the truly-offline tier, on captured fixtures. Never skips.
+just check-ui                # the judge-facing half: typecheck, lint, both builds, replay pins
 ```
+
+Both are gates. `just check` never executes a line of the UI, so `check-ui` covers the React
+app and `docs/replay/` — the page a judge opens without running Docker — and CI adds
+`just replay-verify` on top, driving that page in a real browser.
 
 **The local DataHub demo** — needs Docker (~8 GB free) and `OPENAI_API_KEY` for the semantic
 layer. After `just setup` above:
@@ -481,6 +486,7 @@ and the run stays parked, decidable later. There is no `?auto_approve=true` and 
 | **Integration** — the GraphQL client against a real GMS | DataHub Core running | Reads only | `just test` |
 | **Live** — the semantic layer vs a real model, plus the anti-drift fixture pin | DataHub + `OPENAI_API_KEY` | **Spends tokens; writes to your local catalog** | `just live` |
 | **Browser E2E** — a real browser drives the whole transaction to DataHub and back | ...plus a built UI | As above, through real Edge | `just e2e` |
+| **Frontend / replay** — typecheck, lint, both builds, and the committed replay evidence | Node 20. Nothing else. | None. Free. **Gates CI**, browser half included | `just check-ui`, `just replay-verify` |
 
 The offline and live tiers are blind to each other's failure mode, so running both before a push
 touching a prompt is a rule rather than a habit (`just preflight`); the reasoning is in
