@@ -2,6 +2,8 @@
 
 **Category: Open / Wildcard.**
 
+**Demo video (2:53):** https://www.youtube.com/watch?v=IgCPzC9oR-w
+
 ## What it is
 
 **Attest is a groundedness auditor for AI agents that make claims about data.** An agent
