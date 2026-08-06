@@ -14,6 +14,13 @@
 # The output of that one command is tee'd and rendered into a receipts panel on the run's
 # summary page (.github/scripts/ci_summary.py). The panel is DECORATION — the gate is the
 # step's exit code, which the summary never touches — so it cannot paint a red run green.
+#
+# THE SECOND JOB (`frontend`) EXISTS BECAUSE THE FIRST ONE NEVER EXECUTES A LINE OF THE UI.
+# `just check` is Python: it proves the checkers, the guards and the replay's SOURCE fixtures.
+# It cannot notice that the React app stopped compiling, that the replay bundle stopped
+# building, or that `docs/replay/` — the page a judge who will not run an 8 GB Docker stack
+# actually opens — is broken or stale. That was measurable, not hypothetical: `npm run lint`
+# was RED on this tree, and had been for as long as the lines existed, because nothing ran it.
 name: ci
 
 on:
@@ -60,3 +67,61 @@ jobs:
         env:
           CHECK_OUTCOME: ${{ steps.check.outcome }}
         run: python .github/scripts/ci_summary.py
+
+  # The judge-facing surface: the React app, the replay bundle, and the committed evidence
+  # under docs/. Deliberately NOT path-filtered — a Python wire-type change is exactly what
+  # should re-run the TypeScript mirror's type-check, and a gate that is green because it did
+  # not run is the failure mode this repo names most often.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - uses: extractions/setup-just@v4
+
+      # `.[dev]` is pytest AND the package itself: `check-ui`'s last line parses the replay
+      # fixtures through `attest.api.schemas` — the REAL response models, never a hand-copied
+      # schema — so the package has to be importable before the recipe runs, not after.
+      # `.[e2e]` is playwright, pinned exact.
+      - name: 📦 Install the package, dev deps, and the browser client
+        run: python -m pip install -e ".[dev,e2e]"
+
+      # `check-ui` is one recipe so CI runs exactly what a developer runs, the same way the
+      # job above runs `just check` verbatim. It is: npm ci (the LOCKFILE, not a fresh
+      # resolve) -> typecheck -> eslint --max-warnings=0 -> production build -> replay build
+      # -> the production/replay bundle boundary -> the replay fixture, manifest-hash,
+      # clean-commit provenance and docs/ asset pins.
+      - name: 🧩 Type-check, lint, build, and pin the replay evidence
+        shell: bash
+        run: just check-ui
+
+      # Downloaded here rather than with the deps above so a Node-side or fixture failure is
+      # reported before ~a minute of browser install.
+      - name: 🎭 Install the verification browser
+        run: python -m playwright install --with-deps chromium
+
+      # Serves the committed docs/ tree two ways — /replay/ and the Pages-shaped
+      # /Attest/replay/ — drives the whole recorded flow through a real browser from each,
+      # exercises both refusals, and fails on a SINGLE request outside the replay's own
+      # directory. That last one is the "no unexpected external request, no live write" gate:
+      # a stray call to a backend, a CDN or a font host is what a replay must not make.
+      #
+      # ATTEST_BROWSER_CHANNEL="" selects playwright's own Chromium. The default is installed
+      # Edge, which is right on the author's machine and an ASSUMPTION about a runner image —
+      # and a missing Edge would fail as "the replay is broken", which is a lie about the
+      # thing under test.
+      - name: 🖥️ Verify the staged replay in a real browser
+        shell: bash
+        env:
+          ATTEST_BROWSER_CHANNEL: ""
+        run: just replay-verify
