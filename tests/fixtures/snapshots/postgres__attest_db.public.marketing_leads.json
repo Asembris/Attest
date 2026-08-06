@@ -3,7 +3,7 @@
   "name": "marketing_leads",
   "platform": "postgres",
   "description": "Inbound leads from the website. Classified with the glossary only — the marketing domain adopted terms and never applied tags.",
-  "last_modified": "2026-08-04T16:17:43.734000Z",
+  "last_modified": "2026-08-05T12:29:08.826000Z",
   "owners": [
     "urn:li:corpuser:carol.davis"
   ],
