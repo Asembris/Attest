@@ -59,6 +59,7 @@ and 4 coverage failures named**
 ([receipt](benchmark/results/core-sabotaged-classification.json)). That check runs on every
 `just check`, not on demand.
 
+[Watch the 3-minute demo](https://www.youtube.com/watch?v=IgCPzC9oR-w) ·
 **→ [What the next agent inherits](#what-the-next-agent-inherits)** ·
 [Engaging with the MCP Server](#engaging-with-the-mcp-server) ·
 [Inspect the benchmark receipts](benchmark/README.md) ·
