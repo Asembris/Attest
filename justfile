@@ -6,6 +6,15 @@
 
 set windows-shell := ["powershell.exe", "-NoLogo", "-NoProfile", "-Command"]
 
+# The Node twin of the Python truststore fix (CLAUDE.md: every runtime needs its own
+# system-CA opt-in on a TLS-inspecting network). Exported ONCE here rather than repeated per
+# recipe, because the recipes that need it are shell-specific -- `$env:X="1"` is PowerShell
+# and `X=1 cmd` is sh, and `check-ui` has to run under BOTH (a developer on Windows, CI on
+# Linux). It is harmless when the CA is already trusted, which is exactly why CLAUDE.md says
+# to set these unconditionally rather than only on failure. `ui` and `replay-build` still set
+# it inline; that is now redundant, and left alone rather than churned.
+export NODE_USE_SYSTEM_CA := "1"
+
 default:
     @just --list
 
@@ -368,6 +377,29 @@ lint:
 # full offline run in CI so a collection break is unmistakable and immediate.
 collect-check:
     python -m pytest --collect-only -q -m 'not live and not integration'
+
+# THE FRONTEND AND THE REPLAY, gated the way the Python tier is. What CI's `frontend` job runs.
+#
+# Nothing in `just check` executes a line of TypeScript, and until this recipe existed nothing
+# ran `npm run lint` at all -- it had been RED on two deliberate lines for as long as they
+# existed. The judge-facing surface is the React app and `docs/replay/`, and both could break
+# while every Python gate stayed green.
+#
+# `npm --prefix frontend` rather than `cd frontend; ...` deliberately: `cd` does not persist
+# between just's lines, and a `cd X && Y` chain is a PARSER ERROR in PowerShell 5.1 (no `&&`),
+# so this is the one form that runs identically on a developer's Windows shell and on CI's sh.
+# `npm ci` (not `install`) so the lockfile is what is proven, exactly as CI resolves it.
+#
+# The browser half is `just replay-verify`, kept separate because it needs a browser and the
+# `e2e` extra; CI runs it as its own step, straight after this one.
+check-ui:
+    npm --prefix frontend ci
+    npm --prefix frontend run typecheck
+    npm --prefix frontend run lint -- --max-warnings=0
+    npm --prefix frontend run build
+    npm --prefix frontend run build:replay
+    python spikes/bundle_boundary.py
+    python -m pytest tests/test_replay_fixtures.py tests/test_pages_assets.py -q
 
 # Everything CI runs. Genuinely free, offline, no API key and no DataHub needed -- and since
 # Session 8 that claim is TRUE: the offline tier reads captured fixtures, so nothing here
