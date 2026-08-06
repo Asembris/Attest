@@ -29,6 +29,7 @@ neither does the test.
 
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import subprocess
@@ -41,6 +42,17 @@ from urllib.request import urlopen
 REPO = Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
 REPLAY = DOCS / "replay"
+
+# THE BROWSER, and why it is settable. Locally this drives INSTALLED Edge, so playwright
+# downloads nothing -- its downloader is the bundled Node driver, which would need
+# NODE_USE_SYSTEM_CA=1 on this TLS-inspecting network. That default does not move.
+#
+# CI is the other way round: there is no corporate CA to trip over and no Edge to ASSUME. A
+# runner image that quietly stopped shipping Edge would fail this as "the replay is broken",
+# which is a lie about the thing under test -- the same shape as the smoke sabotage failing
+# at the wrong boundary. So the channel is an env var, and an EMPTY value means playwright's
+# own bundled Chromium, which CI installs explicitly and by version.
+BROWSER_CHANNEL = os.environ.get("ATTEST_BROWSER_CHANNEL", "msedge")
 
 
 def _free_port() -> int:
@@ -290,9 +302,12 @@ def main() -> int:
         ]
 
         with sync_playwright() as p:
-            # Installed Edge. Playwright downloads no browser — its downloader is the bundled
-            # Node driver, which would need NODE_USE_SYSTEM_CA=1 on this network.
-            browser = p.chromium.launch(channel="msedge", headless=True)
+            # See BROWSER_CHANNEL: installed Edge by default, playwright's own Chromium when
+            # the env var is empty. Printed rather than assumed, so a run that verified a
+            # different browser than you think says so in its own output.
+            launch = {"channel": BROWSER_CHANNEL} if BROWSER_CHANNEL else {}
+            print(f"browser: {BROWSER_CHANNEL or 'playwright chromium (bundled)'}")
+            browser = p.chromium.launch(headless=True, **launch)
             for label, url in shapes:
                 page = browser.new_page()
                 calls = Requests(url)
