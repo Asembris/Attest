@@ -4,6 +4,8 @@ import { ArrowRight, BarChart3, Library, AlertTriangle } from 'lucide-react';
 import { sampleAgentOutput } from '../data/mockData';
 import AttestMark from './AttestMark';
 import UrnPicker from './UrnPicker';
+import HeroStaticField from './HeroStaticField';
+import LatticeBoundary from './LatticeBoundary';
 
 const HeroLattice = lazy(() => import('./HeroLattice'));
 
@@ -55,12 +57,28 @@ export default function Hero({
           'radial-gradient(120% 120% at 50% 38%, #0b0e13 0%, #070809 55%, #040405 100%)',
       }}
     >
-      {/* Ambient particle field */}
+      {/* Ambient particle field, and the static field it degrades to. THREE things stop the
+          lattice and all three now land on the SAME visual (HeroStaticField): the reader asked
+          for reduced motion, WebGL is unavailable, or the chunk never arrived.
+
+          The reduced-motion gate below is UNCHANGED and stays unchanged — honouring it is
+          correct, and it is the only one of the three that is not a failure. What changes is
+          that it no longer means "render nothing": the reader gets the composed hero, without
+          motion, which is what they asked for rather than a punishment for asking.
+
+          The other two are errors, and until now they were UNCAUGHT errors: `Suspense` handles
+          a pending import, not a rejected one, and there is no boundary above this point, so
+          either one unmounted the entire app to a black page. LatticeBoundary is scoped to
+          exactly this subtree so it can never swallow anything but the background. */}
       <div className="absolute inset-0">
-        {!reducedMotion && (
-          <Suspense fallback={null}>
-            <HeroLattice />
-          </Suspense>
+        {reducedMotion ? (
+          <HeroStaticField />
+        ) : (
+          <LatticeBoundary fallback={<HeroStaticField />}>
+            <Suspense fallback={null}>
+              <HeroLattice />
+            </Suspense>
+          </LatticeBoundary>
         )}
       </div>
       {/* Vignette — focuses the eye on the centre without hiding the field */}
