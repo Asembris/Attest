@@ -43,7 +43,9 @@ just ui              # build the frontend only
 just port            # free :8003 from a --reload orphan
 
 just lint
-just check           # lint + the truly-offline tier. Hermetic. What CI runs.
+just check           # lint + the truly-offline tier. Hermetic. What CI's `check` job runs.
+just check-ui        # npm ci, typecheck, eslint (zero warnings), both builds, and the
+                     # replay/docs pins. What CI's `frontend` job runs. No DataHub, no key.
 just test            # offline + integration tiers, across cores (-n auto)
 just test-offline    # the truly-offline tier alone. No DataHub, no key, never skips.
 just live            # the live tier by marker: a real model + the anti-drift pin. Costs money.
@@ -78,6 +80,7 @@ tracebacks, working pdb, and un-interleaved output.
 | **Live** | `live` | DataHub + `OPENAI_API_KEY` | Spends tokens; writes to your local catalog. Skips **loudly**. |
 | **Browser E2E** | `live` | ...plus `.[e2e]` and a built UI | As above, through a real browser. `just e2e` builds the UI first. |
 | **Discovery** | `live` | DataHub + `.[mcp]` + `uvx` | Spawns the MCP server; reads only, no model. Skips **loudly** by name. |
+| **Frontend / replay** | *(not pytest)* | Node 20 + npm; `.[e2e]` for the browser half | `just check-ui` + `just replay-verify`. Builds into gitignored dirs; reads committed `docs/`. No DataHub, no key. Gates CI. |
 
 The browser E2E is part of the **live** tier by marker, so `just live` and `just preflight`
 pick it up. It needs two things the rest of that tier does not — `pip install -e ".[e2e]"`
@@ -87,8 +90,16 @@ and a built `frontend/dist` — and **skips with a named reason when either is m
 
 It drives **installed Microsoft Edge**; no browser is downloaded, so the Playwright CDN and
 the corporate-CA trap never enter the picture. `playwright` is pinned in its own `e2e` extra
-and deliberately **not** in `dev`: CI installs `dev` and must never try to install or run
-this.
+and deliberately **not** in `dev`, so the `check` job never touches it.
+
+**`just replay-verify` is the exception, and CI runs it.** It is browser-driven like the E2E
+but needs no DataHub, no model and no catalog write — it serves the committed `docs/` tree to
+a browser and drives the recorded flow. The one thing that had kept it local was the
+hardcoded Edge channel, which is an assumption about the machine rather than a requirement of
+the test; `ATTEST_BROWSER_CHANNEL` now selects it, and an empty value means playwright's own
+Chromium, which CI installs by version. Locally the default is unchanged: installed Edge,
+nothing downloaded. `just e2e` stays out of CI, because a real DataHub and a real catalog
+write cannot go there.
 
 The `mcp` extra follows the same rule for the same reason. Catalog discovery (`just discover`,
 and the URN picker's live search) needs `pip install -e '.[mcp]'` plus `uvx`, and neither is in

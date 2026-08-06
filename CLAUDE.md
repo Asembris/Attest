@@ -1917,9 +1917,15 @@ still USE the product instead of watching a video of it. Zero backend code chang
   copy wraps at every width — guessing low hides a sticky header at exactly the widths nobody
   checked. The CSS values are a first-paint fallback, not the truth.
 - **WHAT THIS DOES NOT DO:** it is not a live demo and never claims to be; it covers ONE
-  recorded run and a named set of `/claims` filters, refusing the rest; it proves nothing about
-  what the catalog says TODAY (nothing offline can); and `just replay-verify` needs the `e2e`
-  extra and Edge, so like `just e2e` it is not in CI.
+  recorded run and a named set of `/claims` filters, refusing the rest; and it proves nothing
+  about what the catalog says TODAY (nothing offline can).
+  **AMENDED BY §24: `just replay-verify` IS in CI now**, and the sentence that used to sit
+  here ("needs the `e2e` extra and Edge, so like `just e2e` it is not in CI") was true of the
+  spike as written and is no longer true of it. `just e2e` still is not in CI and cannot be —
+  it needs a real DataHub, a real model and a real catalog write. `replay-verify` needs none
+  of those: it serves a committed directory to a browser. The only thing that kept it out was
+  the hardcoded `channel="msedge"`, which is an assumption about the machine rather than a
+  requirement of the test, and §24 makes it an env var.
 
 **22. MCP DISCOVERS. A HUMAN RESOLVES. GRAPHQL VERIFIES. CODE DECIDES (Session 28). The
 DataHub MCP Server is now in the product — for DISCOVERY only, and the boundary is asserted
@@ -2226,6 +2232,113 @@ write-up at [docs/external-trial.md](docs/external-trial.md). **No source change
 - **`just discover` FAILS while this catalog is loaded** — its live test asserts a seeded URN is
   in the top 10 hits for `custo` and then resolves every hit over GraphQL, which now includes
   group-owned dbt datasets that raise. Expected, named in both docs, cleared by `just reset`.
+
+**24. THE GATE COVERED HALF THE PRODUCT (Session 30). Every Python tier could be green while
+the React app and the GitHub Pages replay — the two things a judge actually opens — were
+broken. `npm run lint` was RED on this tree and had been for as long as the lines existed,
+because nothing ran it.** `.github/workflows/ci.yml` gains a `frontend` job; `just check-ui`
+is what it runs, so CI still runs exactly what a developer runs. No product source changed.
+
+- **THE GAP, precisely, and it is §14's argument one layer out.** `just check` is Python. It
+  proves the checkers, the guards, and the replay's SOURCE fixtures — and it cannot notice
+  that the app stopped compiling, that the replay bundle stopped building, or that
+  `docs/replay/` is stale. The evidence it was a real gap and not a tidy one: **`npm run lint`
+  exited 1 on the committed tree**, on two deliberate `_`-prefixed parameters in
+  `replayClient.ts` that the eslint config had never been told about. Nothing had ever run it.
+- **THE `_` CONVENTION IS NOW DECLARED, NOT ASSUMED, and declaring it is not weakening it.**
+  `argsIgnorePattern` / `varsIgnorePattern` / `caughtErrorsIgnorePattern` = `^_`. **Proven
+  non-vacuous by stdin**: an UN-prefixed unused variable and an un-prefixed unused argument
+  both still error. `replayClient.ts` mirrors `client.ts`'s signatures exactly *because* the
+  vite alias swaps one for the other, so a parameter it has no use for is real and deliberate.
+- **`readStateBlurb` IS ALLOWED BY NAME rather than the react-refresh rule being downgraded,
+  and the reason is `docs/replay/`.** Moving it out of `ReadStateBadge.tsx` means exporting
+  `STATE`, the badge's private lookup table — a refactor of a shipped component for a rule
+  about dev-server fast refresh. And **any change under `src/` makes the committed replay
+  bundle no longer the build of the current source**, so it would have to be rebuilt and
+  re-verified too. One named exception, in one reviewable place, buys `--max-warnings=0`
+  without either.
+- **THE `ATTEST_REPLAY` FOOTGUN IS GONE, and it was a real one.** `tailwind.config.js` only
+  scans `src/replay/**` when that env var is set (§21's leak, from the other side): a bare
+  `npx vite build --mode replay` produced a replay bundle whose banner had **no styling at
+  all** — silent, and visible only by looking. `vite.config.ts` now sets it when
+  `mode === 'replay'`, so the scan is DERIVED from the mode instead of remembered. **MEASURED:
+  `npm run build:replay` with no external env produces a `dist-replay` byte-identical to the
+  one the justfile built with the variable set, 78/78 files, and `dist` is unmoved. Both trees
+  reproduce byte-identically again after a clean `npm ci`** — so the lockfile install is what
+  is being proven, per §21's rule that an unexplained diff is evidence about the harness.
+- **THE PRODUCTION BUNDLE BOUNDARY IS CHECKED IN BOTH DIRECTIONS, and direction B is the
+  whole point.** `spikes/bundle_boundary.py` asserts five replay markers are absent from
+  `frontend/dist` — and then asserts the SAME detector finds all five in `frontend/dist-replay`.
+  A grep that finds nothing is indistinguishable from a grep for the wrong string, and that is
+  not hypothetical here: **the vacuity direction fired twice during construction**, once on a
+  marker minification had erased (`notRecorded`, an identifier — string literals survive,
+  identifiers do not) and once on a genuine FALSE POSITIVE. `replay-banner` is in the
+  production bundle **legitimately**: `CatalogDrawer.tsx` reads `var(--replay-banner-h, 0px)`
+  so a sticky header sits below the banner when there is one. **Production may READ that
+  variable; only the replay may DEFINE it**, so the marker is the declaration
+  (`--replay-banner-h: 52px`), not the name.
+- **THE STALENESS PIN, which is the drift class nothing else could catch.** `docs/replay/` is
+  a BUILD ARTIFACT of `frontend/src/replay/*.json`. Re-capture and forget to rebuild, and
+  every fixture test stays green — they read the source fixtures, which are perfectly
+  consistent — while the deployed page serves the PREVIOUS recording under the NEW banner's
+  date and commit: **a provenance claim that is wrong, on the page whose whole argument is
+  that a recording is honest about what it is.** Vite inlines the imported JSON, so the run
+  id, capturing commit, captured-at *and every published claim URN* are readable straight out
+  of the built JavaScript. `tests/test_pages_assets.py` reads them back. **Run RED first**: the
+  staged bundle was hand-mutated to a different run id, the pin failed by name, and
+  `git checkout` restored the tree **byte-identical** (`.gitattributes` marks `docs/replay/**
+  -text`, so it does).
+- **What the staleness pin does NOT claim, and this was the alternative refused:** that the
+  bundle is byte-for-byte what this source builds *today*. That needs a rebuild-and-compare in
+  CI, and cross-platform byte-determinism of this toolchain has been measured on ONE machine
+  (§21), never between two. **A gate that might go red for a reason nobody can act on is worse
+  than the narrower one that cannot.**
+- **THE PAGES ASSET PIN.** `docs/index.html` is hand-written and nothing loaded it. Every local
+  `href`/`src` on both Pages entry points must resolve to a committed file (a directory
+  reference resolves through its `index.html`, exactly as Pages serves it), and no placeholder
+  token may survive. External URLs are deliberately NOT fetched: a link checker that fails on
+  someone else's DNS teaches people to re-run the suite until it goes green. Its own vacuity
+  check points it at a page that IS broken and demands it says so.
+- **`just replay-verify` IS IN CI, and §21 and the `e2e` extra's comment were AMENDED rather
+  than stepped around.** Both said this was not, and must never be, a CI thing. The sentence
+  was true of the spike as written and missed a distinction: **`just e2e` needs a real DataHub,
+  a real model and a real catalog write, and can never be in CI. `replay-verify` needs a
+  directory and a browser.** The only thing keeping it out was a hardcoded `channel="msedge"` —
+  an assumption about the machine, not a requirement of the test. `ATTEST_BROWSER_CHANNEL` now
+  selects it and **prints which browser ran**, so a run that verified something other than what
+  you think says so in its own output. **MEASURED both ways: installed Edge, 26 requests per
+  path shape; playwright's bundled Chromium (the CI configuration, run locally rather than
+  hoped for), 24 — every one of them inside the replay's own directory, which is the
+  invariant.** That request log IS the "no unexpected external request, no live write" gate:
+  the page has no backend, and a stray call to one, to a CDN, or to a font host fails it.
+- **`just check-ui` USES `npm --prefix frontend`, NOT `cd frontend && …`, and that is
+  load-bearing.** `cd` does not persist between just's lines, and `cd X && Y` is a **parser
+  error in PowerShell 5.1** — so `--prefix` is the one form that runs identically on the
+  author's Windows shell and on CI's `sh`. For the same reason `NODE_USE_SYSTEM_CA` is exported
+  ONCE at the top of the justfile rather than per recipe: `$env:X="1"` is PowerShell and `X=1`
+  is sh, and this recipe has to run under both. It is harmless where the CA is already trusted,
+  which is exactly why CLAUDE.md says to set these unconditionally.
+- **ORDERING BUG CAUGHT BEFORE IT SHIPPED:** `check-ui`'s last line parses the fixtures through
+  `attest.api.schemas` — the REAL response models — so the package must be installed BEFORE the
+  recipe runs. The first draft installed Python deps after it, which would have failed in CI
+  with a `ModuleNotFoundError` that looks like a broken test rather than a step in the wrong
+  order.
+- **NO PATH FILTERS ON THE JOB, deliberately.** A Python wire-type change is exactly what should
+  re-run the TypeScript mirror's type-check (§14: the TS mirror is hand-kept in sync with
+  `record.py` by reading it, and that drift shipped twice). A gate that is green because it did
+  not run is this repo's most-named failure.
+- **VERIFIED.** Offline tier **492 passed, 0 skipped** (482 before; +10 new pins), ruff clean.
+  `check-ui` run line by line — `just` is not installed on this machine, so the recipe body was
+  executed verbatim rather than through the runner: `npm ci`, typecheck, `eslint
+  --max-warnings=0`, `npm run build`, `npm run build:replay`, the bundle boundary, and the two
+  pin files, every line exit 0. `replay-verify` green on both browsers and both path shapes.
+  The workflow YAML was parsed and its job graph printed rather than eyeballed.
+- **WHAT THIS DOES NOT DO:** it is not UI test coverage — it proves the app compiles, lints,
+  builds, and that the committed replay evidence is internally consistent and drivable, not
+  that any component is correct. It does not run `just e2e` (a real catalog write cannot go in
+  CI), does not rebuild `docs/replay/` in CI, and does not check external links. And it does not
+  pin the CI browser to the local one: Edge locally, Chromium in CI, both measured, neither
+  claiming to be the other.
 
 ## Known deferred items — document, don't fix
 
