@@ -1,0 +1,536 @@
+{
+  "what_this_is": "A catalog-wide census of how many showcase-ecommerce datasets Attest's GraphQL read can resolve, measured WITH and WITHOUT the CorpGroup union arm against one loaded catalog state. NOT a benchmark and nothing here is scored. Companion to docs/external-trial.md; the 15-claim trial is a separate run.",
+  "reproduce": "just external-census --receipt <path>",
+  "hypothesis": "The previously observed 15 refusals were caused SOLELY by the missing CorpGroup union arm in client.DATASET_QUERY. Stated as a hypothesis and NOT as an acceptance requirement: a surviving refusal is a new finding to be classified, not a failed run.",
+  "baseline_note": "The 2026-08-04 receipt's `datasets_readable_by_attest: 52` / `datasets_refused: 15` were HARDCODED LITERALS in external_trial.build_receipt and were never measured by that run. This census re-derives the pre-fix number live, on the same catalog state, rather than quoting them.",
+  "started": "2026-08-07T16:57:38.262027+00:00",
+  "finished": "2026-08-07T16:57:44.893040+00:00",
+  "provenance": {
+    "trial_commit": "7d3f83c13865ecfffa9cbecfbe2c1f6f42115d1b",
+    "trial_tree_dirty": false,
+    "branch": "main",
+    "fix_under_test": "2d7eaf9 fix(datahub): read CorpGroup owners, not only CorpUser",
+    "datahub_core_version": "v1.5.0.6",
+    "datahub_gms_url": "http://localhost:8080",
+    "python": "3.12.0",
+    "generated_at": "2026-08-07T16:57:45.226906+00:00",
+    "baseline_receipt": "docs/external-trial/results.json",
+    "baseline_receipt_sha256": "abbfbd324ca5dc5b9505dc91fa0644f32ed76d41593e2dd013fb7afe6ac7fe61",
+    "urn_source": "the checksum-pinned pack files, not a search index",
+    "queries_compared": "DataHubClient.DATASET_QUERY, and the same with the `... on CorpGroup { urn }` line deleted",
+    "product_code_modified": false
+  },
+  "catalog": {
+    "source": "DataHub showcase-ecommerce datapack",
+    "ingest": "docs/external-trial/ingest.md",
+    "urn_prefix": "b2fd91."
+  },
+  "census": {
+    "datasets_enumerated": 67,
+    "with_corpgroup_arm": {
+      "readable": 67,
+      "refused": 0,
+      "refusals_by_reason": {}
+    },
+    "without_corpgroup_arm": {
+      "readable": 52,
+      "refused": 15,
+      "refusals_by_reason": {
+        "MalformedResponseError": 15
+      }
+    },
+    "refusals_the_corpgroup_arm_fixed": 15,
+    "refusals_the_corpgroup_arm_fixed_urns": [
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.order_items,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.regions,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:looker,b2fd91.order-entry.explore.order_details,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.product_categories,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.inventories,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_details,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.products,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.warehouses,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.customers,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_details,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.orders,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.promotions,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:looker,b2fd91.order-entry-looker.view.order_details,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.countries,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.addresses,PROD)"
+    ],
+    "still_refused_with_the_arm": 0,
+    "still_refused_with_the_arm_urns": [],
+    "regressed_by_the_arm": 0,
+    "regressed_by_the_arm_urns": [],
+    "per_dataset": [
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_history,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.order_items,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.Geographic_Measures,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.regions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/products,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.ORDER_DETAILS,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.inventories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/promotions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.f32082e5-06b8-f46e-9047-4611fffe66b0,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.product_categories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/customers,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.addresses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.order_items,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.order_items,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.regions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.regions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.promotions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/inventories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:looker,b2fd91.order-entry.explore.order_details,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.product_categories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.products,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.promotions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.37fcfb15-34ae-973a-5ae3-cf63691d48e3,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.warehouses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.Time_Inteligence_Measures,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/warehouses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/addresses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.product_categories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.inventories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.orders,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.product_information,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_details,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/order_items,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.analytics.order_details_replica,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.products,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.orders,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.warehouses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_history,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.Essential_KPI_Measures,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/regions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.customers,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.fadbf744-48be-0929-a47c-5786327a3343,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.Customer_Analytics_Measures,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/orders,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.countries,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.b980a8c5-28eb-119e-f6ca-4da32732e5be,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.ORDER_ENTRY_DB.analytics.order_details,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__data_steward'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.orders,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.inventories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.promotions,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:looker,b2fd91.order-entry-looker.view.order_details,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.8bfe7483-1c9a-a0e1-ec84-57207dd37a15,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.products,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.countries,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/countries,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:powerbi,b2fd91.datahub_order_entries.Product_Perfromance_Measures,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.c067553a-127e-a871-14a0-5f32cb032c78,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.f8fb6a0b-7be6-690b-cc45-3c6e0fd2bcde,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:tableau,b2fd91.4a3af1dd-fd0c-7077-d5fd-aa2fdf87cb23,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.countries,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/product_categories,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.addresses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:dbt,b2fd91.order_entry_db.order_entry.addresses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "MalformedResponseError",
+        "without_corpgroup_detail": "ValueError: malformed catalog response: an entry under 'owners' carries no 'owner' URN ({'owner': {}, 'ownershipType': {'urn': 'urn:li:ownershipType:__system__technical_owner'}})"
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,b2fd91.order_entry_db.order_entry.warehouses,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      },
+      {
+        "urn": "urn:li:dataset:(urn:li:dataPlatform:s3,b2fd91.demo-data-bucket/order_entry/product_information,PROD)",
+        "with_corpgroup_arm": "ok",
+        "with_corpgroup_detail": "",
+        "without_corpgroup_arm": "ok",
+        "without_corpgroup_detail": ""
+      }
+    ]
+  }
+}
