@@ -462,9 +462,13 @@ invariants worth not rediscovering:
   harness diagnoses rather than counts: same extracted claim + different verdict = a LEAK
   (capitals); different extracted claim = decomposition variance, a different finding.
   MEASURED: 100% at k=5 (core) and k=3 (full).
-- **MEASURED: 100% / macro-F1 1.000 on both core and full pipeline; $0.0138 per 40 claims;
-  40/40 model-authored explanations, 0 guard rejections; 0 correctness and 0 coverage
-  failures.**
+- **MEASURED (scorer v2 — see §25; the verdict metrics are unmoved from v1): 100% / macro-F1
+  1.000 on both core and full pipeline; 40/40 extractions EXACT with 0 extras and 0
+  duplicates; $0.0157 per 40 claims; 39/40 model-authored explanations, 1 template fallback,
+  7 guard-rejected drafts; 0 correctness and 0 coverage failures.** The semantic-layer
+  figures moved from the previous receipt's 40/40-and-0 and the cost from $0.0138 — that is
+  run-to-run variation in the model and the guards, NOT a scorer effect (the scorer cannot
+  reach an explanation), and it is reported rather than re-rolled until it reads 40/40.
 - **The vacuity check RUNS IN THE SUITE, not only in a command someone has to remember.**
   `just bench-sabotage` exists and exits non-zero if the numbers do not move — but a
   guarantee that only fires when someone types it will rot, exactly like the `just live`
@@ -2339,6 +2343,86 @@ is what it runs, so CI still runs exactly what a developer runs. No product sour
   CI), does not rebuild `docs/replay/` in CI, and does not check external links. And it does not
   pin the CI browser to the local one: Edge locally, Chromium in CI, both measured, neither
   claiming to be the other.
+
+**25. FIVE DEFECTS IN ONE EXPRESSION (Session 31). The benchmark's full-pipeline scorer
+decided WHICH extracted claim a label was about with `next(a for a in report.audits if
+a.claim.target_urn == case.target_urn)`. Every measured number survived the fix — and the
+fix is worth having anyway, because what it removes is the harness being unable to tell a
+decomposer bug from a checker bug.** `benchmark/matching.py`, `predict_for_case`,
+`tests/test_benchmark_matching.py`. **No source under `src/attest/` changed.**
+
+- **THE FIVE, and each was REPRODUCED against the real v1 code before a line of v2 existed.**
+  (1) `_same_subject`'s schema arm compared `{c.name for c in columns}` and dropped
+  `native_type`, so `order_total NUMBER(12,2)` transcribed as `VARCHAR(32)` scored
+  `extraction_ok=True` — a transcription bug filed under **correctness failure**, the
+  heading benchmark/README.md calls the worst thing this product can do. (2) Matching on URN
+  alone let a **wrong-family** claim's verdict be scored as the case's answer: a true answer
+  to a question the label never asked. (3) `next(...)` meant extraction **ORDER** decided the
+  score — an exact match extracted second lost to a wrong claim extracted first. (4) and (5)
+  Nothing looked at `report.audits` a second time, so a **duplicate** read as a perfect
+  extraction and an unintended **extra** was structurally invisible.
+- **THE DISPOSITIONS ARE THE DESIGN, and `wrong-family -> NO_CLAIM` is the load-bearing one.**
+  Reporting an unrelated claim's verdict as this case's answer is precisely the laundering
+  `NO_CLAIM` was invented to refuse (a broken extraction wearing a legitimate verdict's
+  clothes — report.ClaimError's argument, inside the benchmark). PARTIAL is still scored
+  end-to-end, because the user really did receive that verdict, with `extraction_ok=False`
+  and the field-level diff carried out: a right verdict about a wrong assertion is **right by
+  luck**, and banking those silently is how a benchmark flatters a broken decomposer.
+- **FIDELITY IS STRICTER THAN THE CHECKER, ON PURPOSE, and that asymmetry is not a bug.**
+  checkers/schema.py matches `VARCHAR` against `VARCHAR(36)` because nobody claimed the 36.
+  Fidelity asks a different question — *did the decomposer transcribe the sentence the human
+  labeled?* — and the sentence said 12,2. So `norm_type` normalizes **formatting only** (case,
+  whitespace: `NUMBER(12,2)` == `number(12, 2)`) and never semantics (`NUMBER(12,2)` !=
+  `NUMBER`), and `None` stays distinct from every declared type or the decomposer could
+  invent a type assertion the sentence never made and score it faithful. Subjects are sorted
+  **multisets**, not sets: collapsing a doubled column would hide, one level down, the exact
+  duplicate this module exists to count one level up.
+- **EXTRAS AND DUPLICATES NEVER MOVE ACCURACY, and the confusion matrix gains no column.**
+  They are a different failure from a wrong verdict and they are reported in a different
+  place. A fifth matrix column for "the decomposer mangled it" would put a transcription bug
+  and a checker bug in one grid — the aggregation the whole harness exists to refuse.
+  Correctness/coverage failures stay **end-to-end** (the user got a wrong answer however it
+  happened) with `*_from_extraction` naming the subset the decomposer caused: a subset, never
+  a deduction, or a broken decomposer could improve the headline number.
+- **FIVE SABOTAGE DIRECTIONS, NOT ONE.** Each regression is proven against the specific v1
+  behavior it is named for — the legacy fragments quoted verbatim **in the test file, never
+  in `benchmark/`** — so a partial revert reddens exactly one test and its name says which
+  piece. One generic "the old selector was bad" test would prove only that something changed.
+- **THE REASON IT SURVIVED: `run_full` COULD NOT BE CALLED OFFLINE AT ALL.**
+  `Catalog(snapshot_source=...)` never set `.client`, so `Pipeline(client=catalog.client)`
+  raised `AttributeError` and no offline test could reach the selector even in principle. §14
+  a fourth time: **a path no test can execute is a path nobody has checked.** The pipeline is
+  now injectable exactly as the snapshot source has been since Session 8, and the whole
+  scoring path runs in the offline tier against a scripted pipeline.
+- **RECEIPTS ARE VERSIONED, because the METHOD moved even where the numbers did not.** Every
+  full-mode receipt carries `scorer_version: 2`, `matching_policy:
+  canonical-subject-one-to-one-v1`, `scorer_commit` and `scorer_tree_dirty`. Extraction
+  fidelity is **not comparable across v1/v2**; the verdict metrics are (measured identical).
+  `scorer_tree_dirty` is reported rather than hidden — a receipt cannot be generated from the
+  commit that contains it, so the flag says whether the scorer's tree was clean.
+- **CORE MODE EMITS NEITHER BLOCK, and that is what keeps its receipts byte-identical.**
+  A run that never called a model has no extraction to report, and zeros about an unasked
+  question are noise. **VERIFIED: `just bench` regenerated `core.json` byte-identical**
+  (pass@5 100%, 40/40).
+- **MEASURED, full pipeline, k=3: 40/40 EXACT, 0 extras, 0 duplicates, 0 partial, 0
+  wrong-family.** The stricter scorer found no extraction failure — so the honest headline is
+  that v1's numbers were right and v1's *method* could not have proven them. Accuracy,
+  macro-F1, per-verdict, confusion matrix and pass@3 all identical to the v1 receipt.
+- **TWO PRE-EXISTING STALE RECEIPTS FOUND, NOT CAUSED.** `full.json` was missing
+  `extraction_risk` and `core-sabotaged-classification.json` was missing
+  `mis_extracted_but_right` — both fields the scorer at HEAD already emitted. Confirmed by
+  regenerating with the change **stashed**: the same field appeared. §13 said every displayed
+  figure must trace to a committed receipt; it did not say the receipts must be regenerated
+  when the payload grows a field, and they had drifted. `full.json` is now current;
+  `core-sabotaged-classification.json` was left alone as out of scope and is named here.
+- **VERIFIED.** Offline **520 passed, 0 skipped** (492 before; +25 matching tests, +3
+  preservation pins), ruff clean. Integration 5 passed. Frontend: typecheck, `eslint
+  --max-warnings=0`, both builds **byte-identical to the committed bundles**, bundle boundary
+  green both directions, 29 replay/pages pins, `replay-verify` 26 requests per path shape on
+  Edge. `just bench` byte-identical; `just bench-full` regenerated.
+- **WHAT THIS DOES NOT DO:** it adds no benchmark case, changes no label, moves no checker,
+  policy, prompt, graph or claim schema, and touches nothing a judge's browser loads. It does
+  not make the benchmark harder — it makes the harness able to say which half failed.
 
 ## Known deferred items — document, don't fix
 

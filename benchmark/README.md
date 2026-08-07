@@ -239,10 +239,44 @@ one of the two committed receipts.
 | Correctness failures (Supported ↔ Contradicted) | 0 | 0 |
 | Coverage failures (anything ↔ Insufficient) | 0 | 0 |
 | pass@k | **100%** (k=5) | **100%** (k=3) |
-| Cost | $0 | **$0.0138** / 40 claims |
+| Extraction fidelity | n/a — nothing is extracted | **40/40 exact**, 0 extras, 0 duplicates |
+| Cost | $0 | **$0.0157** / 40 claims |
 
 Per verdict, both modes: precision 1.000, recall 1.000, F1 1.000 across Supported (n=15),
 Contradicted (n=17), Insufficient-Coverage (n=8).
+
+The full-pipeline run also recorded **39/40 model-authored explanations, 1 template
+fallback and 7 guard-rejected drafts**. Both halves of that matter and they pull opposite
+ways: a guard that rejected everything would score 0% model-authored and catch every
+hallucination. The fallback is the design working — a draft that failed a gate degraded to
+something *true* rather than to something plausible — and it is reported rather than
+re-rolled.
+
+### The scorer changed. These numbers were produced by v2
+
+**Do not compare the table above to a receipt from before `scorer_version: 2`.** The
+verdict metrics are unmoved — accuracy, macro-F1, every per-verdict figure, the confusion
+matrix and pass@k are identical under both scorers — but the *method* that decides which
+extracted claim answers which labeled one is different, so extraction fidelity is not
+comparable across the change.
+
+Scorer **v1** bound a case's verdict to the FIRST audit whose target URN matched, and
+judged fidelity with a schema comparison that dropped `native_type`. That let a claim of
+the wrong *family* answer a question the label never asked, let extraction ORDER decide
+which claim was scored, and discarded every unmatched claim unexamined — so a duplicate
+read as a perfect extraction and an unintended extra was invisible.
+
+Scorer **v2** (`matching_policy: canonical-subject-one-to-one-v1`) matches labeled claims
+to extracted ones **one-to-one on the full canonical subject** — family, target URN,
+family-specific fields, and schema types normalized for formatting only. Wrong-family and
+missing extractions score `No-Claim`, never a borrowed verdict; partial subjects are still
+scored end-to-end but reported with their field-level difference; extras and duplicates are
+counted and named without touching accuracy.
+
+Every full-pipeline receipt now carries `scorer_version`, `matching_policy`,
+`scorer_commit` and `scorer_tree_dirty`, so a reader holding two receipts can always tell
+which scorer produced which. The pre-v2 receipt is preserved in git history
+(`git show <commit>:benchmark/results/full.json`).
 
 **pass@k is not a nice-to-have here, it is a bug detector.** Attest's verdicts come from date
 math, set membership and string comparison — so the same claim must produce the same verdict
