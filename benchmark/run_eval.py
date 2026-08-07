@@ -16,10 +16,41 @@ verdicts, and it is free, exact, and reproducible.
 **full** feeds the agent's PROSE to the whole pipeline: sanitize -> decompose -> check ->
 explain -> guard. This is the accuracy a user experiences, and it can be worse — because
 the decomposer may transcribe the sentence into a claim the human never meant. When it is
-worse, the harness says WHICH: `extraction fidelity` counts the cases where the extracted
-claim differs from the labeled one, and those cases are listed by name. A single aggregate
-accuracy number would blur a checker bug and a transcription bug into one, and they have
-nothing to do with each other.
+worse, the harness says WHICH: `extraction fidelity` reports the cases where the extracted
+claim differs from the labeled one, by name and with the field-level difference. A single
+aggregate accuracy number would blur a checker bug and a transcription bug into one, and
+they have nothing to do with each other.
+
+--------------------------------------------------------------------------------
+Which extracted claim answers which labeled one (scorer v2)
+--------------------------------------------------------------------------------
+
+A case's prose can decompose into more than one claim, so before anything can be scored
+something has to decide WHICH extracted claim the label is about. Scorer v1 decided it with
+`next(a for a in report.audits if a.claim.target_urn == case.target_urn)` — the first audit
+touching the URN — and that one expression carried five separable defects: a wrong-FAMILY
+claim answered a question nobody asked, extraction ORDER decided which claim was scored, a
+right column with a wrong type read as a faithful transcription, and everything the
+selector did not pick was discarded unexamined, so a duplicate looked perfect and an
+unintended extra was invisible.
+
+v2 binds them ONE-TO-ONE on the canonical subject (benchmark/matching.py), and the
+dispositions are chosen so that a decomposer failure can never wear a checker's clothes:
+
+  exact            the labeled claim, transcribed. Scored, clean.
+  partial-subject  right family, right entity, wrong assertion. Scored end-to-end — the
+                   user did receive that verdict — with extraction_ok False and the field
+                   diff reported. A right verdict about a wrong assertion is right by luck.
+  wrong-family     scored NO_CLAIM. That claim's verdict is a true answer to a different
+                   question, and reporting it as this case's answer is exactly the
+                   laundering NO_CLAIM exists to refuse.
+  missing          scored NO_CLAIM.
+
+Extras and duplicates are counted and named, and they never move accuracy: they are a
+different failure from a wrong verdict and they are reported in a different place.
+Extraction fidelity is deliberately kept OUT of the verdict confusion matrix — a fifth
+column for "the decomposer mangled it" would put a transcription bug and a checker bug in
+one grid, which is the aggregation this harness exists to refuse.
 
 --------------------------------------------------------------------------------
 Per-verdict metrics, not aggregate accuracy
@@ -74,7 +105,7 @@ import argparse
 import json
 import statistics
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -87,6 +118,7 @@ from attest import checkers, graph
 from attest.claims import Claim, ClaimType, Evidence, Verdict
 from attest.datahub import DataHubClient, DatasetSnapshot, SnapshotCache
 from attest.graph import Pipeline
+from attest.report import ClaimAudit
 from benchmark.cases import (
     CASES,
     DOCUMENTED,
@@ -96,6 +128,20 @@ from benchmark.cases import (
     extraction_demands,
     extraction_risk,
 )
+from benchmark.matching import (
+    EXPECTED_CLAIMS_PER_CASE,
+    Fidelity,
+    fingerprint,
+    match,
+)
+
+# The scorer's own version, carried in every full-pipeline receipt. Before v2 a case was
+# scored against the FIRST audit touching its URN, which bound wrong-family claims, lost to
+# extraction order, and discarded every unmatched claim unexamined. Numbers produced by the
+# two scorers are NOT directly comparable, and a receipt that does not say which one made it
+# invites exactly that comparison.
+SCORER_VERSION = 2
+MATCHING_POLICY = "canonical-subject-one-to-one-v1"
 
 RESULTS_DIR = Path(__file__).parent / "results"
 
@@ -128,10 +174,32 @@ class Prediction:
     guard_rejections: int = 0
     usd: float | None = 0.0
     latency_ms: float = 0.0
+    # Full mode only. None in core mode, where nothing is extracted and fidelity is not a
+    # question that exists — distinct from "extraction was perfect", which is what a default
+    # of EXACT would have quietly asserted about a run that never called a model.
+    fidelity: str | None = None
+    subject_diff: tuple[str, ...] = ()
+    # Claims the decomposer produced that no label asked for, and ones it said twice. Both
+    # are extraction-fidelity failures and NEITHER moves the verdict: this case's verdict is
+    # whatever the bound audit said, and burying an extra inside the accuracy number would
+    # make two different defects share one figure.
+    extras: int = 0
+    duplicates: int = 0
+    # The whole extracted subject multiset, for pass@k. See matching.fingerprint.
+    extracted_subjects: tuple[str, ...] = ()
 
     @property
     def correct(self) -> bool:
         return self.predicted == self.expected
+
+    @property
+    def clean_extraction(self) -> bool:
+        """EXACT, and nothing left over. The only unqualified extraction success."""
+        return (
+            self.fidelity == Fidelity.EXACT.value
+            and not self.extras
+            and not self.duplicates
+        )
 
 
 @dataclass
@@ -153,6 +221,32 @@ class Metrics:
     # did get the right answer — and named, because a benchmark that silently banks these
     # is flattering a broken decomposer.
     mis_extracted_but_right: list[str] = field(default_factory=list)
+
+    # --- extraction fidelity (full mode only) --------------------------------
+    # Kept OUT of the verdict-label confusion matrix on purpose. The matrix answers "which
+    # verdict did Attest reach", and a fifth column for "the decomposer mangled it" would
+    # make a transcription bug and a checker bug share one grid — the aggregation this
+    # harness exists to refuse. These are a separate report about a separate failure.
+    fidelity: dict[str, int] = field(default_factory=dict)
+    extra_claims: int = 0
+    duplicate_claims: int = 0
+    clean_extractions: int = 0
+    # Cases whose subject was right in family and target and wrong in what it asserts, with
+    # the field-level difference. A count alone does not say what moved.
+    partial_subjects: list[dict[str, Any]] = field(default_factory=list)
+    # Cases where something WAS extracted about the entity and it answered a different
+    # question. Scored No-Claim, never with the unrelated claim's verdict.
+    wrong_family: list[str] = field(default_factory=list)
+    # The end-to-end failure counts above stay end-to-end: the user got the wrong outcome
+    # however it happened. These name the subset the decomposer caused, so the cause stays
+    # visible without the headline number being softened.
+    correctness_failures_from_extraction: int = 0
+    coverage_failures_from_extraction: int = 0
+
+    @property
+    def scored_extraction(self) -> bool:
+        """Did this run measure extraction at all? False for the deterministic core."""
+        return bool(self.fidelity)
 
 
 def score(predictions: list[Prediction]) -> Metrics:
@@ -186,6 +280,12 @@ def score(predictions: list[Prediction]) -> Metrics:
 
     correctness = 0
     coverage_ = 0
+    # The same two failures, restricted to cases the decomposer mis-transcribed. A SUBSET,
+    # never a deduction: a user handed a wrong answer got a wrong answer, and moving those
+    # out of the headline count would let a broken decomposer improve the number that
+    # benchmark/README.md calls the worst thing this product can do.
+    correctness_from_extraction = 0
+    coverage_from_extraction = 0
     for p in predictions:
         if p.correct or p.predicted == NO_CLAIM:
             continue
@@ -194,8 +294,17 @@ def score(predictions: list[Prediction]) -> Metrics:
         # where it affirms. Nothing else in this system is worse.
         if pair == {"Supported", "Contradicted"}:
             correctness += 1
+            correctness_from_extraction += not p.extraction_ok
         else:
             coverage_ += 1
+            coverage_from_extraction += not p.extraction_ok
+
+    measured = [p for p in predictions if p.fidelity is not None]
+    fidelity = {
+        outcome.value: sum(1 for p in measured if p.fidelity == outcome.value)
+        for outcome in Fidelity
+        if any(p.fidelity == outcome.value for p in measured)
+    }
 
     return Metrics(
         n=len(predictions),
@@ -216,10 +325,25 @@ def score(predictions: list[Prediction]) -> Metrics:
                 "expected": p.expected,
                 "predicted": p.predicted,
                 "extraction_ok": str(p.extraction_ok),
+                **({"fidelity": p.fidelity} if p.fidelity is not None else {}),
             }
             for p in predictions
             if not p.correct
         ],
+        fidelity=fidelity,
+        extra_claims=sum(p.extras for p in measured),
+        duplicate_claims=sum(p.duplicates for p in measured),
+        clean_extractions=sum(1 for p in measured if p.clean_extraction),
+        partial_subjects=[
+            {"case": p.case_id, "diff": list(p.subject_diff)}
+            for p in measured
+            if p.fidelity == Fidelity.PARTIAL.value
+        ],
+        wrong_family=[
+            p.case_id for p in measured if p.fidelity == Fidelity.WRONG_FAMILY.value
+        ],
+        correctness_failures_from_extraction=correctness_from_extraction,
+        coverage_failures_from_extraction=coverage_from_extraction,
     )
 
 
@@ -246,6 +370,10 @@ class Catalog:
     def __init__(
         self, snapshot_source: Callable[[str], DatasetSnapshot] | None = None
     ) -> None:
+        # None when the snapshots are injected. It used to be UNSET, so `run_full` died with
+        # an AttributeError on any fixture-backed catalog — which is why nothing offline had
+        # ever executed run_full, and why five defects lived in one line of it unexamined.
+        self.client: DataHubClient | None = None
         if snapshot_source is None:
             self.client = DataHubClient()
             self.cache = SnapshotCache(self.client)
@@ -282,83 +410,88 @@ def run_core(catalog: Catalog) -> list[Prediction]:
     return predictions
 
 
-def _same_subject(extracted: Claim, expected: Claim) -> bool:
-    """Did the decomposer transcribe the sentence into the claim the label is about?
+def predict_for_case(
+    case: Case,
+    audits: Sequence[ClaimAudit],
+    *,
+    usd: float | None = 0.0,
+    latency_ms: float = 0.0,
+) -> Prediction:
+    """Score ONE case against everything the pipeline extracted from its prose.
 
-    Not equality: `raw_text` is the model's quotation of the agent and will differ in
-    whitespace and length without meaning anything. What must match is what the claim IS
-    — its type, its target, and the thing it asserts.
+    Pure: no pipeline, no catalog, no network. That is deliberate — this is the logic that
+    carried five defects for as long as it was a single expression buried inside `run_full`,
+    where no offline test could reach it.
+
+    The binding is benchmark.matching's, one-to-one over the canonical subject, so:
+
+      * an exact match wins however late it was extracted, and however plausible the claim
+        extracted before it looked;
+      * a claim of the WRONG FAMILY about the right entity scores NO_CLAIM. Its verdict is a
+        true answer to a question this case did not ask, and reporting it as this case's
+        answer is the laundering NO_CLAIM exists to refuse;
+      * a PARTIAL match is still scored — there IS a verdict about this subject and the user
+        received it — but `extraction_ok` is False and the field-level difference is carried
+        out, because a verdict that is right about the wrong assertion is right by luck;
+      * every claim left over is counted, as an extra or as a duplicate. None of them moves
+        the verdict; all of them are extraction-fidelity failures.
     """
-    if extracted.claim_type is not expected.claim_type:
-        return False
-    if extracted.target_urn != expected.target_urn:
-        return False
+    expected_claim = build_claim(case)
+    extracted = [a.claim for a in audits]
+    matching = match([expected_claim], extracted)
+    # The benchmark contract: one labeled claim per case. Asserted rather than assumed, so
+    # that a future multi-claim case is a loud failure here instead of a silent reliance on
+    # the partial tie-break nobody decided to depend on.
+    assert len(matching.pairs) == EXPECTED_CLAIMS_PER_CASE
+    pair = matching.pairs[0]
+    fidelity = Fidelity(pair.fidelity)
 
-    if isinstance(expected, type(extracted)) is False:
-        return False
+    audit = audits[pair.extracted_index] if pair.extracted_index is not None else None
 
-    match expected.claim_type:
-        case ClaimType.FRESHNESS:
-            return extracted.max_age_hours == expected.max_age_hours  # type: ignore[union-attr]
-        case ClaimType.OWNERSHIP:
-            return extracted.owner_urn == expected.owner_urn  # type: ignore[union-attr]
-        case ClaimType.CLASSIFICATION:
-            return (
-                set(extracted.labels) == set(expected.labels)  # type: ignore[union-attr]
-                and extracted.present == expected.present  # type: ignore[union-attr]
-                and extracted.field_path == expected.field_path  # type: ignore[union-attr]
-            )
-        case ClaimType.SCHEMA:
-            return {c.name for c in extracted.columns} == {  # type: ignore[union-attr]
-                c.name for c in expected.columns  # type: ignore[union-attr]
-            }
-    return False
+    return Prediction(
+        case_id=case.id,
+        expected=case.expected_verdict,
+        # NO_CLAIM for MISSING and for WRONG_FAMILY alike: in neither case did anything
+        # answer the question the label asks.
+        predicted=audit.verdict.value if (audit and fidelity.scorable) else NO_CLAIM,
+        # Carried even when it is not scorable — it is what the model actually produced
+        # about this entity, and it is the diagnosis.
+        extracted=audit.claim if audit else None,
+        extraction_ok=fidelity is Fidelity.EXACT,
+        explanation_from_model=(audit.explanation.source == "model") if audit else None,
+        guard_rejections=len(audit.explanation.rejected) if audit else 0,
+        usd=usd,
+        latency_ms=latency_ms,
+        fidelity=fidelity.value,
+        subject_diff=pair.diff,
+        extras=len(matching.extras),
+        duplicates=len(matching.duplicates),
+        extracted_subjects=fingerprint(extracted),
+    )
 
 
-def run_full(catalog: Catalog) -> list[Prediction]:
+def run_full(catalog: Catalog, pipeline: Pipeline | None = None) -> list[Prediction]:
     """The whole pipeline, on the agent's prose. Real model, real money.
 
     `max_retries=0` turns the self-correction loop OFF. The benchmark measures the verdict
     Attest reaches about what the agent SAID, and a correction changes what the agent says
     — it never changes the verdict on the original claim (report.py). Leaving the loop on
     would triple the cost of the run and move no number in this report.
+
+    The pipeline is INJECTABLE for the same reason the snapshot source is (Session 8): the
+    scoring path has to be reachable by a test that has neither a catalog nor a key. `just
+    bench-full` leaves it None and builds the real one, as every committed number was taken.
     """
-    pipeline = Pipeline(client=catalog.client, now=catalog.now, max_retries=0)
+    if pipeline is None:
+        pipeline = Pipeline(client=catalog.client, now=catalog.now, max_retries=0)
     predictions = []
 
     for case in CASES:
-        expected_claim = build_claim(case)
         report = pipeline.run(case.agent_text)
         pipeline.forget(report.thread_id)
-
-        audit = next(
-            (a for a in report.audits if a.claim.target_urn == case.target_urn), None
-        )
-        if audit is None:
-            # Nothing was extracted about this URN. Not a verdict — see NO_CLAIM.
-            predictions.append(
-                Prediction(
-                    case_id=case.id,
-                    expected=case.expected_verdict,
-                    predicted=NO_CLAIM,
-                    extraction_ok=False,
-                    usd=report.cost.usd,
-                    latency_ms=report.latency_ms,
-                )
-            )
-            continue
-
         predictions.append(
-            Prediction(
-                case_id=case.id,
-                expected=case.expected_verdict,
-                predicted=audit.verdict.value,
-                extracted=audit.claim,
-                extraction_ok=_same_subject(audit.claim, expected_claim),
-                explanation_from_model=audit.explanation.source == "model",
-                guard_rejections=len(audit.explanation.rejected),
-                usd=report.cost.usd,
-                latency_ms=report.latency_ms,
+            predict_for_case(
+                case, report.audits, usd=report.cost.usd, latency_ms=report.latency_ms
             )
         )
     return predictions
@@ -410,14 +543,15 @@ def pass_at_k(runs: list[list[Prediction]]) -> Consistency:
             stable += 1
             continue
 
-        claims = {
-            p.extracted.model_dump_json(exclude={"raw_text"}) if p.extracted else "none"
-            for p in attempts
-        }
+        # The WHOLE extracted subject multiset, not just the claim the scorer bound. Keyed
+        # on the bound claim alone, a run that additionally hallucinated a second claim
+        # looked identical to one that did not — so extraction variance in the extras was
+        # invisible to the one check whose job is to notice a verdict moving for no reason.
+        claims = {p.extracted_subjects for p in attempts}
         entry = {
             "case": case_id,
             "verdicts": sorted(verdicts),
-            "distinct_claims_extracted": len(claims),
+            "distinct_extraction_sets": len(claims),
         }
         unstable.append(entry)
         if len(claims) == 1:
@@ -501,6 +635,15 @@ def print_metrics(title: str, m: Metrics) -> None:
             note = "" if e["extraction_ok"] == "True" else "  [extraction]"
             print(f"    {e['case']:12s} expected {e['expected']:22s} got {e['predicted']}{note}")
 
+    if m.correctness_failures_from_extraction or m.coverage_failures_from_extraction:
+        # Named, never deducted. The counts above stay end-to-end because the user received
+        # a wrong answer either way; this says how many of them the decomposer caused.
+        print(
+            f"    of which the decomposer caused: "
+            f"{m.correctness_failures_from_extraction} correctness, "
+            f"{m.coverage_failures_from_extraction} coverage"
+        )
+
     if m.mis_extracted_but_right:
         # These are the dangerous ones. The verdict is correct and the claim underneath it
         # is not the claim the sentence made, so the report is right by luck. Counting them
@@ -509,6 +652,38 @@ def print_metrics(title: str, m: Metrics) -> None:
         print("\n  RIGHT VERDICT, WRONG CLAIM — correct by luck, and worth fixing:")
         for case_id in m.mis_extracted_but_right:
             print(f"    {case_id}")
+
+
+def print_extraction_fidelity(m: Metrics) -> None:
+    """What the decomposer produced, held against what the labels asked for.
+
+    Reported apart from the confusion matrix on purpose. The matrix answers "which verdict
+    did Attest reach"; this answers "was it a verdict about the right claim". Folding a
+    mangled transcription into the matrix as a fifth column would put a decomposer bug and a
+    checker bug in one grid and make them look like one number, which is the aggregation
+    this harness exists to refuse.
+    """
+    if not m.scored_extraction:
+        return
+
+    print(f"\n{'=' * 78}\nEXTRACTION FIDELITY — was the verdict about the RIGHT claim?\n{'=' * 78}")
+    print(f"  clean extractions (exact, nothing left over)   {m.clean_extractions}/{m.n}")
+    for outcome, count in m.fidelity.items():
+        print(f"    {outcome:20s} {count:3d}")
+    print(f"  unmatched extra claims    {m.extra_claims}")
+    print(f"  duplicate claims          {m.duplicate_claims}")
+
+    if m.partial_subjects:
+        print("\n  PARTIAL SUBJECTS — right family, right entity, wrong assertion:")
+        for entry in m.partial_subjects:
+            print(f"    {entry['case']:12s} {'; '.join(entry['diff']) or '(no field diff)'}")
+    if m.wrong_family:
+        print("\n  WRONG FAMILY — something was extracted about the entity, but it answers")
+        print("  a different question. Scored No-Claim, never with that claim's verdict:")
+        for case_id in m.wrong_family:
+            print(f"    {case_id}")
+    if not m.partial_subjects and not m.wrong_family and not m.extra_claims:
+        print("\n  Every case matched its label exactly, with nothing left over.")
 
 
 def print_extraction_risk(predictions: list[Prediction]) -> dict[str, Any]:
@@ -573,6 +748,43 @@ def semantic_report(predictions: list[Prediction]) -> dict[str, Any]:
     }
 
 
+def provenance() -> dict[str, Any]:
+    """Which scorer produced this receipt, and from which tree.
+
+    A methodology change that is not written into the artifact invites the one comparison
+    it invalidates. Scorer v1 bound the FIRST audit touching a case's URN; v2 binds on the
+    canonical subject, one-to-one. Their numbers are not directly comparable, and a reader
+    holding two receipts has no other way to know that.
+
+    `dirty` is reported rather than hidden: a receipt generated from an uncommitted tree is
+    not reproducible from `commit` alone, and saying so costs nothing while discovering it
+    later costs the receipt's credibility.
+    """
+    import subprocess
+
+    commit: str | None = None
+    dirty: bool | None = None
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=10, check=True
+        ).stdout.strip()
+        dirty = bool(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                capture_output=True, text=True, timeout=10, check=True,
+            ).stdout.strip()
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass  # Not a git checkout, or no git. The receipt says so by carrying null.
+
+    return {
+        "scorer_version": SCORER_VERSION,
+        "matching_policy": MATCHING_POLICY,
+        "scorer_commit": commit,
+        "scorer_tree_dirty": dirty,
+    }
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--full", action="store_true", help="run the whole pipeline (costs money)")
@@ -624,6 +836,24 @@ def main() -> int:
     }
 
     if mode == "full":
+        # Full mode only, both of them. The extraction block is meaningless for a run that
+        # never called a model, and `core.json` / `core-sabotaged-*.json` are pinned
+        # byte-identical by the suite — adding a key there would move a committed receipt
+        # for a run whose numbers did not change at all.
+        payload |= provenance()
+        payload["extraction_fidelity"] = {
+            "clean_extractions": metrics.clean_extractions,
+            "by_outcome": metrics.fidelity,
+            "extra_claims": metrics.extra_claims,
+            "duplicate_claims": metrics.duplicate_claims,
+            "partial_subjects": metrics.partial_subjects,
+            "wrong_family": metrics.wrong_family,
+            "correctness_failures_from_extraction": (
+                metrics.correctness_failures_from_extraction
+            ),
+            "coverage_failures_from_extraction": metrics.coverage_failures_from_extraction,
+        }
+        print_extraction_fidelity(metrics)
         payload["extraction_risk"] = print_extraction_risk(runs[0])
         semantics = semantic_report(runs[0])
         payload["semantic_layer"] = semantics
@@ -674,7 +904,7 @@ def main() -> int:
             for u in consistency.unstable:
                 print(
                     f"    {u['case']}: verdicts {u['verdicts']}, "
-                    f"{u['distinct_claims_extracted']} distinct claims extracted"
+                    f"{u['distinct_extraction_sets']} distinct extraction sets"
                 )
         else:
             print("  Every verdict identical across every run, as a deterministic core must be.")
