@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { ArrowLeft, BarChart3, Library, AlertTriangle, GitBranch } from 'lucide-react';
+import { ArrowLeft, BarChart3, Library, AlertTriangle, Ban, GitBranch } from 'lucide-react';
 import type { AuditRecord, ClaimRecord, DecisionRequest, HealthResponse, WriteBackView } from '../api/types';
 import { verdictCounts, awaitingDecision } from '../api/types';
 import AttestMark from './AttestMark';
@@ -30,6 +30,20 @@ export default function AuditResults({
   onShowClaims: () => void;
 }) {
   const counts = verdictCounts(record);
+  // CLAIMS REFUSED BEFORE CHECKING. `dropped` is the decomposer's output that Attest would
+  // not carry — a minted URN, a claim that failed validation, a claim whose FAMILY its own
+  // sentence contradicts. No checker ever saw them and no verdict exists for them, so they
+  // are a GAP IN THIS AUDIT, and a run that leaves one must not read as an unqualified
+  // success. The backend has always returned them (record.dropped) and the detail has always
+  // been one click away in Audit internals; what was missing is that the click was REQUIRED.
+  // A reader who does not open a collapsed panel is entitled to know a claim went unchecked.
+  const refused = record.dropped.length;
+  // The sharpest case, and the reason the headline branches at all: every claim refused. "0
+  // claims verified against the DataHub catalog" under the words "Audit Complete" is Attest
+  // reporting silence as an answer about its own output — the one thing the whole product
+  // exists to refuse. Note this is a PRESENTATION decision only: the run's status really is
+  // `complete` (the pipeline ran to the end and violated nothing) and nothing here changes it.
+  const nothingVerified = record.claims.length === 0 && refused > 0;
   // WHAT THE RUN IS ACTUALLY PARKED ON — BOTH AXES. The checkpoint parks while any claim's
   // VERDICT is unpublished OR a proposed CORRECTION is unruled (report.awaits_human), and it
   // is a loop: anything still PENDING routes straight back and re-parks. This gate watched
@@ -141,11 +155,39 @@ export default function AuditResults({
       <div className="max-w-4xl mx-auto px-6 lg:px-8 py-8 space-y-6">
         {/* Headline */}
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
-          <h1 className="font-serif text-headline font-light text-ink-50">Audit Complete</h1>
-          <p className="mt-2 text-ink-300 text-sm">
-            {record.claims.length} claim{record.claims.length === 1 ? '' : 's'} verified against the
-            DataHub catalog. Expand any claim to review the cited evidence.
-          </p>
+          {/* THE HEADLINE BRANCHES ONLY WHEN SOMETHING WAS REFUSED. The `refused === 0` arm is
+              the original markup, character for character, rather than one paragraph with
+              conditionals threaded through it — so "a clean run looks exactly as it did" is a
+              structural property of this file and not an argument someone has to re-check. */}
+          {refused === 0 ? (
+            <>
+              <h1 className="font-serif text-headline font-light text-ink-50">Audit Complete</h1>
+              <p className="mt-2 text-ink-300 text-sm">
+                {record.claims.length} claim{record.claims.length === 1 ? '' : 's'} verified against the
+                DataHub catalog. Expand any claim to review the cited evidence.
+              </p>
+            </>
+          ) : (
+            <>
+              <h1 className="font-serif text-headline font-light text-ink-50">
+                {nothingVerified ? 'No Claims Were Verified' : 'Audit Complete with Refusals'}
+              </h1>
+              <p className="mt-2 text-ink-300 text-sm">
+                {nothingVerified ? (
+                  <>
+                    Every claim extracted from this text was refused before checking, so nothing
+                    was verified against the DataHub catalog and nothing can reach it.
+                  </>
+                ) : (
+                  <>
+                    {record.claims.length} claim{record.claims.length === 1 ? '' : 's'} verified
+                    against the DataHub catalog, and {refused} refused before checking. Expand any
+                    claim to review the cited evidence.
+                  </>
+                )}
+              </p>
+            </>
+          )}
         </motion.div>
 
         {/* Receipts strip */}
@@ -253,6 +295,35 @@ export default function AuditResults({
             />
           ))}
         </div>
+
+        {/* Claims REFUSED BEFORE CHECKING — always visible, and deliberately shaped like the
+            block below it. The two are different facts and sit next to each other: a refusal
+            means the decomposer's output was not carried, so nothing was ever asked of the
+            catalog; an error below means the question WAS asked and the entity could not
+            answer it. Neither is a verdict. The reason rendered here is `DroppedView.reason`
+            verbatim — the same string Audit internals shows — because a second wording of the
+            same diagnostic is a second thing that can drift from the truth. */}
+        {refused > 0 && (
+          <div className="surface-card p-5 border-contradicted/20">
+            <div className="flex items-center gap-2 mb-2 text-sm text-contradicted">
+              <Ban size={14} /> {refused} claim{refused === 1 ? '' : 's'} refused before checking
+            </div>
+            <p className="text-xs text-ink-400 mb-3">
+              The decomposer produced {refused === 1 ? 'this' : 'these'} and Attest would not
+              carry {refused === 1 ? 'it' : 'them'}, so no checker saw{' '}
+              {refused === 1 ? 'it' : 'them'} and no verdict exists for{' '}
+              {refused === 1 ? 'it' : 'them'}. This is a gap in the audit, not a finding about
+              the catalog.
+            </p>
+            <div className="space-y-2">
+              {record.dropped.map((d, i) => (
+                <div key={i} className="text-xs text-ink-300 font-mono-nums break-words">
+                  {d.reason}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Claims that could not be checked at all — NOT verdicts, surfaced not swallowed. */}
         {record.errors.length > 0 && (
