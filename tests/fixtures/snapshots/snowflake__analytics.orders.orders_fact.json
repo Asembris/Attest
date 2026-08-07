@@ -3,7 +3,7 @@
   "name": "orders_fact",
   "platform": "snowflake",
   "description": "One row per order. Grain: order_id. Excludes cancelled orders.",
-  "last_modified": "2026-08-05T12:29:08.826000Z",
+  "last_modified": "2026-08-07T04:11:14.690000Z",
   "owners": [
     "urn:li:corpuser:bob.martinez"
   ],
