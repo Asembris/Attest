@@ -1,8 +1,20 @@
 """THE EXTERNAL TRIAL: Attest against a catalog it did not author.
 
-    just external-trial            run it, write the receipt
+    just external-trial --receipt docs/external-trial/<name>.json    run it, write the receipt
     just external-trial --dry-run  resolve every target, print what the catalog holds, audit
                                    nothing (free, no model, no writes)
+
+**A receipt is never overwritten and there is no --force** (`spikes/evidence.py`). The
+default path is the committed historical artifact, so a bare run now REFUSES rather than
+clobbering it: a second run must name a second file, which shows up in the diff and cannot
+hide. Overwriting a receipt destroys the artifact a committed number traces to.
+
+**The catalog-wide census lives in `spikes/external_census.py`, not here** — two different
+experiments, run against one loaded catalog state. This runner's `catalog` block used to
+carry `datasets_readable_by_attest: 52` / `datasets_refused: 15` as LITERALS, never measured
+by the run that reported them; they are `null` here and the census receipt holds the
+measurement. None-is-not-zero, and a hardcoded figure reported as a measurement is the
+fabrication this project exists to catch.
 
 **This is NOT a second benchmark, and the distinction is load-bearing.** The golden
 benchmark (benchmark/README.md) is a conformance gate over a catalog `seed/generate_seed.py`
@@ -46,6 +58,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from attest.api.service import AuditService
 from attest.config import settings
@@ -55,9 +68,20 @@ from attest.record import AuditRecord
 from attest.report import Decision
 from attest.retrieval import ClaimQuery, ClaimReader
 from attest.store import AuditStore
+from evidence import ReceiptExists, provenance, write_receipt
 
 REPO = Path(__file__).resolve().parent.parent
+
+# The BASELINE: the pre-CorpGroup run, committed 2026-08-04. It is the historical "before"
+# artifact and it is never written to again -- `write_receipt` refuses any path that exists,
+# so this constant is now the DEFAULT that makes a careless run fail loudly rather than the
+# destination it used to be.
 RECEIPT = REPO / "docs" / "external-trial" / "results.json"
+
+# The one-line identity of the change this trial is measuring. Recorded in provenance so a
+# receipt says what it was a receipt OF. `2d7eaf9` is the commit reachable from `main`; an
+# earlier amend of the same tree (`7b06288`) is dangling and is deliberately not cited.
+FIX_UNDER_TEST = "2d7eaf9 fix(datahub): read CorpGroup owners, not only CorpUser"
 
 # The pack's URN prefix. Every target below is a showcase dataset; none is Attest's own seed.
 PREFIX = "b2fd91."
@@ -97,11 +121,26 @@ class TrialClaim:
     # from `expected`, THAT is the finding — not a bug to be fixed by moving `expected`.
     human_reading: str
     # Why `expected` is what it is, in one line, read off the catalog.
+    #
+    # WHERE AN EXPECTATION HAS MOVED (`expected_before` below is set), this field is left
+    # BYTE-IDENTICAL to what it said when it was written, and it documents `expected_before`.
+    # `expectation_moved_because` documents the new `expected`. Editing this to match the
+    # new expectation would rewrite the record of what was believed before the fix, which is
+    # the one thing a before/after pair exists to preserve.
     basis: str
     # The documented Attest limit this claim probes, if any.
     probes: str = ""
     # Publish this verdict to the external catalog?
     publish: bool = False
+    # --- a PREDECLARED change of expectation, committed BEFORE the catalog is loaded -----
+    #
+    # Empty on every case whose expectation has not moved, which must stay the overwhelming
+    # majority: a trial whose labels move with its results measures nothing. The pair is
+    # additive so that the baseline receipt stays readable beside this one -- the before
+    # value travels IN the after-receipt, rather than being recoverable only by checking the
+    # source out at an older commit.
+    expected_before: str = ""
+    expectation_moved_because: str = ""
 
 
 CLAIMS: tuple[TrialClaim, ...] = (
@@ -198,7 +237,7 @@ CLAIMS: tuple[TrialClaim, ...] = (
             f"urn:li:corpGroup:b2fd91.ORG_DATA_PLATFORM."
         ),
         target_urn=DBT_ORDERS,
-        expected="ClaimError",
+        expected="Supported",
         human_reading=(
             "Supported. The catalog plainly lists ORG_DATA_PLATFORM as the technical "
             "owner; a person reading the DataHub page sees it. Attest cannot."
@@ -207,6 +246,17 @@ CLAIMS: tuple[TrialClaim, ...] = (
         "and has no CorpGroup arm, so a group owner comes back `{}` and the Session 23 "
         "guard refuses to normalize it. Fails CLOSED (correct) with a wrong diagnosis.",
         probes="CorpGroup ownership — 15 of 67 datasets unauditable",
+        expected_before="ClaimError",
+        expectation_moved_because=(
+            "2d7eaf9 added the `... on CorpGroup { urn }` arm to client.DATASET_QUERY. The "
+            "catalog lists urn:li:corpGroup:b2fd91.ORG_DATA_PLATFORM as the technical owner "
+            "and this claim names that URN, so the owners list is now readable, the claim is "
+            "decidable, and set membership holds. THE HYPOTHESIS IS THAT `expected` "
+            "CONVERGES ON `human_reading` — the disagreement that WAS the finding closing. "
+            "A verdict of Supported is not on its own sufficient evidence: the claim's "
+            "evidence must NAME the corpGroup URN, or something other than the CorpGroup "
+            "arm produced it."
+        ),
     ),
     # --- classification -----------------------------------------------------
     TrialClaim(
@@ -344,6 +394,44 @@ PREDICTIONS = (
 )
 
 
+# The predeclaration, DERIVED from CLAIMS rather than restated beside it. A hand-written
+# list would be a second place to keep the truth and would drift from the cases it describes
+# -- the trajectory.py rule (declare the expected path, but never twice).
+HYPOTHESIS = {
+    "what": (
+        "Does the CorpGroup fix (2d7eaf9) close the gap this trial measured on 2026-08-04, "
+        "against the same foreign catalog, the same 15 cases and the same methodology?"
+    ),
+    "fix_under_test": FIX_UNDER_TEST,
+    "declared_before_the_catalog_was_loaded": True,
+    "predeclared_changes": [
+        {
+            "id": c.id,
+            "before": c.expected_before,
+            "after": c.expected,
+            "reason": c.expectation_moved_because,
+        }
+        for c in CLAIMS
+        if c.expected_before
+    ],
+    "predeclared_frozen": (
+        "every other case: id, family, prose, target_urn, expected, human_reading, basis, "
+        "probes, publish. Also frozen: PREDICTIONS, DISCARDED, and the definitions of "
+        "matched_expectation / answered_the_intended_question / right_by_luck."
+    ),
+    "census_hypothesis": (
+        "The 15 refused datasets were refused SOLELY because of the missing CorpGroup union "
+        "arm, so the count goes to 0. STATED AS A HYPOTHESIS AND NOT AS AN ACCEPTANCE "
+        "REQUIREMENT: a surviving refusal is a new finding to be classified, not a failed "
+        "run. Measured by spikes/external_census.py, both ways, on one catalog state."
+    ),
+    "not_sufficient_evidence": (
+        "A Supported verdict on ext-own-04 alone does not establish the fix: the claim's "
+        "evidence must name urn:li:corpGroup:b2fd91.ORG_DATA_PLATFORM."
+    ),
+}
+
+
 @dataclass
 class Outcome:
     id: str
@@ -354,6 +442,10 @@ class Outcome:
     human_reading: str
     basis: str
     probes: str
+    # Carried into the receipt so the before value travels WITH the after result, and the
+    # two receipts line up without anyone checking the source out at two commits.
+    expected_before: str = ""
+    expectation_moved_because: str = ""
     # --- what actually happened -------------------------------------------
     verdict: str = ""
     matched_expectation: bool = False
@@ -427,6 +519,8 @@ def audit_one(service: AuditService, c: TrialClaim) -> Outcome:
         human_reading=c.human_reading,
         basis=c.basis,
         probes=c.probes,
+        expected_before=c.expected_before,
+        expectation_moved_because=c.expectation_moved_because,
     )
     try:
         record: AuditRecord = service.audit(c.prose, source_agent="external-trial")
@@ -614,7 +708,26 @@ def main() -> int:
     ap.add_argument(
         "--no-publish", action="store_true", help="audit only; write nothing to the catalog"
     )
+    ap.add_argument(
+        "--receipt",
+        type=Path,
+        default=RECEIPT,
+        help=(
+            "where to write the receipt. An EXISTING path is refused and there is no "
+            "--force; the default is the committed baseline, so a careless run fails "
+            "loudly instead of destroying it."
+        ),
+    )
     args = ap.parse_args()
+
+    receipt_path: Path = args.receipt if args.receipt.is_absolute() else REPO / args.receipt
+    # Refused BEFORE the model is called and before anything is written to the catalog: a
+    # run that cannot record its result must not spend money or touch someone's catalog.
+    if not args.dry_run and receipt_path.exists():
+        raise SystemExit(
+            f"{receipt_path} already exists and this will not overwrite a receipt.\n"
+            f"Pass --receipt with a NEW path. Nothing has been audited or published."
+        )
 
     client = DataHubClient()
     preflight(client)
@@ -632,6 +745,13 @@ def main() -> int:
     started = datetime.now(tz=UTC)
     print(f"\n=== EXTERNAL TRIAL — {len(CLAIMS)} claims, real pipeline, {started.isoformat()}")
     print("    catalog: DataHub showcase-ecommerce (see docs/external-trial/ingest.md)")
+    print(f"    receipt: {receipt_path.relative_to(REPO)}")
+    # Printed BEFORE any result appears, so the operator reads the predeclaration first.
+    for change in HYPOTHESIS["predeclared_changes"]:
+        print(
+            f"    PREDECLARED: {change['id']} expected "
+            f"{change['before']} -> {change['after']}"
+        )
 
     # A TEMPORARY store and checkpointer: the trial must not touch the demo's attest.db.
     # Both are passed explicitly rather than configured, so no ambient setting can point
@@ -660,11 +780,16 @@ def main() -> int:
         readback = verify_published(client, outcomes)
 
     finished = datetime.now(tz=UTC)
-    receipt = build_receipt(started, finished, outcomes, readback, store)
-    RECEIPT.parent.mkdir(parents=True, exist_ok=True)
-    RECEIPT.write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
+    receipt = build_receipt(started, finished, outcomes, readback, store, client.gms_url)
+    try:
+        write_receipt(receipt_path, receipt)
+    except ReceiptExists as exc:
+        # Only reachable if the file appeared during the run. The audit is done and paid
+        # for, so the result is printed rather than lost.
+        print(f"\n!! {exc}\n\n{json.dumps(receipt, indent=2)}")
+        return 1
     summarize(receipt)
-    print(f"\nreceipt -> {RECEIPT.relative_to(REPO)}")
+    print(f"\nreceipt -> {receipt_path.relative_to(REPO)}")
     return 0
 
 
@@ -674,6 +799,7 @@ def build_receipt(
     outcomes: list[Outcome],
     readback: list[dict],
     store: AuditStore,
+    gms_url: str,
 ) -> dict:
     usd = 0.0
     priced = True
@@ -698,15 +824,29 @@ def build_receipt(
             "nothing here is scored, and no accuracy, macro-F1 or confusion matrix is "
             "computed over it. See docs/external-trial.md."
         ),
-        "reproduce": "just external-trial",
+        "reproduce": "just external-trial --receipt <path>",
         "started": started.isoformat(),
         "finished": finished.isoformat(),
+        "provenance": provenance(
+            fix_under_test=FIX_UNDER_TEST, gms_url=gms_url, baseline_receipt=RECEIPT
+        ),
+        "hypothesis": HYPOTHESIS,
         "catalog": {
             "source": "DataHub showcase-ecommerce datapack",
             "ingest": "docs/external-trial/ingest.md",
+            # A property of the checksum-pinned pack, not a measurement of Attest.
             "datasets_in_pack": 67,
-            "datasets_readable_by_attest": 52,
-            "datasets_refused": 15,
+            # NULL, NOT ZERO, and not the 52/15 that used to sit here. Those were hardcoded
+            # literals in this function -- never measured by the run that reported them --
+            # so an after-run would have emitted "15 refused" whatever the fix did. This
+            # trial does not measure the catalog; the census does, and says which.
+            "datasets_readable_by_attest": None,
+            "datasets_refused": None,
+            "census": (
+                "measured separately, on the same loaded catalog state, by "
+                "spikes/external_census.py. The baseline receipt's 52/15 were HARDCODED, "
+                "never measured."
+            ),
         },
         "totals": {
             "claims": len(outcomes),

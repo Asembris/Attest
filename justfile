@@ -239,6 +239,19 @@ external-ingest *ARGS:
 external-trial *ARGS:
     python spikes/external_trial.py {{ARGS}}
 
+# THE CATALOG CENSUS: how many of the pack's datasets can Attest's GraphQL read resolve AT
+# ALL, measured WITH and WITHOUT the `... on CorpGroup` union arm against one loaded catalog
+# state. Free -- no model, no claims, no writes.
+#
+# A DIFFERENT EXPERIMENT from the trial, and a separate script on purpose: the trial asks
+# whether 15 hand-written claims get defensible verdicts, this asks a catalog-wide question
+# about the read itself. Keeping them apart keeps the trial runner on its original
+# methodology. The pre-fix arm is re-derived LIVE rather than quoted, because the baseline
+# receipt's "52 readable / 15 refused" were hardcoded literals that run never measured.
+# Needs `just external-ingest` first.
+external-census *ARGS:
+    python spikes/external_census.py {{ARGS}}
+
 # --- verification ------------------------------------------------------------
 
 # Run the suite against the live seeded catalog, ACROSS CORES.
