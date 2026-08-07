@@ -20,6 +20,16 @@ plausible-looking URN for a dataset that does not exist would sail into a checke
 come back Insufficient-Coverage — an invented entity reported as an under-documented
 one, which is precisely the confusion Attest exists to prevent.
 
+**A claim's FAMILY must match the sentence it came from.** A deterministic lexical
+cross-check (family.py), applied to the claim's own quoted sentence after it validates and
+before anything can route it to a checker. A sentence whose only family vocabulary is
+"labelled / tagged / PII" did not produce a schema claim, and a schema checker handed one
+answers a question the agent never asked — measured on a foreign catalog, and right by luck
+that time (CLAUDE.md §23). It fails OPEN by design: it refuses only where the text signals
+exactly one family and the extraction names another, and it never rewrites a family, because
+correcting the transcription would put the semantic layer back in charge of the thing it
+just got wrong.
+
 **Nothing is dropped silently.** What was extracted, what was rejected, and why, all
 come back in the result. A claim Attest could not parse is a gap in the audit and has to
 be visible as one.
@@ -38,6 +48,7 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 
+from attest import family
 from attest.claims import Claim
 from attest.config import Step
 from attest.llm import LLM, MalformedOutput
@@ -228,12 +239,24 @@ def _to_claim(raw: dict[str, Any], source: str) -> Claim | Dropped:
     # well-formed claim is, and nothing here second-guesses them.
     fields = {k: v for k, v in raw.items() if v is not None and k in allowed}
     try:
-        return _CLAIM_ADAPTER.validate_python(fields)
+        claim = _CLAIM_ADAPTER.validate_python(fields)
     except ValidationError as exc:
         return Dropped(
             reason=f"invalid-claim: {exc.errors()[0].get('msg', 'validation failed')}",
             payload=raw,
         )
+
+    # THE FAMILY CROSS-CHECK, and the only place it runs. A well-formed claim of the wrong
+    # KIND is the one transcription failure everything upstream is blind to: the URN was
+    # quoted, the schema validated, and a checker would answer it correctly — about a
+    # question the agent never asked. Refused here, against the claim's OWN quoted sentence,
+    # so it never enters the run's claim list and the router can never see it. The refusal
+    # is a `Dropped` like any other: the payload keeps the model's output whole, so what was
+    # refused is inspectable rather than merely absent.
+    matched = family.check(claim.raw_text, claim.claim_type)
+    if not matched.ok:
+        return Dropped(reason=matched.reason, payload=raw)
+    return claim
 
 
 def decompose(text: str, llm: LLM | None = None) -> Decomposition:
