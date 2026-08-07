@@ -37,11 +37,11 @@ export const headline = {
   // pass@k is a bug DETECTOR, not a score: a deterministic checker cannot return two answers.
   passAtKCore: { k: 5, value: 1.0 },
   passAtKFull: { k: 3, value: 1.0 },
-  // full-pipeline receipts (full.json): the real model, 40 claims.
-  costUsd: 0.0138309,
+  // full-pipeline receipts (full.json): the real model, 40 claims. Scorer v2.
+  costUsd: 0.01570005,
   explanations: 40,
-  modelAuthored: 40,
-  guardRejected: 0,
+  modelAuthored: 39,
+  guardRejected: 7,
 };
 
 // Rows = actual, columns = predicted [Supported, Contradicted, Insufficient-Coverage].
