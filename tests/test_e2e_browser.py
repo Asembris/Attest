@@ -1253,3 +1253,194 @@ def test_a_discovery_outage_is_VISIBLE_in_the_browser_and_never_a_silent_static_
         print("    GET /catalog/search -> 503 + Retry-After (never an empty list)")
         print("    the picker says it is offline, says why, and offers manual entry")
         print("    no results are rendered, and no static list is substituted")
+
+
+# --- claims refused before checking, in the browser --------------------------
+
+
+def _refusal_service(tmp_path, name: str, replies: list[str], snapshots: dict):
+    """A real service whose MODEL is scripted and whose CATALOG is a fixture.
+
+    Deterministic on purpose. What is under test is a RENDERING rule keyed on
+    `record.dropped`, and a real model decides for itself how many claims it drops — a
+    browser gate that flakes on the provider is a gate people learn to re-run until it goes
+    green. So the pipeline, the API, the socket, the built bundle and the browser are all
+    real, and only the two things that would make the fixture non-deterministic are not.
+    Nothing about DataHub is exercised and nothing needs to be: a refused claim is refused
+    BEFORE any resolve.
+
+    The explanation call is left to fall through to the deterministic template (the scripted
+    reply repeats, and it does not satisfy the explanation schema). That is the honest
+    degradation explain.py already ships, and it keeps this test off the semantic layer,
+    which is not what it is about.
+    """
+    from attest.api.service import AuditService
+    from attest.graph import Pipeline
+    from attest.llm import LLM
+    from attest.store import AuditStore
+    from fakes import FakeChat, FakeDataHub
+
+    # FakeDataHub rather than FakeCatalog: `GET /health` asks the client to `execute` a
+    # liveness query, which the read-only fake does not answer — and the server would come up
+    # answering 500 there, which reads as "the API never started" rather than as the missing
+    # method it is. The write side is never reached (`write_back=False`, and nothing here is
+    # ever approved).
+    catalog = FakeDataHub(snapshots)
+    return AuditService(
+        pipeline=Pipeline(llm=LLM(client=FakeChat(replies=replies)), client=catalog),
+        store=AuditStore(tmp_path / name),
+        client=catalog,
+        write_back=False,
+    )
+
+
+def _drive_to_results(browser, base: str, prose: str):
+    """Paste, audit, click through to the results screen. Returns (page, calls, errors)."""
+    page = browser.new_page()
+    calls = ApiCalls()
+    calls.attach(page)
+    console_errors: list[str] = []
+    page.on("console", lambda m: console_errors.append(m.text) if m.type == "error" else None)
+
+    page.goto(base, wait_until="networkidle")
+    page.get_by_placeholder("Paste the AI agent's claims").fill(prose)
+    page.get_by_role("button", name="Run Audit").click()
+    proceed = page.get_by_role("button", name="Continue to results")
+    proceed.wait_for(timeout=60_000)
+    calls.assert_all_ok("the audit")
+    proceed.click()
+    return page, calls, console_errors
+
+
+def test_a_refused_claim_is_VISIBLE_without_opening_the_internals_panel(
+    browser, tmp_path, capsys
+):
+    """A run that refused a claim may not read as an unqualified success.
+
+    **THE DEFECT THIS PINS IS A CLICK.** `record.dropped` has always crossed the wire whole —
+    reason and payload — and `AuditInternals` has always rendered it. But that panel is
+    `useState(false)`, so the only account of a claim NOBODY CHECKED sat behind an accordion a
+    reader has no reason to open, under a headline reading "Audit Complete" and a line reading
+    "0 claims verified against the DataHub catalog". That is Attest reporting silence as an
+    answer about its own output — the one thing this product exists to refuse — and it is the
+    same shape as §10a's write-back gate and §11's `unknown` state, one surface out.
+
+    Three runs through one real browser, because the rule has three arms and each is a
+    different way to get it wrong:
+
+        no refusals    -> the page is EXACTLY what it was, headline included
+        some refused   -> the refusal is visible AND the verdicts still read normally
+        all refused    -> no unqualified success headline anywhere on the page
+
+    The run's STATUS is `complete` in all three, and stays so. Nothing here changes what the
+    pipeline did or what the API said — only whether a person is told about it without being
+    asked to go looking.
+    """
+    from tests.conftest import DOCUMENTED
+
+    from _snapshots import load_snapshot
+    from fakes import claim_reply
+
+    alice = "urn:li:corpuser:alice.chen"
+    term = "urn:li:glossaryTerm:EmailAddress"
+    snapshots = {DOCUMENTED: load_snapshot(DOCUMENTED)}
+
+    # The measured wrong-family shape (§23, ext-class-01): classification prose, a schema
+    # claim back. The family guard refuses it, so it lands in `dropped` and never resolves.
+    wrong_family = {
+        "claim_type": "schema",
+        "target_urn": DOCUMENTED,
+        "raw_text": f"The email column of {DOCUMENTED} is labelled {term} and tagged as PII.",
+        "columns": [{"name": "email", "native_type": None}],
+    }
+    owned = {
+        "claim_type": "ownership",
+        "target_urn": DOCUMENTED,
+        "raw_text": f"The dataset {DOCUMENTED} is owned by {alice}.",
+        "owner_urn": alice,
+    }
+    clean_prose = f"The dataset {DOCUMENTED} is owned by {alice}."
+    refusing_prose = (
+        f"The dataset {DOCUMENTED} is owned by {alice}. "
+        f"The email column of {DOCUMENTED} is labelled {term} and tagged as PII."
+    )
+
+    seen: dict[str, str] = {}
+
+    # --- ARM 1: no refusals. The page must be what it has always been. --------
+    service = _refusal_service(tmp_path, "clean.db", [claim_reply([owned])], snapshots)
+    base, stop = _serve_in_process(service)
+    try:
+        page, calls, console_errors = _drive_to_results(browser, base, clean_prose)
+        page.get_by_role("heading", name="Audit Complete", exact=True).wait_for(timeout=30_000)
+        body = page.inner_text("body")
+        assert "refused before checking" not in body, (
+            "a clean run grew refusal copy. The no-drop path must be untouched."
+        )
+        assert "1 claim verified against the DataHub catalog." in body
+        assert "with Refusals" not in body and "No Claims Were Verified" not in body
+        calls.assert_all_ok("the clean run")
+        assert not console_errors, console_errors[:3]
+        seen["clean"] = "'Audit Complete', 1 verified, no refusal copy"
+        page.close()
+    finally:
+        stop()
+
+    # --- ARM 2: one verified, one refused. Both facts, on the same page. ------
+    service = _refusal_service(
+        tmp_path, "mixed.db", [claim_reply([owned, wrong_family])], snapshots
+    )
+    base, stop = _serve_in_process(service)
+    try:
+        page, calls, console_errors = _drive_to_results(browser, base, refusing_prose)
+        page.get_by_text("1 claim refused before checking").wait_for(timeout=30_000)
+        body = page.inner_text("body")
+        # THE REASON ITSELF, not a count and not a paraphrase — and with NO click. The string
+        # is `DroppedView.reason` verbatim, so a reader gets the diagnostic the API carries
+        # rather than a second wording of it that can drift away from the truth.
+        assert "family-mismatch:" in body, (
+            "the count is shown but the reason is not. A refusal a reader cannot act on is a "
+            "refusal reported to nobody."
+        )
+        assert "extracted as schema" in body
+        # The verdicts are unaffected: a refusal is a gap in the audit, not a finding.
+        assert page.get_by_role("heading", name="Audit Complete with Refusals").is_visible()
+        assert "1 claim verified" in body
+        calls.assert_all_ok("the mixed run")
+        assert not console_errors, console_errors[:3]
+        seen["mixed"] = "'Audit Complete with Refusals', 1 verified + 1 refused, reason shown"
+        page.close()
+    finally:
+        stop()
+
+    # --- ARM 3: everything refused. No unqualified success, anywhere. --------
+    service = _refusal_service(
+        tmp_path, "all-dropped.db", [claim_reply([wrong_family])], snapshots
+    )
+    base, stop = _serve_in_process(service)
+    try:
+        page, calls, console_errors = _drive_to_results(browser, base, refusing_prose)
+        page.get_by_role("heading", name="No Claims Were Verified").wait_for(timeout=30_000)
+        body = page.inner_text("body")
+        assert page.get_by_role("heading", name="Audit Complete", exact=True).count() == 0, (
+            "an all-refused run still announced an unqualified 'Audit Complete'"
+        )
+        assert "1 claim refused before checking" in body
+        assert "family-mismatch:" in body
+        # THE BACKEND IS UNTOUCHED, and the page does not pretend otherwise: the run really is
+        # `complete` and POST /audit really is a 201 — the pipeline ran to the end and violated
+        # nothing. What changed is the headline, not the status.
+        posts = [c for c in calls.seen if c[0] == "POST" and c[1].endswith("/audit")]
+        assert posts and posts[0][2] == 201, posts
+        calls.assert_all_ok("the all-refused run")
+        assert not console_errors, console_errors[:3]
+        seen["all-dropped"] = "'No Claims Were Verified', 0 verified + 1 refused, 201 complete"
+        page.close()
+    finally:
+        stop()
+
+    with capsys.disabled():
+        print("\n\n  REFUSED CLAIMS, IN THE BROWSER (no accordion opened)")
+        for arm in ("clean", "mixed", "all-dropped"):
+            print(f"    {arm:12s}: {seen[arm]}")
+        print("    the reason shown is DroppedView.reason, verbatim, on the page itself")
