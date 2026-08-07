@@ -126,6 +126,78 @@ def test_breaking_a_checker_collapses_the_benchmark(snapshot, now, monkeypatch):
     assert broken.coverage_failures > 0, "affirming a silent catalog is a COVERAGE bug"
 
 
+# --- preservation: the deterministic core did not move --------------------------
+
+
+def test_the_case_set_is_exactly_what_is_committed_in_cases_json():
+    """The dataset is a citable artifact. A scorer change may not touch a single case.
+
+    `cases.json` is version 1 and is cited on its own; the 12-cell counts are quoted in
+    benchmark/README.md. Regenerating the generator's output here and comparing it to the
+    committed file catches an edit to either half, in the session that made it.
+    """
+    import json
+
+    from benchmark.cases import CASES_JSON, as_dict
+
+    committed = json.loads(CASES_JSON.read_text(encoding="utf-8"))
+    regenerated = json.loads(json.dumps(as_dict()))  # tuples -> lists, as the file has them
+
+    assert committed == regenerated, "benchmark/cases.json is stale or a case was edited"
+    assert committed["n_cases"] == 40
+    assert len(CASES) == 40
+    assert committed["coverage"] == coverage()
+    assert all(n > 0 for n in coverage().values()), "a dark cell is a silent misclassifier"
+
+
+def test_the_deterministic_core_still_scores_exactly_what_its_receipt_says(snapshot):
+    """`run_core` must be untouched by the matching rewrite, and this proves it by receipt.
+
+    The core feeds each case's structured claim straight to the checkers: no decomposer, no
+    extraction, nothing for a matcher to do. So scorer v2 must reproduce `results/core.json`
+    field for field — and if it ever does not, the change reached a path it had no business
+    reaching, whatever else the suite says.
+    """
+    import json
+
+    from benchmark import run_eval
+
+    committed = json.loads(
+        (run_eval.RESULTS_DIR / "core.json").read_text(encoding="utf-8")
+    )["metrics"]
+    m = score(run_eval.run_core(run_eval.Catalog(snapshot_source=load_snapshot)))
+
+    assert m.accuracy == committed["accuracy"]
+    assert m.macro_f1 == committed["macro_f1"]
+    assert m.per_verdict == committed["per_verdict"]
+    assert m.matrix == committed["confusion_matrix"]
+    assert m.labels == committed["labels"]
+    assert m.correctness_failures == committed["correctness_failures"]
+    assert m.coverage_failures == committed["coverage_failures"]
+    assert m.extraction_failures == committed["extraction_failures"]
+    assert m.mis_extracted_but_right == committed["mis_extracted_but_right"]
+    assert m.errors == committed["errors"]
+
+
+def test_the_core_receipt_carries_no_full_mode_fields():
+    """The extraction block and the scorer provenance are FULL MODE ONLY, on purpose.
+
+    A core run measures no extraction, so an extraction block there would report zeros about
+    a question that was never asked. Keeping them out is also what leaves `core.json` and
+    `core-sabotaged-classification.json` byte-identical across the v1 -> v2 change: their
+    numbers did not move, so their files must not either.
+    """
+    import json
+
+    from benchmark import run_eval
+
+    for name in ("core.json", "core-sabotaged-classification.json"):
+        payload = json.loads((run_eval.RESULTS_DIR / name).read_text(encoding="utf-8"))
+        assert "extraction_fidelity" not in payload, name
+        assert "scorer_version" not in payload, name
+        assert payload["mode"] == "core", name
+
+
 def test_the_benchmark_now_is_the_catalogs_now_and_not_the_wall_clock(snapshot):
     """The freshness labels are relative to the seed, so a wall-clock `now` would rot them.
 
