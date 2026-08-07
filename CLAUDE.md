@@ -464,11 +464,20 @@ invariants worth not rediscovering:
   MEASURED: 100% at k=5 (core) and k=3 (full).
 - **MEASURED (scorer v2 — see §25; the verdict metrics are unmoved from v1): 100% / macro-F1
   1.000 on both core and full pipeline; 40/40 extractions EXACT with 0 extras and 0
-  duplicates; $0.0157 per 40 claims; 39/40 model-authored explanations, 1 template fallback,
-  7 guard-rejected drafts; 0 correctness and 0 coverage failures.** The semantic-layer
-  figures moved from the previous receipt's 40/40-and-0 and the cost from $0.0138 — that is
+  duplicates; $0.0153 per 40 claims; 39/40 model-authored explanations, 1 template fallback,
+  5 guard-rejected drafts; 0 correctness and 0 coverage failures.** The semantic-layer
+  figures moved from the pre-v2 receipt's 40/40-and-0 and the cost from $0.0138 — that is
   run-to-run variation in the model and the guards, NOT a scorer effect (the scorer cannot
   reach an explanation), and it is reported rather than re-rolled until it reads 40/40.
+  **Two v2 runs exist and the guard count differs between them (7, then 5), with the
+  template fallback at 1 both times.** The second was run only to record a CLEAN
+  `scorer_commit` (the first was generated before its own change was committed, so it
+  honestly carried `scorer_tree_dirty: true`) — NOT to improve a number, and the receipt is
+  whatever that single run produced. The verdict metrics, extraction fidelity, coverage and
+  pass@3 are byte-identical across both runs; only cost, latency and the guard count moved.
+  That spread IS the measurement: the semantic layer is a model call, and a guard that fired
+  7 times and then 5 on the same 40 sentences is the variance being visible rather than
+  averaged away.
 - **The vacuity check RUNS IN THE SUITE, not only in a command someone has to remember.**
   `just bench-sabotage` exists and exits non-zero if the numbers do not move — but a
   guarantee that only fires when someone types it will rot, exactly like the `just live`

@@ -38,10 +38,10 @@ export const headline = {
   passAtKCore: { k: 5, value: 1.0 },
   passAtKFull: { k: 3, value: 1.0 },
   // full-pipeline receipts (full.json): the real model, 40 claims. Scorer v2.
-  costUsd: 0.01570005,
+  costUsd: 0.0153102,
   explanations: 40,
   modelAuthored: 39,
-  guardRejected: 7,
+  guardRejected: 5,
 };
 
 // Rows = actual, columns = predicted [Supported, Contradicted, Insufficient-Coverage].

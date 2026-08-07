@@ -240,13 +240,13 @@ one of the two committed receipts.
 | Coverage failures (anything ↔ Insufficient) | 0 | 0 |
 | pass@k | **100%** (k=5) | **100%** (k=3) |
 | Extraction fidelity | n/a — nothing is extracted | **40/40 exact**, 0 extras, 0 duplicates |
-| Cost | $0 | **$0.0157** / 40 claims |
+| Cost | $0 | **$0.0153** / 40 claims |
 
 Per verdict, both modes: precision 1.000, recall 1.000, F1 1.000 across Supported (n=15),
 Contradicted (n=17), Insufficient-Coverage (n=8).
 
 The full-pipeline run also recorded **39/40 model-authored explanations, 1 template
-fallback and 7 guard-rejected drafts**. Both halves of that matter and they pull opposite
+fallback and 5 guard-rejected drafts**. Both halves of that matter and they pull opposite
 ways: a guard that rejected everything would score 0% model-authored and catch every
 hallucination. The fallback is the design working — a draft that failed a gate degraded to
 something *true* rather than to something plausible — and it is reported rather than

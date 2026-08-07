@@ -80,8 +80,8 @@
   },
   "scorer_version": 2,
   "matching_policy": "canonical-subject-one-to-one-v1",
-  "scorer_commit": "bcb5449f61b47ccb3734969530f87a7e5a543aa4",
-  "scorer_tree_dirty": true,
+  "scorer_commit": "478a1acbdaa7f8741c44b6e6458ab3725135f4db",
+  "scorer_tree_dirty": false,
   "extraction_fidelity": {
     "clean_extractions": 40,
     "by_outcome": {
@@ -113,11 +113,11 @@
     "model_authored": 39,
     "model_authored_rate": 0.975,
     "fell_back_to_template": 1,
-    "guard_rejected_drafts": 7,
-    "guard_rejection_rate": 0.175
+    "guard_rejected_drafts": 5,
+    "guard_rejection_rate": 0.125
   },
-  "cost_usd": 0.01570005,
-  "latency_ms": 184990.28469998666,
+  "cost_usd": 0.0153102,
+  "latency_ms": 187547.5859000053,
   "consistency": {
     "k": 3,
     "pass_at_k": 1.0,
