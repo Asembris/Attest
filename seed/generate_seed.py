@@ -61,6 +61,7 @@ from pathlib import Path
 
 from datahub.emitter.mce_builder import (
     make_dataset_urn,
+    make_group_urn,
     make_tag_urn,
     make_term_urn,
     make_user_urn,
@@ -70,6 +71,7 @@ from datahub.ingestion.sink.file import write_metadata_file
 from datahub.metadata.schema_classes import (
     AuditStampClass,
     BooleanTypeClass,
+    CorpGroupInfoClass,
     CorpUserInfoClass,
     DatasetPropertiesClass,
     GlobalTagsClass,
@@ -189,6 +191,25 @@ USERS = {
     "dana.wu": ("Dana Wu", "dana.wu@example.com", "Platform Engineer"),
 }
 
+# GROUPS EXIST BECAUSE A CATALOG THAT ONLY EVER EMITS `make_user_urn` CANNOT EXERCISE
+# `CorpGroup` OWNERSHIP, AND THAT IS EXACTLY HOW THE GAP HID (Session 32).
+#
+# `Owner.owner` is the GraphQL union CorpUser | CorpGroup. `client.DATASET_QUERY` selected
+# only the CorpUser arm, so a group-owned dataset came back `{"owner": {}}` and was refused
+# as a malformed response — every claim about it a ClaimError. Measured on an external
+# catalog: 15 of 67 datasets unauditable. Nothing in this repo could see it, because every
+# seeded dataset, every captured fixture, the offline tier, the live tier and the 12-cell
+# matrix contained corpuser owners and NOTHING ELSE. A seed cannot exercise a shape it never
+# emits — Session 5's "a fake cannot fail the way the real thing fails", one level up.
+#
+# So the group is seeded first and the query arm second, in that order, deliberately.
+GROUPS = {
+    "data-platform": (
+        "Data Platform",
+        "Owns the shared ingestion and warehouse infrastructure.",
+    ),
+}
+
 VERDICT_PROPERTY_URN = "urn:li:structuredProperty:attest.groundedness_verdict"
 
 
@@ -212,6 +233,11 @@ class Dataset:
     description: str | None
     columns: list[Column]
     owner: str | None
+    # CorpGroup owners, by group id. Separate from `owner` rather than folded into it
+    # because `owner` is a corpuser username and both `ground_truth.json` and the
+    # frontend's seeded-dataset list read it under that meaning. A dataset may carry
+    # either, or both — DataHub's owners list is heterogeneous.
+    owner_groups: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
     terms: list[str] = field(default_factory=list)
     # Written as the `hasPII` custom property: an upstream classifier's finding.
@@ -659,6 +685,42 @@ CATALOG: list[Dataset] = [
             "only dataset that isolates the schema-silent case."
         ),
     ),
+    # THE ONLY GROUP-OWNED DATASET, and it exists for exactly one reason: to be the shape
+    # every other seeded dataset is not. Its owner is a `urn:li:corpGroup:` rather than a
+    # `urn:li:corpuser:`, which is the shape that read back as a malformed response until
+    # `DATASET_QUERY` grew its `... on CorpGroup` arm (Session 32).
+    #
+    # It carries NO PII signals, NO Verified marker and an ordinary fresh timestamp on
+    # purpose: it must isolate the owner-type variable and nothing else, so a change in its
+    # verdicts can only be about how ownership is READ. It is deliberately NOT named
+    # anything matching "custo"/"customer" — `test_discovery_live` searches that string and
+    # then resolves every hit over GraphQL.
+    Dataset(
+        platform="snowflake",
+        name="analytics.platform.ingest_metrics",
+        description=(
+            "Per-run counters for the warehouse ingestion jobs. Owned by a team, not "
+            "by a person."
+        ),
+        owner=None,
+        owner_groups=["data-platform"],
+        tags=["Tier2"],
+        terms=[],
+        columns=[
+            Column("run_id", "string", "VARCHAR(36)", "Ingestion run key.", tags=["NonPII"]),
+            Column("rows_loaded", "number", "NUMBER(12,0)", "Rows written by the run."),
+            Column("started_at", "time", "TIMESTAMP_NTZ", "When the run started."),
+        ],
+        exercises="Supported",
+        note=(
+            "The ONLY dataset owned by a CorpGroup rather than a CorpUser. An ownership "
+            "claim naming urn:li:corpGroup:data-platform must be Supported, and one "
+            "naming anyone else must be Contradicted — the same rules as every other "
+            "dataset, which is the whole point. Before the CorpGroup arm existed in "
+            "DATASET_QUERY this dataset was unreadable and every claim about it came "
+            "back as a ClaimError."
+        ),
+    ),
 ]
 
 
@@ -707,6 +769,24 @@ def vocabulary_mcps() -> list[MetadataChangeProposalWrapper]:
                 entityUrn=make_user_urn(username),
                 aspect=CorpUserInfoClass(
                     active=True, displayName=display, email=email, title=title
+                ),
+            )
+        )
+
+    # The group must exist as an ENTITY, not merely as a URN inside an ownership aspect.
+    # DataHub will resolve the `... on CorpGroup` arm off the reference either way, but a
+    # group with no CorpGroupInfo has no name in the UI — and the fixture would then be
+    # pinning a shape nobody would ship.
+    for group_id, (display, description) in GROUPS.items():
+        mcps.append(
+            MetadataChangeProposalWrapper(
+                entityUrn=make_group_urn(group_id),
+                aspect=CorpGroupInfoClass(
+                    displayName=display,
+                    description=description,
+                    admins=[],
+                    members=[],
+                    groups=[],
                 ),
             )
         )
@@ -818,19 +898,18 @@ def dataset_mcps(ds: Dataset) -> list[MetadataChangeProposalWrapper]:
         )
 
     # Deliberately omitted for the Insufficient-Coverage datasets.
-    if ds.owner:
+    if ds.owner or ds.owner_groups:
+        owners = [
+            OwnerClass(owner=make_user_urn(u), type=OwnershipTypeClass.TECHNICAL_OWNER)
+            for u in ([ds.owner] if ds.owner else [])
+        ] + [
+            OwnerClass(owner=make_group_urn(g), type=OwnershipTypeClass.TECHNICAL_OWNER)
+            for g in ds.owner_groups
+        ]
         mcps.append(
             MetadataChangeProposalWrapper(
                 entityUrn=ds.urn,
-                aspect=OwnershipClass(
-                    owners=[
-                        OwnerClass(
-                            owner=make_user_urn(ds.owner),
-                            type=OwnershipTypeClass.TECHNICAL_OWNER,
-                        )
-                    ],
-                    lastModified=stamp,
-                ),
+                aspect=OwnershipClass(owners=owners, lastModified=stamp),
             )
         )
 
@@ -882,6 +961,7 @@ def ground_truth() -> dict:
                 "name": ds.name,
                 "has_description": ds.description is not None,
                 "owner": ds.owner,
+                "owner_groups": ds.owner_groups,
                 "tags": ds.tags,
                 "terms": ds.terms,
                 "has_pii": ds.has_pii,

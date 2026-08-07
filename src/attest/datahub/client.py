@@ -190,7 +190,18 @@ class DataHubClient:
         ownership {
           owners {
             owner {
+              # OwnerType is the union CorpUser | CorpGroup, and BOTH arms are needed: an
+              # arm that matches nothing contributes an empty object, so a group-owned
+              # dataset used to arrive as {"owner": {}} and was refused as malformed --
+              # correctly failing closed, with a diagnosis that blamed the response when
+              # the response was fine and this query was incomplete. Measured on an
+              # external catalog: 15 of 67 datasets unauditable (CLAUDE.md §23).
+              #
+              # The group arm asks for `urn` and NOTHING ELSE, deliberately. An owner's
+              # canonical identity is its URN; a display name is not an identity, and a
+              # parser cannot compare what the query never fetched.
               ... on CorpUser { urn properties { displayName email } }
+              ... on CorpGroup { urn }
             }
             ownershipType { urn }
           }
