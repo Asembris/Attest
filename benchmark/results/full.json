@@ -78,16 +78,46 @@
     "mis_extracted_but_right": [],
     "errors": []
   },
+  "scorer_version": 2,
+  "matching_policy": "canonical-subject-one-to-one-v1",
+  "scorer_commit": "bcb5449f61b47ccb3734969530f87a7e5a543aa4",
+  "scorer_tree_dirty": true,
+  "extraction_fidelity": {
+    "clean_extractions": 40,
+    "by_outcome": {
+      "exact": 40
+    },
+    "extra_claims": 0,
+    "duplicate_claims": 0,
+    "partial_subjects": [],
+    "wrong_family": [],
+    "correctness_failures_from_extraction": 0,
+    "coverage_failures_from_extraction": 0
+  },
+  "extraction_risk": {
+    "cases_with_subtle_extraction_demand": 27,
+    "cases_type_and_urn_only": 13,
+    "by_demand": {
+      "numeric-window": 7,
+      "fractional-window": 1,
+      "type+urn only": 13,
+      "column-scoping": 8,
+      "negation": 8,
+      "term-urn": 1,
+      "type-assertion": 4
+    },
+    "cases_bypassing_the_model": 0
+  },
   "semantic_layer": {
     "explanations": 40,
-    "model_authored": 40,
-    "model_authored_rate": 1.0,
-    "fell_back_to_template": 0,
-    "guard_rejected_drafts": 0,
-    "guard_rejection_rate": 0.0
+    "model_authored": 39,
+    "model_authored_rate": 0.975,
+    "fell_back_to_template": 1,
+    "guard_rejected_drafts": 7,
+    "guard_rejection_rate": 0.175
   },
-  "cost_usd": 0.0138309,
-  "latency_ms": 204052.17379999702,
+  "cost_usd": 0.01570005,
+  "latency_ms": 184990.28469998666,
   "consistency": {
     "k": 3,
     "pass_at_k": 1.0,
