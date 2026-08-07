@@ -3,7 +3,7 @@
   "name": "users",
   "platform": "postgres",
   "description": "Application user accounts. Source of truth for auth.",
-  "last_modified": "2026-08-07T04:11:14.690000Z",
+  "last_modified": "2026-08-07T11:43:21.137000Z",
   "owners": [
     "urn:li:corpuser:dana.wu"
   ],

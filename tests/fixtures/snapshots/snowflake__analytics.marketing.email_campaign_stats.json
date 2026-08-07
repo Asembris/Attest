@@ -3,7 +3,7 @@
   "name": "email_campaign_stats",
   "platform": "snowflake",
   "description": "Per-recipient campaign engagement. Recipients are joined on a salted hash; the raw address is never landed here.",
-  "last_modified": "2026-08-07T04:11:14.690000Z",
+  "last_modified": "2026-08-07T11:43:21.137000Z",
   "owners": [
     "urn:li:corpuser:carol.davis"
   ],
