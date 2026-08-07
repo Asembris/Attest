@@ -134,6 +134,76 @@ MAX_RESULTS = 25
 # prefix-wildcard convenience below rather than mangling a deliberate query.
 _QUERY_OPERATORS = '*"():+'
 
+# The handshake announced, but the server would not say what it is. A THIRD value, and it
+# exists because `""` is already taken: an un-started session reports the empty string, so
+# spelling "up but anonymous" the same way would report a live server exactly as a server
+# nobody has contacted. That is `ReadState.UNKNOWN` refusing to be `INCOMPLETE` (§11) and
+# `Trace.cost` reporting None rather than 0 (§2d), one transport further out — a value
+# Attest cannot state must not be spelled like a state it has not reached.
+UNKNOWN_SERVER = "unknown"
+
+# The two names the `initialize` result has carried for the same object. `mcp` 2.0.0 renamed
+# `serverInfo` to `server_info`; the pyproject floor (`mcp>=1.2`) admits both, so both are
+# read. Preference order is newest-first, so the current client costs one lookup.
+#
+# EXACTLY TWO NAMES, and no reflection over whatever else the object happens to carry:
+# guessing at fields is how a transport starts inventing data, which is the thing this
+# package exists at the edge of (§22). A third rename must fail this and be added here
+# deliberately, not be absorbed by a search that always finds something.
+_SERVER_INFO_FIELDS = ("server_info", "serverInfo")
+
+# The SAME rename, at the second and more dangerous site. `CallToolResult.isError` became
+# `is_error` in the same release, and `getattr(result, "isError", False)` answers False for
+# EVERY response under the new client -- so the branch that turns a refused search into
+# `DiscoveryUnavailable` was dead, and an error was no longer recognized as an error.
+#
+# It stayed survivable only by luck: an error body is not JSON, so `json.loads` raised and
+# the call still failed 503 -- with the WRONG diagnosis ("a body that is not JSON" rather
+# than "the server refused the search"), and only for as long as no error body is ever valid
+# JSON. Absence of a crash is not the guard working.
+_TOOL_ERROR_FIELDS = ("is_error", "isError")
+
+
+def tool_reported_error(result: Any) -> bool:
+    """Did the tool call come back flagged as an error, under either field name?
+
+    Two explicit names, newest first, for the same reason `server_identity` reads two: a
+    rename must be added here deliberately rather than absorbed by a search that always
+    finds something.
+    """
+    return any(bool(getattr(result, field, False)) for field in _TOOL_ERROR_FIELDS)
+
+
+def server_identity(init: Any) -> str:
+    """How the server named itself at `initialize`, or UNKNOWN_SERVER. Never `""`.
+
+    Pure and module-level so the shapes can be tested without a session, a subprocess, or
+    the `mcp` package installed at all — the same reason `parse_search_payload` is.
+
+    A server that will not identify itself is DEGRADED, not an outage: `search` is
+    unaffected, and raising here would take a working picker down over a provenance string,
+    adding a failure mode to the one surface §22 promised would add none. It is loud in the
+    log instead, and explicit on the wire.
+    """
+    for field in _SERVER_INFO_FIELDS:
+        info = getattr(init, field, None)
+        if info is None:
+            continue
+        name = getattr(info, "name", None)
+        version = getattr(info, "version", None)
+        # Half a name is not a name. A `name` with no `version` would render as
+        # "datahub vNone", which reads like a version rather than like an absence.
+        if name and version:
+            return f"{name} v{version}"
+    log.warning(
+        "the %s did not identify itself at initialize (no usable %s); "
+        "provenance is %r for this session",
+        TRANSPORT,
+        " or ".join(_SERVER_INFO_FIELDS),
+        UNKNOWN_SERVER,
+    )
+    return UNKNOWN_SERVER
+
 
 def build_query(text: str) -> str:
     """A picker's keystrokes, as the server's keyword syntax.
@@ -459,10 +529,7 @@ class McpDiscovery:
         try:
             async with self._factory() as session:
                 init = await session.initialize()
-                info = getattr(init, "serverInfo", None)
-                self._server = (
-                    f"{info.name} v{info.version}" if info is not None else ""
-                )
+                self._server = server_identity(init)
                 self._call_lock = asyncio.Lock()
                 self._stop = asyncio.Event()
                 self._session = session
@@ -511,7 +578,7 @@ class McpDiscovery:
                 f"the {self._transport} failed mid-search: {exc}"
             ) from exc
 
-        if getattr(result, "isError", False):
+        if tool_reported_error(result):
             # The server reports a bad filter or an unknown tool as `isError: True` with a
             # text body, not as an exception (measured). It is still a failure, and it is
             # still not an empty catalog.

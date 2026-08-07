@@ -131,7 +131,12 @@ def test_the_search_response_still_has_the_shape_this_integration_was_built_agai
     from mcp import ClientSession
     from mcp.client.stdio import stdio_client
 
-    from attest.discovery.mcp import DATASET_FILTER, SEARCH_TOOL, stdio_parameters
+    from attest.discovery.mcp import (
+        DATASET_FILTER,
+        SEARCH_TOOL,
+        stdio_parameters,
+        tool_reported_error,
+    )
 
     async def raw() -> dict:
         async with stdio_client(stdio_parameters()) as (read, write):
@@ -141,7 +146,11 @@ def test_the_search_response_still_has_the_shape_this_integration_was_built_agai
                     SEARCH_TOOL,
                     {"query": "/q custo*", "filter": DATASET_FILTER, "num_results": 5},
                 )
-                assert not result.isError, result.content
+                # Through the PRODUCT's own reader, not `result.isError` directly: the
+                # field was renamed under us once (`mcp` 2.0.0), and a test that hard-codes
+                # one spelling can go green while the shipped branch has gone blind to the
+                # other -- or red, as this one did, for a reason that is not about DataHub.
+                assert not tool_reported_error(result), result.content
                 return json.loads(result.content[0].text)
 
     payload = asyncio.run(raw())

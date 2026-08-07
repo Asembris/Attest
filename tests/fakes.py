@@ -553,14 +553,28 @@ class FakeDataHub(FakeCatalog):
 class FakeToolResult:
     """What `ClientSession.call_tool` hands back: text content, and an error flag.
 
-    `isError=True` with a text body is how the REAL server reports a bad filter or an unknown
+    An error flag with a text body is how the REAL server reports a bad filter or an unknown
     tool — measured, not guessed: it does not raise. A fake that raised instead would leave
-    the branch that turns `isError` into `DiscoveryUnavailable` untested.
+    the branch that turns it into `DiscoveryUnavailable` untested.
+
+    `shape` names the FIELD, and it defaults to `modern` for the same reason
+    `FakeMcpServer.shape` does: `mcp` 2.0.0 renamed `CallToolResult.isError` to `is_error`,
+    and a fake that keeps setting the old attribute keeps a dead product branch looking
+    tested. That is how this one survived — the offline test asserting a refused search
+    becomes `DiscoveryUnavailable` passed throughout, against a reader that could no longer
+    see the flag at all.
     """
 
-    def __init__(self, text: str = "", is_error: bool = False) -> None:
+    def __init__(
+        self, text: str = "", is_error: bool = False, shape: str = "modern"
+    ) -> None:
         self.content = [SimpleNamespace(text=text)]
-        self.isError = is_error
+        if shape == "modern":
+            self.is_error = is_error
+        elif shape == "legacy":
+            self.isError = is_error
+        else:
+            raise ValueError(f"unknown CallToolResult shape: {shape!r}")
 
 
 class FakeMcpServer:
@@ -578,6 +592,19 @@ class FakeMcpServer:
 
     `starts` is what proves the self-healing claim — a failed session must be REBUILT on the
     next search rather than cached as a permanent outage.
+
+    `shape` is the `initialize()` result's SHAPE, and it defaults to `modern` for a reason
+    that cost a live regression. `mcp` 2.0.0 renamed `InitializeResult.serverInfo` to
+    `server_info`; this fake emitted the LEGACY name only, so the offline tier stayed green
+    while every real session came back unidentified. A fake that keeps sending a shape the
+    real library stopped sending is Session 5's rule at the handshake — so the default is
+    what the installed client sends, and the older name is a shape you must ask for:
+
+        modern       server_info=...       mcp >= 2
+        legacy       serverInfo=...        mcp < 2
+        missing      neither field         a server that says nothing about itself
+        empty        the field is None
+        nameless / versionless             present, but half a name
     """
 
     def __init__(
@@ -587,12 +614,14 @@ class FakeMcpServer:
         start_faults: dict[int, Exception] | None = None,
         server: tuple[str, str] = ("datahub", "3.4.5"),
         delay: float = 0.0,
+        shape: str = "modern",
     ) -> None:
         self.replies = list(replies)
         self.faults = dict(faults or {})
         self.start_faults = dict(start_faults or {})
         self.server = server
         self.delay = delay
+        self.shape = shape
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.starts = 0
         self.stops = 0
@@ -611,7 +640,20 @@ class FakeMcpServer:
 
     async def initialize(self) -> Any:
         name, version = self.server
-        return SimpleNamespace(serverInfo=SimpleNamespace(name=name, version=version))
+        info = SimpleNamespace(name=name, version=version)
+        if self.shape == "modern":
+            return SimpleNamespace(server_info=info)
+        if self.shape == "legacy":
+            return SimpleNamespace(serverInfo=info)
+        if self.shape == "empty":
+            return SimpleNamespace(server_info=None)
+        if self.shape == "nameless":
+            return SimpleNamespace(server_info=SimpleNamespace(version=version))
+        if self.shape == "versionless":
+            return SimpleNamespace(server_info=SimpleNamespace(name=name))
+        if self.shape == "missing":
+            return SimpleNamespace()
+        raise ValueError(f"unknown initialize() shape: {self.shape!r}")
 
     async def call_tool(self, name: str, args: dict[str, Any]) -> Any:
         self.calls.append((name, dict(args)))

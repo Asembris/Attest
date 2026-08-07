@@ -39,9 +39,12 @@ from attest.discovery.mcp import (
     DATASET_FILTER,
     MAX_RESULTS,
     SEARCH_TOOL,
+    UNKNOWN_SERVER,
     McpDiscovery,
     build_query,
     parse_search_payload,
+    server_identity,
+    tool_reported_error,
 )
 from fakes import FakeMcpServer, FakeToolResult, search_payload
 
@@ -391,3 +394,184 @@ def test_an_empty_search_lists_the_catalog_rather_than_refusing() -> None:
         got = found.search("")
     assert server.calls[0][1]["query"] == "*"
     assert [h.urn for h in got.hits] == [PROFILE]
+
+
+# --- the handshake: two field names, one identity (Session 33) ----------------
+#
+# `mcp` 2.0.0 renamed `InitializeResult.serverInfo` to `server_info`. Attest read only the
+# legacy name, so against the current client every session came back UNIDENTIFIED and
+# `/health` dropped from `up: datahub v3.4.5` to a bare `up` — live, silently, with the
+# offline tier green throughout.
+#
+# THE OFFLINE TIER WAS GREEN BECAUSE THE FAKE EMITTED THE OLD SHAPE. That is Session 5's
+# rule at the handshake: a fake cannot fail the way the real thing fails when the fake was
+# written against the shape the real thing stopped sending. `FakeMcpServer` now defaults to
+# the MODERN shape and can be asked for either, which is what makes these tests mean
+# something.
+
+
+def test_the_modern_server_info_shape_identifies_the_server() -> None:
+    """`mcp>=2` — the shape the installed client actually sends."""
+    server = FakeMcpServer(replies=[MEASURED], server=("datahub", "3.4.5"), shape="modern")
+    with discovery(server) as found:
+        got = found.search("custo")
+        assert found.status() == "up: datahub v3.4.5"
+    assert got.server == "datahub v3.4.5"
+
+
+def test_the_legacy_server_info_shape_is_still_identified() -> None:
+    """`mcp<2` — still supported, because the floor in pyproject still admits it.
+
+    Spanning both shapes beats pinning to one: a pin has to be bumped by hand and still
+    breaks at the next rename, while this keeps working across the boundary in both
+    directions.
+    """
+    server = FakeMcpServer(replies=[MEASURED], server=("datahub", "3.4.5"), shape="legacy")
+    with discovery(server) as found:
+        got = found.search("custo")
+        assert found.status() == "up: datahub v3.4.5"
+    assert got.server == "datahub v3.4.5"
+
+
+@pytest.mark.parametrize(
+    "shape",
+    ["missing", "empty", "nameless", "versionless"],
+    ids=["no-field-at-all", "field-is-None", "no-name", "no-version"],
+)
+def test_a_server_that_will_not_identify_itself_is_UNKNOWN_never_empty(shape: str) -> None:
+    """The collapse this refuses: `""` ALREADY MEANS "no handshake has happened".
+
+    Reporting a session that IS up with the same empty string as one that was never
+    contacted is `ReadState.UNKNOWN` vs `INCOMPLETE` one transport out, and `Trace.cost`
+    reporting None rather than 0 — a value Attest cannot state must not be spelled the same
+    way as a state it has not reached. So there are THREE values, and the third is explicit.
+
+    It is a degraded state rather than a raise, deliberately: search is unaffected, and
+    taking a working discovery service down over a provenance string would be this file
+    adding a failure mode to the one place §22 promised not to.
+    """
+    server = FakeMcpServer(replies=[MEASURED], shape=shape)
+    with discovery(server) as found:
+        got = found.search("custo")
+        assert found.status() == "up: unknown"
+    assert got.server == UNKNOWN_SERVER
+    assert got.server != ""
+    # Degraded provenance, and NOTHING else. The hits are the hits.
+    assert [h.urn for h in got.hits] == [CONTACT, PROFILE]
+    assert got.total == 4
+    assert got.advisory is True
+
+
+def test_never_contacted_and_could_not_identify_itself_stay_different_answers() -> None:
+    """The three states, at the one surface a human reads."""
+    server = FakeMcpServer(replies=[MEASURED], shape="missing")
+    with discovery(server) as found:
+        assert found.status() == "not-contacted"  # no handshake yet
+        found.search("custo")
+        assert found.status() == "up: unknown"  # handshake, no identity
+
+    server = FakeMcpServer(replies=[MEASURED], shape="modern")
+    with discovery(server) as found:
+        found.search("custo")
+        assert found.status() == "up: datahub v3.4.5"  # handshake, identified
+
+
+def test_the_identity_does_not_disturb_the_search_it_travels_with() -> None:
+    """Whatever the handshake said, the tool call and its parse are byte-for-byte the same."""
+    results = {}
+    for shape in ("modern", "legacy", "missing"):
+        server = FakeMcpServer(replies=[MEASURED], shape=shape)
+        with discovery(server) as found:
+            got = found.search("custo")
+        results[shape] = (
+            [h.urn for h in got.hits],
+            [h.name for h in got.hits],
+            got.total,
+            got.note,
+            got.advisory,
+            server.calls[0],
+        )
+    assert results["modern"] == results["legacy"] == results["missing"]
+
+
+def _legacy_only_identity(init: object) -> str:
+    """The implementation as it stood before Session 33. Kept HERE so it can be falsified."""
+    info = getattr(init, "serverInfo", None)
+    return f"{info.name} v{info.version}" if info is not None else ""
+
+
+def test_the_legacy_only_reader_goes_blind_on_the_modern_shape() -> None:
+    """THE VACUITY CHECK, in the suite rather than in a command someone has to remember.
+
+    Same precedent as `test_the_naive_parse_...` above and
+    `test_breaking_a_checker_collapses_the_benchmark`. It proves three things at once: the
+    two shapes are genuinely different objects, the old reader cannot see the modern one,
+    and it collapses to exactly the `""` that made the regression invisible. Without this,
+    the tests above would pass just as well against a reader that had never been fixed.
+    """
+    from types import SimpleNamespace
+
+    modern = SimpleNamespace(server_info=SimpleNamespace(name="datahub", version="3.4.5"))
+    legacy = SimpleNamespace(serverInfo=SimpleNamespace(name="datahub", version="3.4.5"))
+
+    # The old reader: right about the shape it was written for, blind to the other.
+    assert _legacy_only_identity(legacy) == "datahub v3.4.5"
+    assert _legacy_only_identity(modern) == "", "this is the regression, reproduced"
+
+    # The shipped reader: both, and never the silent empty string.
+    assert server_identity(modern) == "datahub v3.4.5"
+    assert server_identity(legacy) == "datahub v3.4.5"
+    assert server_identity(SimpleNamespace()) == UNKNOWN_SERVER
+
+
+# --- the same rename, at the error flag (Session 33) --------------------------
+
+
+@pytest.mark.parametrize("shape", ["modern", "legacy"], ids=["mcp>=2", "mcp<2"])
+def test_a_refused_search_is_seen_under_either_error_field_name(shape: str) -> None:
+    """`CallToolResult.isError` -> `is_error` in the same release as the handshake rename.
+
+    This site was the dangerous one. Reading only the old name answered False for EVERY
+    response under the new client, so the branch that turns a refused search into
+    `DiscoveryUnavailable` was dead — and an error stopped being recognized as an error,
+    which is this project's cardinal sin at the third transport (§22).
+    """
+    server = FakeMcpServer(
+        replies=[
+            FakeToolResult(
+                "Error calling tool 'search': Expected =", is_error=True, shape=shape
+            )
+        ]
+    )
+    with discovery(server) as found, pytest.raises(DiscoveryUnavailable) as caught:
+        found.search("custo")
+    # The DIAGNOSIS, not merely the exception type: falling through to the JSON branch also
+    # raises DiscoveryUnavailable, and would have looked like this test passing.
+    assert "refused the search" in str(caught.value)
+    assert "Expected =" in str(caught.value)
+
+
+def test_the_legacy_only_error_reader_cannot_see_a_modern_refusal() -> None:
+    """THE VACUITY CHECK for the error flag.
+
+    Without this, the test above passes just as well against the old reader — because a
+    refused search still fails, only via the JSON branch and with the wrong diagnosis.
+    Absence of a crash is not the guard working, so the two routes are told apart here.
+    """
+    modern = FakeToolResult("Error calling tool 'search': Expected =", is_error=True)
+    legacy = FakeToolResult(
+        "Error calling tool 'search': Expected =", is_error=True, shape="legacy"
+    )
+
+    def _legacy_only(result: object) -> bool:
+        """The implementation as it stood before Session 33."""
+        return bool(getattr(result, "isError", False))
+
+    assert _legacy_only(legacy) is True
+    assert _legacy_only(modern) is False, "this is the regression, reproduced"
+
+    assert tool_reported_error(modern) is True
+    assert tool_reported_error(legacy) is True
+    # A successful call is still not an error under either name.
+    assert tool_reported_error(FakeToolResult("{}")) is False
+    assert tool_reported_error(FakeToolResult("{}", shape="legacy")) is False

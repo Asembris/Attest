@@ -188,6 +188,12 @@ class DiscoveryResult:
     # Session 17 and `v3.4.5` today, because fastmcp moved and the server did not. This is
     # the live measurement; the pin is a launch fact and lives in the config, which is also
     # the only place it stays true when someone overrides the command.
+    #
+    # THREE VALUES, because two would collapse a distinction (Session 33). `""` means no
+    # handshake has happened; `mcp.UNKNOWN_SERVER` ("unknown") means one did and the server
+    # would not name itself; anything else is the name it gave. Reading a live-but-anonymous
+    # session as `""` is what hid the `serverInfo` -> `server_info` rename in `mcp` 2.0.0 —
+    # provenance silently absent, discovery otherwise healthy, offline tier green.
     server: str = ""
     advisory: bool = True
     note: str = field(default=ADVISORY_NOTE)
