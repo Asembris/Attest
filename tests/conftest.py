@@ -166,11 +166,18 @@ PII_TABLE_UNVERIFIED = _sf("analytics.customers.customer_contact")
 # about NonPII, and that column signals propagate UP into a table-scoped claim.
 COLUMN_ONLY_PII = _pg("attest_db.public.audit_log")
 
+# Owned by a CorpGroup rather than a CorpUser — the ONLY seeded dataset that is. Every
+# other one carries a corpuser owner, which is exactly why `DATASET_QUERY`'s missing
+# `... on CorpGroup` arm stayed invisible here while making 15 of 67 datasets unauditable
+# on a real external catalog (CLAUDE.md §23).
+GROUP_OWNED = _sf("analytics.platform.ingest_metrics")
+
 PII_NODE = "urn:li:glossaryNode:PII"
 
 ALICE = "urn:li:corpuser:alice.chen"
 DANA = "urn:li:corpuser:dana.wu"
 CAROL = "urn:li:corpuser:carol.davis"
+PLATFORM_GROUP = "urn:li:corpGroup:data-platform"
 
 PII = "urn:li:tag:PII"
 NON_PII = "urn:li:tag:NonPII"

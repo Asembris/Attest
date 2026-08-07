@@ -1,0 +1,44 @@
+{
+  "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.platform.ingest_metrics,PROD)",
+  "name": "ingest_metrics",
+  "platform": "snowflake",
+  "description": "Per-run counters for the warehouse ingestion jobs. Owned by a team, not by a person.",
+  "last_modified": "2026-08-07T09:30:44.455000Z",
+  "owners": [
+    "urn:li:corpGroup:data-platform"
+  ],
+  "tags": [
+    "urn:li:tag:Tier2"
+  ],
+  "terms": null,
+  "fields": [
+    {
+      "path": "run_id",
+      "native_type": "VARCHAR(36)",
+      "data_type": "STRING",
+      "description": "Ingestion run key.",
+      "tags": [
+        "urn:li:tag:NonPII"
+      ],
+      "terms": []
+    },
+    {
+      "path": "rows_loaded",
+      "native_type": "NUMBER(12,0)",
+      "data_type": "NUMBER",
+      "description": "Rows written by the run.",
+      "tags": [],
+      "terms": []
+    },
+    {
+      "path": "started_at",
+      "native_type": "TIMESTAMP_NTZ",
+      "data_type": "TIME",
+      "description": "When the run started.",
+      "tags": [],
+      "terms": []
+    }
+  ],
+  "custom_properties": {},
+  "term_parents": {}
+}

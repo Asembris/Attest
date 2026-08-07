@@ -16,8 +16,15 @@ from __future__ import annotations
 
 import pytest
 
-from attest.datahub import DataHubClient, EntityNotFoundError
-from conftest import DOCUMENTED, NO_SCHEMA, NO_TIMESTAMP, UNREVIEWED
+from attest.datahub import DataHubClient, EntityNotFoundError, MalformedResponseError
+from conftest import (
+    DOCUMENTED,
+    GROUP_OWNED,
+    NO_SCHEMA,
+    NO_TIMESTAMP,
+    PLATFORM_GROUP,
+    UNREVIEWED,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -101,6 +108,52 @@ def test_snapshot_preserves_the_absent_aspects(client: DataHubClient) -> None:
     assert not unreviewed.has_classification
     # ...but it does have a schema. Silence on one aspect is not silence on all.
     assert unreviewed.fields is not None
+
+
+def test_a_corpgroup_owner_is_read_from_REAL_GMS(client: DataHubClient) -> None:
+    """The union arm, against the server that actually resolves it.
+
+    Only this tier can prove it. The offline tests drive the shipped query over a
+    MockTransport that emulates union-arm resolution — which is exactly the machinery a
+    fake has to invent, and therefore exactly the machinery that could be wrong. Here GMS
+    itself decides which arm matches, so a `CorpGroup` group owner arriving as a real URN
+    is the server's answer, not our stub's.
+    """
+    snap = client.fetch_dataset(GROUP_OWNED)
+    assert snap.owners == (PLATFORM_GROUP,)
+
+
+def test_without_the_corpgroup_arm_REAL_GMS_returns_an_ownerless_entry(
+    client: DataHubClient,
+) -> None:
+    """THE VACUITY CHECK, against the real server: the arm is load-bearing.
+
+    Ask GMS the same question with only the `CorpUser` arm and the group owner comes back
+    as `{}` — a present entry carrying no URN — which `_urns` refuses. That is verbatim
+    the pre-fix failure, reproduced on live GMS rather than asserted about it, and it is
+    why every claim about a group-owned dataset used to surface as a `ClaimError`.
+
+    Without this, the test above could pass for reasons that have nothing to do with the
+    query, and deleting the arm would break the product while the suite stayed green.
+    """
+    legacy = DataHubClient.DATASET_QUERY.replace("... on CorpGroup { urn }", "")
+    assert "... on CorpGroup" not in legacy
+    assert "... on CorpUser" in legacy, "the sabotage must remove ONLY the group arm"
+
+    owners = client.execute(legacy, {"urn": GROUP_OWNED})["dataset"]["ownership"]["owners"]
+    assert owners, "the ownership aspect itself must still be present"
+    assert owners[0]["owner"] == {}, "an unmatched union arm must contribute no fields"
+
+    # And that shape is refused rather than normalized into a garbage owner.
+    client.DATASET_QUERY = legacy  # type: ignore[misc]
+    try:
+        with pytest.raises(MalformedResponseError):
+            client.fetch_dataset(GROUP_OWNED)
+    finally:
+        # The client fixture is session-scoped: leave the shipped query in place.
+        del client.DATASET_QUERY
+
+    assert "... on CorpGroup" in client.DATASET_QUERY
 
 
 def test_snapshot_reads_the_populated_aspects(client: DataHubClient) -> None:
