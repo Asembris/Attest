@@ -2458,6 +2458,7 @@ decomposer bug from a checker bug.** `benchmark/matching.py`, `predict_for_case`
   figure must trace to a committed receipt; it did not say the receipts must be regenerated
   when the payload grows a field, and they had drifted. `full.json` is now current;
   `core-sabotaged-classification.json` was left alone as out of scope and is named here.
+  **CLOSED in Session 33 — see §26.**
 - **VERIFIED.** Offline **520 passed, 0 skipped** (492 before; +25 matching tests, +3
   preservation pins), ruff clean. Integration 5 passed. Frontend: typecheck, `eslint
   --max-warnings=0`, both builds **byte-identical to the committed bundles**, bundle boundary
@@ -2466,6 +2467,89 @@ decomposer bug from a checker bug.** `benchmark/matching.py`, `predict_for_case`
 - **WHAT THIS DOES NOT DO:** it adds no benchmark case, changes no label, moves no checker,
   policy, prompt, graph or claim schema, and touches nothing a judge's browser loads. It does
   not make the benchmark harder — it makes the harness able to say which half failed.
+
+**26. THE ANTI-VACUITY RECEIPT WAS THE ONE RECEIPT NOTHING PINNED (Session 33).
+`core-sabotaged-classification.json` — the only evidence in the repo that the benchmark
+CAN fail — was missing a field its own emitter has produced since the commit that created
+it, and had never been regenerated. Regenerated, and pinned so it cannot drift again. NOT
+one measured value moved.** `tests/test_benchmark.py::test_the_sabotage_receipt_matches_
+what_the_sabotaged_core_scores`. **No source under `src/attest/`, no case, no label, no
+prompt, no frontend and no doc changed.**
+
+- **THE STALENESS WAS ONE ADDITIVE FIELD, and the diagnosis mattered more than the fix.**
+  `metrics.mis_extracted_but_right` was absent. Ruled out by inspection before anything was
+  run: no metric drift (`score()`'s core-relevant arithmetic is line-for-line unchanged since
+  `66b8d63` — the macro-F1 excluding No-Claim, the `{Supported, Contradicted}` correctness
+  split, the `errors` shape whose HEAD-only `fidelity` key is omitted when `fidelity is None`,
+  which is always in core mode); no provenance drift (core mode emits none **by design**, and
+  `test_the_core_receipt_carries_no_full_mode_fields` ASSERTS it); no scorer-v2 involvement
+  (`run_core` never reaches `matching.py`); no methodology drift (`git log -L` over
+  `sabotage()` returns exactly one commit — it has **never been edited**).
+- **THE FILE WAS OLDER THAN ITS OWN COMMIT.** `git log -S"mis_extracted_but_right"` returns
+  only `66b8d63` — the field was in the payload emitter *in the same commit that wrote the
+  receipt*. So the JSON was written to disk earlier in that session than the line that adds
+  the field, and committed beside it. It is a pre-emitter artifact, not a scorer-v2 casualty,
+  and §25's stale-receipt finding was the first time anything looked.
+- **WHY IT MATTERED, and it is not tidiness.** `scorer_version` exists (§25) so that a
+  methodology difference between two receipts is never inferable-but-unstated. Here there IS
+  no methodology difference and the file implied one: two core receipts, same scorer, one
+  carrying a field the other lacks. A reader comparing them had no way to learn that. That is
+  §13's defect class — an artifact making a claim the code contradicts — sitting on the
+  receipt README calls "matters more than the first".
+- **REGENERATED, NOT LEGACY-VERSIONED, and not hand-edited.** The experiment is deterministic,
+  free (core mode constructs no model client and reads no API key; a cost field is absent **by
+  design**, not omitted) and reproducible today. Tagging the repo's only anti-vacuity evidence
+  "historical" to paper over a one-field gap would weaken live evidence to solve a cosmetic
+  problem. The old bytes survive at `66b8d63` — no sibling `-legacy.json`, because a second
+  artifact a reader must be told to ignore is duplicate evidence, not clarity.
+- **PROVENANCE LIVES IN THE COMMIT AND HERE, NEVER IN THE JSON.** Adding `scorer_commit` to a
+  core receipt would break `test_the_core_receipt_carries_no_full_mode_fields` and move
+  `core.json` too. Produced from a clean tree at `6e0120e`, case set `HEAD:benchmark/cases.json
+  = aec4032`, `sabotage("classification")` unchanged since `66b8d63`, DataHub Core v1.5.0.6
+  live, **zero model calls**. No timestamp: no core receipt carries one, and one would make the
+  file irreproducible from its inputs.
+- **THE HARD GATE WAS SEMANTIC JSON EQUALITY, NOT THE TEXTUAL DIFF, and on this machine that
+  distinction is load-bearing.** `core.autocrlf=true` with no `.gitattributes` rule over
+  `benchmark/results/` left the receipt **CRLF in the worktree (3668 bytes) and LF in its index
+  blob (3510)**, while `core.json` and `full.json` are LF in both — they were tool-written and
+  never re-checked-out. A worktree-vs-worktree hash would have reported a 158-line change that
+  does not exist. So the gate is a **full-depth recursive comparison of the parsed payloads**,
+  old read via `git show HEAD:...`: **1 semantic difference, `$.metrics.mis_extracted_but_right`
+  ADDED as `[]`, and nothing else at any depth.** §21's null result, arriving in a second place.
+- **THE HEALTHY RUN IS THE GATE THAT COMES FIRST, and it is what makes the sabotage run
+  evidence.** `python -m benchmark.run_eval -k 5` was regenerated BEFORE the sabotage and
+  asserted **byte-identical to its HEAD blob** (`sha256 4908a92…`, `git diff` empty). The 19
+  classification cases never read the snapshot under sabotage, so the only way the live catalog
+  could contaminate the sabotage receipt is through the other 21 — and that run is the proof it
+  did not. Run the sabotage first and a moved number is undiagnosable.
+- **THE PIN IS THE POINT, and its RED was the diagnosis.** `core.json` has had a
+  field-for-field preservation test since the scorer rewrite; the sabotage receipt had none,
+  which is precisely why it drifted for twenty-odd sessions with every suite green. The new
+  test asserts all ten metric fields plus `mode`, `sabotaged`, `k=1` and the **absent**
+  `consistency` block, fixture-backed (so it gates CI without a server) and monkeypatch-restored
+  (so it does not leave an affirm-everything checker behind). Committed RED, **before**
+  measurement: it failed with `KeyError: 'mis_extracted_but_right'` and **every value assertion
+  above that line passed** — the staleness proven structural, and the numbers proven unmoved,
+  before a single receipt was rewritten. It also makes the sabotage un-fakeable from the healthy
+  checker: an unsabotaged run scores 1.0 and the pin demands 0.675.
+- **MEASURED, one run, `VACUITY CHECK: PASSED`, exit 0:** accuracy **0.675**, macro-F1
+  **0.6681136950904393**, Supported precision **0.5357142857142857**, Contradicted recall
+  **0.47058823529411764**, Insufficient-Coverage recall **0.5**, matrix
+  `[[15,0,0,0],[9,8,0,0],[4,0,4,0],[0,0,0,0]]`, **9** correctness and **4** coverage failures,
+  **13** named errors (`class-07`…`class-19`) — every one byte-for-byte what the 2024 receipt
+  said. **No public figure moved**, so README, benchmark/README, docs/submission.md,
+  docs/index.html, `Benchmark.tsx` and both bundles were **not touched**: an additive JSON field
+  cannot reach a bundle, and rebuilding to prove it would be the churn §21 warns about.
+- **VERIFIED.** Offline **620 passed, 0 skipped**, ruff clean. `core.json` byte-identical.
+  Working tree carries exactly one modified file.
+- **NAMED, NOT FIXED: no test pins `67.5%` to the receipt.**
+  `test_benchmark_display_traces.py` traces the UI's headline, per-verdict table and confusion
+  matrix to `core.json` / `full.json` only, so the sabotage figures in `README.md`,
+  `benchmark/README.md`, `docs/submission.md`, `docs/index.html` and `Benchmark.tsx` are
+  hand-typed prose backed by nothing but this receipt. That is §13's rule with a hole in it.
+  Closing it is a display-trace change with its own tests, not something to slip in beside a
+  receipt regeneration. Also named: **`AUDIT2.md` cites `benchmark/results/sabotage.json`,
+  which has never existed** — an error in a historical audit transcript, left as written.
 
 ## Known deferred items — document, don't fix
 
