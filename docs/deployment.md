@@ -165,7 +165,7 @@ the default command already does (the same system-CA opt-in as Python's `trustst
 ### The server version is pinned, and why
 
 `--from mcp-server-datahub==0.6.0`, not a bare `--from mcp-server-datahub`. **Every claim
-Attest makes about this server is version-bounded**: the parity finding is 130 mismatches
+Attest makes about this server is version-bounded**: the parity finding is 136 mismatches
 measured on 0.6.0, `just spike-mcp` exits non-zero *by design* as the tripwire that will say
 the day that finding expires, and [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182)
 proposes a fix to this same codebase. Unpinned, `uvx` resolves whatever is newest at first

@@ -25,8 +25,18 @@ would be carrying a transport nothing imports. It is a spike requirement, named 
 rather than discovered as an ImportError.
 
 --------------------------------------------------------------------------------
-THE RESULT: 130 mismatches over 16 datasets. Every dataset fails.
+THE RESULT: 136 mismatches over 17 datasets. Every dataset fails.
 --------------------------------------------------------------------------------
+
+Receipt: docs/mcp-evaluation/parity-17.json. Mean 8.00 mismatches per dataset over 491
+executed comparisons (0.277 of them). Session 17 measured 130 over 16 under the same rules
+(`parity-v1`), before the seed gained its CorpGroup-owned dataset; that run wrote no receipt,
+so the two are set beside each other and NEITHER total is derived from the other.
+
+The predicted CorpGroup mismatch DID NOT HAPPEN, and it is recorded because it was
+predicted: `owners` matched at ('urn:li:corpGroup:data-platform',) on both sides. This
+server reads group owners correctly -- the `... on CorpUser`-only defect was Attest's own
+(2d7eaf9), and it is not this transport's.
 
 Measured against mcp-server-datahub 0.6.0 — PINNED in PARAMS below — against the pinned
 Core v1.5.0.6. The handshake announces itself as `datahub v3.4.4`, and that number is NOT
@@ -46,7 +56,7 @@ checker needs**:
      the Dataset fragment (it asks for Dashboard, Chart, Document, BusinessAttribute).
      `search.gql` asks for `properties { name }` and nothing else. So FreshnessClaim —
      one of four claim types, three of the twelve matrix cells — has no input at all.
-     MEASURED: 15/16 datasets lose it. (The 16th, pipeline_scratch, is genuinely None
+     MEASURED: 16/17 datasets lose it. (The 17th, pipeline_scratch, is genuinely None
      in the catalog: it is the freshness-silence witness, so it agrees by accident.)
 
   2. FIELD TAGS AND TERMS ARE FLATTENED TO DISPLAY NAMES, NOT URNs.
@@ -64,7 +74,7 @@ checker needs**:
   4. ABSENT AND EMPTY ARE COLLAPSED. `clean_gql_response` recursively drops `None`,
      `[]` and `{}`, so "the catalog has no properties aspect" and "the aspect exists and
      holds nothing" arrive identically. MEASURED: `custom_properties` is `{}` via GraphQL
-     (the aspect is there and empty) and `None` via MCP (absent) on 12/16 datasets.
+     (the aspect is there and empty) and `None` via MCP (absent) on 13/17 datasets.
 
      STATED PRECISELY, because the flattering version of this finding is wrong and was
      written here first: this does NOT flip a verdict, and snapshot.py says why in its
