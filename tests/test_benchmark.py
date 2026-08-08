@@ -179,6 +179,61 @@ def test_the_deterministic_core_still_scores_exactly_what_its_receipt_says(snaps
     assert m.errors == committed["errors"]
 
 
+def test_the_sabotage_receipt_matches_what_the_sabotaged_core_scores(snapshot, monkeypatch):
+    """The vacuity check's RECEIPT, held to the run that produced it — field for field.
+
+    `core.json` has had this pin since the scorer rewrite; the sabotage receipt never did,
+    and it drifted in exactly the way an unpinned artifact does. It was written earlier in
+    its own commit than the emitter line that adds `mis_extracted_but_right`, and because
+    nothing compared it to a live run, a receipt missing a field its own emitter produces
+    sat in the repo for twenty-odd sessions — inviting the reader to infer a scorer
+    difference between the two core receipts where there is none.
+
+    It also makes the sabotage un-fakeable from the healthy checker: a receipt generated
+    without the sabotage scores 1.0, and every assertion below demands 0.675.
+
+    Fixture-backed and monkeypatch-restored for the same reasons as the vacuity check
+    above: it must run offline in CI, and it must not leave an affirm-everything checker
+    behind for every test after it.
+    """
+    import json
+
+    from benchmark import run_eval
+
+    from attest import checkers, graph
+    from attest.claims import ClaimType
+
+    payload = json.loads(
+        (run_eval.RESULTS_DIR / "core-sabotaged-classification.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["mode"] == "core"
+    assert payload["sabotaged"] == "classification"
+    assert payload["k"] == 1
+    # k=1, so there is nothing for pass@k to compare. An unasked question reports nothing.
+    assert "consistency" not in payload
+
+    node = graph.CHECKER[ClaimType.CLASSIFICATION]
+    monkeypatch.setattr(checkers, "check", checkers.check)
+    monkeypatch.setitem(graph._CHECK, node, graph._CHECK[node])
+
+    run_eval.sabotage("classification")
+    m = score(run_eval.run_core(run_eval.Catalog(snapshot_source=load_snapshot)))
+
+    committed = payload["metrics"]
+    assert m.accuracy == committed["accuracy"]
+    assert m.macro_f1 == committed["macro_f1"]
+    assert m.per_verdict == committed["per_verdict"]
+    assert m.matrix == committed["confusion_matrix"]
+    assert m.labels == committed["labels"]
+    assert m.correctness_failures == committed["correctness_failures"]
+    assert m.coverage_failures == committed["coverage_failures"]
+    assert m.extraction_failures == committed["extraction_failures"]
+    assert m.mis_extracted_but_right == committed["mis_extracted_but_right"]
+    assert m.errors == committed["errors"]
+
+
 def test_the_core_receipt_carries_no_full_mode_fields():
     """The extraction block and the scorer provenance are FULL MODE ONLY, on purpose.
 
