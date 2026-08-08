@@ -187,6 +187,10 @@ class Prediction:
     duplicates: int = 0
     # The whole extracted subject multiset, for pass@k. See matching.fingerprint.
     extracted_subjects: tuple[str, ...] = ()
+    # The models this case's run could not price, carried out of `report.cost` so the
+    # aggregate can name WHICH model made a total unknown. Empty in core mode, which calls
+    # no model at all — and empty is not the same as `usd is None`: see `total_spend`.
+    unpriced_models: tuple[str, ...] = ()
 
     @property
     def correct(self) -> bool:
@@ -416,6 +420,7 @@ def predict_for_case(
     *,
     usd: float | None = 0.0,
     latency_ms: float = 0.0,
+    unpriced_models: tuple[str, ...] = (),
 ) -> Prediction:
     """Score ONE case against everything the pipeline extracted from its prose.
 
@@ -467,6 +472,7 @@ def predict_for_case(
         extras=len(matching.extras),
         duplicates=len(matching.duplicates),
         extracted_subjects=fingerprint(extracted),
+        unpriced_models=unpriced_models,
     )
 
 
@@ -491,7 +497,14 @@ def run_full(catalog: Catalog, pipeline: Pipeline | None = None) -> list[Predict
         pipeline.forget(report.thread_id)
         predictions.append(
             predict_for_case(
-                case, report.audits, usd=report.cost.usd, latency_ms=report.latency_ms
+                case,
+                report.audits,
+                usd=report.cost.usd,
+                latency_ms=report.latency_ms,
+                # Carried, not dropped. `usd is None` says the total is unknown; only these
+                # say WHY, and `Trace.cost` finds them by name off the step — so a receipt
+                # that loses them can report an unknown cost it cannot explain.
+                unpriced_models=report.cost.unpriced_models,
             )
         )
     return predictions
@@ -748,6 +761,97 @@ def semantic_report(predictions: list[Prediction]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True)
+class Spend:
+    """What a full-pipeline run cost, or an explicit unknown. Never a silent zero.
+
+    Why this is not `attest.cost.Cost`, which carries these exact semantics: `Cost` is a
+    TOKEN-and-dollars receipt, and a Prediction carries no token counts. Building one here
+    would fix `input_tokens`/`output_tokens` at zero for a run that really spent hundreds
+    of thousands — so `Cost.display()` would announce "0 tokens" about a paid run, and
+    `total_tokens` would be a fabricated zero sitting in the type whose whole job is to
+    refuse fabricated zeroes. It also has nowhere to put `cases_unpriced`. So the SEMANTICS
+    are `Cost`'s, deliberately and to the letter (`usd is None` means unknown; the unpriced
+    set is sorted and deduplicated; unknown poisons the total), and the container is local
+    rather than bending a product type to a shape it does not fit. `attest/cost.py` is not
+    edited to force the reuse.
+
+    There is deliberately NO priced subtotal. The priced cases of a partly-unpriced run do
+    total to a real number, and that is exactly why it must not be emitted: a reader has no
+    way to tell it from a complete one. cost.py states the rule -- "A partial total would be
+    worse than no total: it reads like a complete one." `cases_unpriced` is a COUNT, which
+    diagnoses the gap without being mistakable for dollars.
+    """
+
+    usd: float | None
+    unpriced_models: tuple[str, ...] = ()
+    cases_unpriced: int = 0
+
+    @property
+    def known(self) -> bool:
+        return self.usd is not None
+
+    def display(self) -> str:
+        """For the console. An unknown cost never renders as a dollar figure."""
+        if self.usd is None:
+            named = ", ".join(self.unpriced_models) or "not recorded"
+            plural = "" if self.cases_unpriced == 1 else "s"
+            return (
+                f"cost unknown ({self.cases_unpriced} unpriced case{plural}; "
+                f"models: {named})"
+            )
+        return f"${self.usd:.4f}"
+
+    def as_payload(self) -> dict[str, Any]:
+        """The receipt block. `cost_usd` keeps its v1 key, type and value when priced."""
+        return {
+            "cost_usd": self.usd,
+            "cost_known": self.known,
+            "unpriced_models": list(self.unpriced_models),
+            "cases_unpriced": self.cases_unpriced,
+        }
+
+
+def total_spend(predictions: list[Prediction]) -> Spend:
+    """Total a run's cost, or report that it cannot be totalled.
+
+    v1 was `sum(p.usd or 0.0 for p in runs[0])`. A case whose run used a model with no price
+    reports `usd=None` -- honestly, all the way up from cost.py -- and `or 0.0` turned that
+    into a numeric zero, so the receipt carried a complete-looking total that silently
+    omitted every unpriced call and printed it as `$0.0000`. That is the lie cost.py exists
+    to refuse, told by the harness that measures the system built to catch it.
+
+    Two rules do the work, and they pull against each other on purpose:
+
+      * unknown is keyed on `p.usd is None`, NOT on whether any model names survived. Keying
+        it on the names would rebuild Session 5's bug one level up, where an unpriced set
+        lost on the way to disk let a run compute a total the original refused to state.
+      * a MEASURED zero stays a known zero. Core mode calls no model and spends exactly
+        nothing; the scripted fake spends no tokens and `Trace.cost` calls that known. A fix
+        that flagged every zero as unknown would be the same category error pointing the
+        other way.
+
+    The sum contains no `or 0.0` in any form: the narrowing comes from an early return, so
+    the defect cannot creep back in as a type-checker convenience.
+    """
+    unpriced_models = tuple(sorted({m for p in predictions for m in p.unpriced_models}))
+    cases_unpriced = sum(1 for p in predictions if p.usd is None)
+
+    if cases_unpriced:
+        return Spend(
+            usd=None, unpriced_models=unpriced_models, cases_unpriced=cases_unpriced
+        )
+
+    # Every case is priced — the early return above is what proves it, and that proof is
+    # what lets this add straight up with nothing to fall back on. If a None ever reached
+    # here it would raise, which is the correct failure: loud beats a silent zero.
+    usd = 0.0
+    for p in predictions:
+        usd += p.usd
+
+    return Spend(usd=usd, unpriced_models=unpriced_models, cases_unpriced=0)
+
+
 def provenance() -> dict[str, Any]:
     """Which scorer produced this receipt, and from which tree.
 
@@ -874,10 +978,16 @@ def main() -> int:
             "\n  everything would score 0% model-authored and catch every hallucination."
         )
 
-        spend = sum(p.usd or 0.0 for p in runs[0])
-        payload["cost_usd"] = spend
+        # `cost_usd` keeps its v1 key, type and value on the priced path, so a fully priced
+        # receipt is unmoved and old ones stay comparable. `cost_known` is what an unpriced
+        # run needs and v1 could not say. Receipts written before this block carry a numeric
+        # `cost_usd` and NO `cost_known`: read that as "not asserted", never as true — v1
+        # emitted a number in the unpriced case too, so the old field cannot distinguish
+        # them. Historical receipts are left exactly as they were measured.
+        spend = total_spend(runs[0])
+        payload |= spend.as_payload()
         payload["latency_ms"] = sum(p.latency_ms for p in runs[0])
-        print(f"\n  measured spend for this run: ${spend:.4f} over {len(CASES)} claims")
+        print(f"\n  measured spend for this run: {spend.display()} over {len(CASES)} claims")
 
     if args.k > 1:
         consistency = pass_at_k(runs)
