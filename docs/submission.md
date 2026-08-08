@@ -15,7 +15,7 @@ an append-only verdict history, so the next agent inherits it from the catalog r
 from Attest's database. The **DataHub MCP Server is in the product too — for catalog
 DISCOVERY**: the URN picker searches your catalog through it, so a human finds a dataset by
 typing part of its name (`just discover`). It is deliberately not the verdict read: we **built
-an adapter to that seam, measured it against all 16 seeded datasets, and wrote up three
+an adapter to that seam, measured it against all 17 seeded datasets, and wrote up three
 upstream issues with reproductions — two of them filed** ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169),
 [#168](https://github.com/acryldata/mcp-server-datahub/issues/168); the third is deliberately
 kept as a draft), and opened
@@ -84,9 +84,9 @@ carry the facts a deterministic verdict is made of.
 **The server runs** — compatibility is the failure everyone expects and is not what happened:
 correct OSS detection, correct version-gating, every call answered for every dataset. The
 finding is about what those *successful* responses contain. **Measured on `mcp-server-datahub`
-0.6.0 against the pinned Core: parity fails on 16/16 seeded datasets (130 field mismatches),
+0.6.0 against the pinned Core: parity fails on 17/17 seeded datasets (136 field mismatches),
 and four of five true claims change verdict — including `customer_profile.email is PII`
-reading back Contradicted.** The tag arrives as the display name `"PII"`, the column reads
+reading back Contradicted** ([receipt](mcp-evaluation/parity-17.json)). The tag arrives as the display name `"PII"`, the column reads
 unlabelled, the table is `Verified`, and our own hard-won completeness rule turns the loss
 into a confident denial. **A transport that is lossy for a language model is not merely lossy
 for a checker — it is inverting.**

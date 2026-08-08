@@ -1179,12 +1179,46 @@ submission asset, not an apology. **Do not reopen this as a checkbox.**
 - **THE SERVER RUNS. Compatibility was never the wall**, and that matters because it is the
   failure everyone expects. `is_oss=True`, correct version-gating, every call answered for
   every seeded dataset. The finding is about what those *successful* responses contain.
-- **MEASURED: 130 mismatches over 16 datasets (16/16 fail parity), and 4 of 5 TRUE claims
-  change verdict — including `customer_profile.email is PII` reading back CONTRADICTED.**
-  That row is the finding. `benchmark/README.md` names Supported↔Contradicted a
-  **correctness** failure — the worst thing this product can do — as distinct from a coverage
-  failure. Over MCP, Attest tells a compliance auditor that a column the catalog *explicitly
-  tags PII* is not PII. Not "unsure". Not.
+- **MEASURED: 136 mismatches over 17 datasets (17/17 fail parity), mean 8.00 per dataset over
+  491 executed comparisons, and 4 of 5 TRUE claims change verdict — including
+  `customer_profile.email is PII` reading back CONTRADICTED.** That row is the finding.
+  `benchmark/README.md` names Supported↔Contradicted a **correctness** failure — the worst
+  thing this product can do — as distinct from a coverage failure. Over MCP, Attest tells a
+  compliance auditor that a column the catalog *explicitly tags PII* is not PII. Not
+  "unsure". Not.
+- **RE-MEASURED IN SESSION 32, AND SESSION 17's NUMBER IS HISTORY RATHER THAN A DELETION.**
+  Session 17 reported **130 over 16** and wrote NO receipt — the probe printed to stdout and
+  the number lived in prose, which is why the refresh's first act was to make the probe emit
+  `docs/mcp-evaluation/parity-17.json`. The two runs share the comparison rules (frozen as
+  `METHODOLOGY["version"] = "parity-v1"`, carried in the receipt) and the pins
+  (`mcp-server-datahub==0.6.0`, Core v1.5.0.6), and differ in the SEED: `2d7eaf9` added a
+  17th, CorpGroup-owned dataset. **Neither total may be derived from the other** — the
+  denominators differ, and the new receipt's `mismatch_fraction` (0.277) has no Session 17
+  counterpart at all because that run counted no comparisons. `diff()` and
+  `snapshot_from_mcp()` were held statement-identical across the refresh, asserted by
+  unparsing both ASTs, precisely so the two runs could be set beside each other.
+- **A PREDICTION WAS RECORDED BEFORE THE RUN AND IT WAS WRONG, which is the part worth
+  keeping.** The predeclared hypothesis was that MCP would drop the CorpGroup owner — the
+  same `... on CorpUser`-only defect that made 15 of 67 external datasets unauditable (§23),
+  and an elegant story about the finding generalizing. **It did not happen:** `owners`
+  compared EQUAL at `('urn:li:corpGroup:data-platform',)`, so this server reads group owners
+  correctly and that defect was Attest's alone. The group-owned dataset's 6 mismatches are
+  all four of the known mechanisms and none is about ownership. Reported because it was
+  predicted and refuted — a parity probe that only ever confirms its author is measuring its
+  author, which is §23's own rule applied to this experiment.
+- **THE PROBE COULD NOT HAVE SURVIVED A CLIENT BUMP, and the fix was to stop it choosing.**
+  It read `result.isError` / `init.serverInfo` by bare attribute access; `mcp` 2.0.0 renames
+  both, and `pyproject`'s floor (`mcp>=1.2`) admits 2.x. Under a 2.x client that is an
+  `AttributeError` at the FIRST tool call — loud, unlike the SILENT `getattr(..., False)`
+  that 08bb90e fixed in production discovery, but it kills the run before it measures
+  anything and blames a missing attribute rather than a refused call. It now imports
+  `tool_reported_error` / `server_identity` from `attest.discovery.mcp` rather than carrying
+  a second copy, and `tests/test_mcp_probe_compat.py` pins that it stays delegated by
+  walking the probe's AST — it cannot IMPORT the probe, because `mcp` is an optional extra
+  CI deliberately does not install and the offline tier must never skip (§14, §22).
+  **The `mcp>=1.2,<3` ceiling is a SEPARATE decision and was deliberately not taken here:**
+  changing a dependency inside the commit range of a measurement puts a variable in the
+  comparison. The resolved client (1.16.0) is recorded in the receipt instead.
 - **THE MECHANISM, and it is ours.** The tag arrives as the display name `"PII"`, so the
   column reads **unlabelled**; `customer_profile` is `Verified`; `COMPLETENESS_REACHES_COLUMNS`
   (§6) propagates that marker down and turns an unlabelled column of a reviewed table into a

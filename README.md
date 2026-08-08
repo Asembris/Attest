@@ -37,7 +37,7 @@ warehouse — which is most of them.
 > **The DataHub MCP Server is in the product — for discovery — and was measured before it was
 > trusted.** It backs the URN picker's catalog search, so a human finds a dataset by typing part
 > of its name (`just discover`). It does **not** back the verdict read: we built an adapter to
-> that one-method seam, ran it against all 16 seeded datasets on the pinned Core, and measured
+> that one-method seam, ran it against all 17 seeded datasets on the pinned Core, and measured
 > that its responses cannot carry a deterministic verdict (`just spike-mcp`, non-zero by design).
 > **MCP discovers; a human resolves; GraphQL verifies; deterministic code decides.** The
 > measurement also produced three upstream issue write-ups with reproductions — two filed
@@ -299,8 +299,9 @@ Field tags are flattened to display names (`urn:li:tag:PII` → `"PII"`), so a c
 can no longer reach the hierarchy that makes it a signal at all.
 
 **Measured on `mcp-server-datahub` 0.6.0 (pinned, like the Core it runs against): parity fails
-on 16/16 seeded datasets (130 field mismatches), and four of five true claims change verdict —
-including `customer_profile.email is PII` reading back Contradicted.** That last one is a *correctness*
+on 17/17 seeded datasets (136 field mismatches, mean 8.00 per dataset over 491 comparisons),
+and four of five true claims change verdict — including `customer_profile.email is PII`
+reading back Contradicted** ([receipt](docs/mcp-evaluation/parity-17.json)). That last one is a *correctness*
 failure, the worst thing this product can do, and it is Attest's own thesis biting Attest: the tag
 arrives unrecognisable, the column reads unlabelled, the table is `Verified`, and our own hard-won
 completeness rule turns the loss into a **denial**. A transport that is lossy for an LLM is not
@@ -446,7 +447,7 @@ built asset, and the demo API are each load-bearing. `just reset` is the operato
 definitive catalog wipe.
 
 `just spike-mcp` re-runs the **MCP Server evaluation** against your own catalog — the adapter,
-all 16 seeded datasets, the field-parity diff, and the same gap expressed as verdicts. It
+all 17 seeded datasets, the field-parity diff, and the same gap expressed as verdicts. It
 **exits non-zero by design** (needs `pip install -e '.[mcp]'` and `uvx`), because a green run would
 mean the finding had expired. The server version it launches is **pinned**, so a green run means
 exactly that and never "a newer server got resolved".
@@ -505,7 +506,7 @@ wrong verdict has the same confident shape as a right one.
   verdict already carries the only uncertainty in the system. A `0.95` would be a number invented to
   look like an ML system — the precise thing this project exists to catch.
 - **The MCP server backs catalog DISCOVERY, not verdict reads.** Parity fails on
-  16/16 seeded datasets and four of five true claims change verdict, one of them Supported →
+  17/17 seeded datasets and four of five true claims change verdict, one of them Supported →
   Contradicted, so the *verdict* read stays on GraphQL. The picker's search runs over MCP and
   nothing it returns is evidence. The cut is real — and it is a
   [result we produced](#engaging-with-the-mcp-server), not a path we skipped.

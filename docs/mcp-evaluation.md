@@ -15,7 +15,7 @@ it are fixable upstream, and we wrote them up.
 | --- | --- |
 | **Status** | Decided, with evidence. A measured result, not a preference. |
 | **Spike** | [`spikes/mcp_reader_probe.py`](../spikes/mcp_reader_probe.py) — `just spike-mcp` |
-| **Measured against** | `mcp-server-datahub` **0.6.0** (pinned), DataHub Core **v1.5.0.6** (pinned), 16 seeded datasets |
+| **Measured against** | `mcp-server-datahub` **0.6.0** (pinned), DataHub Core **v1.5.0.6** (pinned), Python `mcp` client **1.16.0**, 17 seeded datasets |
 | **Contributed back** | Three write-ups with reproductions in [`docs/upstream/`](upstream/) — two filed upstream ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169), [#168](https://github.com/acryldata/mcp-server-datahub/issues/168)), the third deliberately kept as a draft. A fix for #168 is proposed at [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182), open |
 | **Tripwire** | `just spike-mcp` exits non-zero **by design**. If it ever goes green, the finding has expired and this decision is worth reopening. |
 | **What DOES use this server** | its `search` tool, for **catalog discovery** in the URN picker — a human picking a name, never a checker reading a fact. Added after this evaluation and bounded by it: [§9](#9-what-changed-after-this-evaluation-search-for-discovery). |
@@ -105,7 +105,41 @@ the adapter would have. Nothing decides which tool to call and nothing summarise
 
 ## 2. The result
 
-### Parity: 16/16 datasets fail
+### Parity: 17/17 datasets fail
+
+Re-measured 2026-08-08 against the current 17-dataset seed. Receipt:
+[`parity-17.json`](mcp-evaluation/parity-17.json) — the first machine-readable one, and the
+source of every number in this section.
+
+```
+=== 136 mismatches over 17 datasets ===
+   106  field.*
+    16  last_modified
+    13  custom_properties
+     1  term_parents
+```
+
+| | Measured |
+| --- | --- |
+| Mismatches | **136** |
+| Datasets compared | **17** |
+| Datasets with at least one mismatch | **17** |
+| Mean mismatches per dataset | **8.00** |
+| Comparisons executed | **491** |
+| Fraction of comparisons that mismatched | **0.277** |
+
+The denominator is measured, not assumed: the probe tallies each comparison on the same
+traversal that finds the mismatches, so the two counts cannot drift apart. It is a **new**
+figure — Session 17 counted no denominator, so the fraction cannot be computed for it and
+the two are not comparable on that axis.
+
+<details>
+<summary><strong>Session 17, for comparison: 130 mismatches over 16 datasets</strong></summary>
+
+The original measurement, against the 16-dataset seed that predated the CorpGroup-owned
+`analytics.platform.ingest_metrics` (added by `2d7eaf9`). It was **prose only** — the
+Session 17 probe printed to stdout and wrote no receipt, so there is no baseline file to
+diff against and no denominator to compare.
 
 ```
 === 130 mismatches over 16 datasets ===
@@ -114,6 +148,28 @@ the adapter would have. Nothing decides which tool to call and nothing summarise
     12  custom_properties
      1  term_parents
 ```
+
+Both runs used `mcp-server-datahub==0.6.0` against Core `v1.5.0.6` under the same comparison
+rules (`parity-v1`), so they are set beside each other rather than netted: **neither total
+is derived from the other**, and the 16- and 17-dataset denominators are different.
+
+</details>
+
+### The CorpGroup owner: a prediction that was wrong
+
+The 17th dataset is group-owned, and the prediction recorded before the run was that MCP
+would drop the owner — the same defect Attest's own reader carried until `2d7eaf9`, where a
+`... on CorpUser`-only query returned `{"owner": {}}` and made 15 of 67 external datasets
+unauditable.
+
+**It did not happen.** `owners` was compared and matched:
+`('urn:li:corpGroup:data-platform',)` on both sides. The MCP server reads CorpGroup owners
+correctly. The group-owned dataset's 6 mismatches are all four of the mechanisms below —
+absent `lastModified`, absent-vs-empty `customProperties`, the commented-out `type`, and
+tag display-name flattening — and none of them is about ownership.
+
+This is reported because it was predicted and refuted. A parity probe that only ever
+confirms its author's expectations is measuring its author.
 
 ### The same gap, expressed as verdicts
 
@@ -171,8 +227,8 @@ The data is right there. Same GMS, same instant:
 ```
 
 `DatasetProperties.lastModified` is **`NON_NULL AuditStamp`** in Core v1.5.0.6's schema — it
-is not merely available, it is guaranteed present. Measured: 15/16 datasets lose it. The
-16th is `pipeline_scratch`, which is genuinely `None` in the catalog — it is the
+is not merely available, it is guaranteed present. Measured: 16/17 datasets lose it. The
+17th is `pipeline_scratch`, which is genuinely `None` in the catalog — it is the
 freshness-silence witness, so it agrees by accident.
 
 ### 3b. Field tags and terms are flattened to display names, not URNs
@@ -239,7 +295,7 @@ for k, v in response.items():
 [snapshot.py](../src/attest/datahub/snapshot.py) exists largely to preserve that
 distinction: `None` means the catalog has **no such aspect**; an empty tuple means the aspect
 **exists and holds nothing**. Measured: `custom_properties` is `{}` via GraphQL — the aspect
-is present and empty — and `None` via MCP, indistinguishable from absent, on **12/16**
+is present and empty — and `None` via MCP, indistinguishable from absent, on **13/17**
 datasets.
 
 **Stated precisely, because the flattering version of this finding is false and we wrote it
@@ -441,8 +497,9 @@ just discover            # the search path that IS shipped (§9); exits ZERO
 ```
 
 The probe prints the per-dataset diff, the mismatch summary, and the verdict table. It
-downloads the MCP server on first run and reads the same 16 seeded datasets the benchmark
-uses.
+downloads the MCP server on first run and reads the same 17 seeded datasets the benchmark
+uses. Pass `--receipt <path>` to write the machine-readable artifact; it refuses to
+overwrite an existing one, so a second run must land somewhere new.
 
 Both the probe and the shipped discovery path launch the server **version-pinned** —
 `uvx --native-tls --from mcp-server-datahub==0.6.0 mcp-server-datahub --transport stdio` — so
