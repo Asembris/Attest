@@ -129,10 +129,13 @@ compacted upstream, because the read was never a place where meaning could be lo
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import importlib.metadata
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
@@ -152,7 +155,89 @@ from attest.claims import (  # noqa: E402
 from attest.datahub.client import DataHubClient  # noqa: E402
 from attest.datahub.snapshot import DatasetSnapshot, FieldSnapshot  # noqa: E402
 
+# The two-name readers for the `initialize` handshake and the tool error flag, IMPORTED
+# from the shipped discovery module rather than copied into this file.
+#
+# `mcp` 2.0.0 renamed `CallToolResult.isError` to `is_error` and `InitializeResult.serverInfo`
+# to `server_info`; the pyproject floor (`mcp>=1.2`) admits both. This probe used bare
+# attribute access (`result.isError`), which under a 2.x client raises AttributeError at the
+# FIRST tool call -- loud rather than silent, but it kills the run before it measures anything
+# and blames a missing attribute rather than the server refusing the call.
+#
+# Imported, not duplicated: two copies of one two-name lookup is exactly the drift that
+# `evidence.py` was written to refuse, and the shipped pair already carries the offline suite
+# that pins both spellings plus the legacy-only-reader vacuity check (tests/test_discovery.py).
+# This is a READ of production code. It changes nothing in it, and `spikes/` sits outside the
+# import graph `tests/test_discovery_boundary.py` walks.
+from attest.discovery.mcp import server_identity, tool_reported_error  # noqa: E402
+from evidence import provenance, write_receipt  # noqa: E402
+
+REPO = Path(__file__).resolve().parent.parent
 SEED = os.path.join(os.path.dirname(__file__), "..", "seed", "ground_truth.json")
+GMS_URL = "http://localhost:8080"
+
+# The frozen comparison rules, recorded IN the receipt so a later reader can tell whether two
+# parity receipts are comparable without diffing this file. Declared, not derived from the
+# code below -- the `trajectory.py` house rule: derive it from the thing it describes and it
+# agrees by construction and asserts nothing.
+#
+# `parity-v1` is the rule set Session 17 measured 130/16 under. NOTHING in `diff()` or
+# `snapshot_from_mcp()` moved when this block was added, which is what lets the two runs be
+# set beside each other at all. Bump the version if a comparison rule ever changes, and do it
+# in a commit that contains no measurement.
+METHODOLOGY = {
+    "version": "parity-v1",
+    "enumeration": (
+        "every datasets[].urn in seed/ground_truth.json, in file order; the count is "
+        "DERIVED from the manifest and never a literal"
+    ),
+    "reference": "graphql",
+    "measured": "mcp",
+    "compared_fields": (
+        "dataset: name, platform, description, last_modified, owners, tags, terms, "
+        "custom_properties, term_parents, fields-presence, column-set; "
+        "per matched column: native_type, data_type, description, tags, terms"
+    ),
+    "mismatch_unit": (
+        "one `!=` between the reference value and the measured value. A column-set "
+        "divergence counts as ONE mismatch however many columns differ."
+    ),
+    "comparison_opportunity": (
+        "one executed comparison. Counted on the same traversal that counts mismatches, "
+        "so the denominator cannot drift from the numerator. Columns present in the "
+        "reference but absent from the measured snapshot are skipped by the traversal and "
+        "contribute no opportunities -- their loss is already reported by the column-set "
+        "mismatch."
+    ),
+    "absent_empty_rule": (
+        "None != () != {}. Absent, empty and malformed stay three distinct states "
+        "(snapshot.py, CLAUDE.md Session 23)."
+    ),
+    "pass_fail": "non-zero exit if any mismatch OR any verdict flip. Non-zero is BY DESIGN.",
+}
+
+# Session 17's result. There was no machine-readable receipt for it: the probe printed to
+# stdout and the number lived in prose. It is carried here so the new receipt records what it
+# is being set beside, and it is NEVER recomputed, scaled, or used as a denominator.
+HISTORICAL = {
+    "session": 17,
+    "result": "130 mismatches over 16 datasets",
+    "mismatches_total": 130,
+    "datasets_compared": 16,
+    "datasets_with_mismatches": 16,
+    "receipt": None,
+    "receipt_note": (
+        "prose-only. The Session 17 probe wrote no receipt; the number lives in this "
+        "file's docstring and in docs/mcp-evaluation.md. This is the first "
+        "machine-readable parity receipt, so there is no baseline file to hash."
+    ),
+    "described_in": "docs/mcp-evaluation.md",
+    "seed_note": (
+        "measured over a 16-dataset seed. The 17th (analytics.platform.ingest_metrics, "
+        "CorpGroup-owned) arrived with 2d7eaf9, so the two runs do not share a denominator "
+        "and neither total may be derived from the other by arithmetic."
+    ),
+}
 
 # The MCP server, exactly as an agent would launch it. `--native-tls` is this machine's
 # corporate-CA trap, one runtime further out than the Python truststore injection and the
@@ -260,29 +345,54 @@ def snapshot_from_mcp(entity: dict[str, Any]) -> DatasetSnapshot:
     )
 
 
-async def fetch_all_via_mcp(urns: list[str]) -> dict[str, dict[str, Any]]:
-    """One MCP session, every seeded URN, raw payloads back."""
+async def fetch_all_via_mcp(urns: list[str]) -> tuple[dict[str, dict[str, Any]], str]:
+    """One MCP session, every seeded URN, raw payloads back — and the handshake identity.
+
+    The handshake string is returned rather than only printed so the receipt can record
+    which server actually answered. Read `server_identity`'s docstring before trusting the
+    version in it: FastMCP fills in its OWN version when the server does not set one, so it
+    tracks fastmcp rather than mcp-server-datahub. The `--from` pin is the real evidence.
+    """
     out: dict[str, dict[str, Any]] = {}
     async with stdio_client(PARAMS) as (read, write):
         async with ClientSession(read, write) as session:
             init = await session.initialize()
-            print(f"MCP server: {init.serverInfo.name} v{init.serverInfo.version}")
+            handshake = server_identity(init)
+            print(f"MCP server: {handshake}")
             tools = await session.list_tools()
             print(f"tools exposed: {', '.join(t.name for t in tools.tools)}\n")
             for urn in urns:
                 result = await session.call_tool("get_entities", {"urns": [urn]})
-                if result.isError:
+                if tool_reported_error(result):
                     raise SystemExit(f"get_entities failed for {urn}: {result.content}")
                 payload = json.loads(result.content[0].text)
                 out[urn] = payload[0] if isinstance(payload, list) else payload
-    return out
+    return out, handshake
 
 
-def diff(ref: DatasetSnapshot, got: DatasetSnapshot) -> list[str]:
-    """Every way `got` fails to be `ref`. Absent (None) and empty (()) are NOT equal."""
+def diff(ref: DatasetSnapshot, got: DatasetSnapshot) -> tuple[list[str], int]:
+    """Every way `got` fails to be `ref`. Absent (None) and empty (()) are NOT equal.
+
+    Returns the mismatches AND the number of comparisons that were executed to find them.
+
+    **NO COMPARISON RULE IN HERE MOVED when the counter was added.** Every `check`, every
+    branch and every early return is byte-identical to the code Session 17 measured 130/16
+    under; the only addition is `opportunities += 1` beside each executed comparison. That
+    is deliberate and it is the whole reason two runs can be set beside each other: a
+    refresh that quietly retuned the comparison would be measuring its own author.
+
+    The counter is incremented on the SAME traversal that finds the mismatches, so the
+    denominator cannot drift from the numerator -- a separate counting function would be a
+    second implementation of the same walk, and it would be wrong the first time either
+    changed. Early returns stop both counts together, which is honest: a comparison the
+    traversal never reached was never an opportunity.
+    """
     problems: list[str] = []
+    opportunities = 0
 
     def check(label: str, a: Any, b: Any) -> None:
+        nonlocal opportunities
+        opportunities += 1
         if a != b:
             problems.append(f"{label}: graphql={a!r} mcp={b!r}")
 
@@ -296,14 +406,16 @@ def diff(ref: DatasetSnapshot, got: DatasetSnapshot) -> list[str]:
     check("custom_properties", ref.custom_properties, got.custom_properties)
     check("term_parents", ref.term_parents, got.term_parents)
 
+    opportunities += 1
     if (ref.fields is None) != (got.fields is None):
         problems.append(f"fields presence: graphql={ref.fields is None=} mcp={got.fields is None=}")
-        return problems
+        return problems, opportunities
     if ref.fields is None:
-        return problems
+        return problems, opportunities
 
     ref_paths = [f.path for f in ref.fields]
     got_paths = [f.path for f in got.fields or ()]
+    opportunities += 1
     if set(ref_paths) != set(got_paths):
         missing = set(ref_paths) - set(got_paths)
         extra = set(got_paths) - set(ref_paths)
@@ -317,7 +429,7 @@ def diff(ref: DatasetSnapshot, got: DatasetSnapshot) -> list[str]:
         check(f"field[{rf.path}].description", rf.description, gf.description)
         check(f"field[{rf.path}].tags", rf.tags, gf.tags)
         check(f"field[{rf.path}].terms", rf.terms, gf.terms)
-    return problems
+    return problems, opportunities
 
 
 CP = "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)"
@@ -379,17 +491,21 @@ def verdict_cases() -> list[tuple[str, str, Any, Any]]:
 
 def report_verdict_impact(
     reference: dict[str, DatasetSnapshot], raw: dict[str, dict[str, Any]]
-) -> int:
+) -> tuple[int, list[dict[str, Any]]]:
     """The finding that matters: a lossy transport does not degrade to silence.
 
     A field diff is abstract. This is the same gap expressed in the only units the
     project cares about — the verdict a human would be shown.
+
+    Returns the flip count and the row-by-row table, so the receipt carries the verdicts
+    themselves rather than only how many of them moved.
     """
     now = reference[CP].last_modified
     print("\n=== the same gap, as verdicts ===\n")
     print(f"{'claim (all five are TRUE)':<56} {'GraphQL':<22} {'MCP':<22}")
     print("-" * 104)
     flips = 0
+    rows: list[dict[str, Any]] = []
     for label, urn, claim, checker in verdict_cases():
         got = snapshot_from_mcp(raw[urn])
         kw = {"now": now} if checker is check_freshness else {}
@@ -397,24 +513,122 @@ def report_verdict_impact(
         b = checker(claim, got, **kw).verdict.value
         marker = "  <-- FLIPPED" if a != b else ""
         flips += a != b
+        rows.append(
+            {"claim": label, "target_urn": urn, "graphql": a, "mcp": b, "flipped": a != b}
+        )
         print(f"{label:<56} {a:<22} {b:<22}{marker}")
     print(f"\n{flips}/5 verdicts move under the MCP transport.")
-    return flips
+    return flips, rows
+
+
+def pinned_server_version() -> str:
+    """The `mcp-server-datahub` version this run launched, read off PARAMS.
+
+    Derived from the launch arguments rather than restated as a constant: a second copy
+    would be the thing that drifts, and the pin is the evidence for which server answered.
+    """
+    args = list(PARAMS.args or ())
+    spec = args[args.index("--from") + 1] if "--from" in args else ""
+    return spec.split("==", 1)[1] if "==" in spec else spec or "unpinned"
+
+
+def mcp_client_version() -> str:
+    """The resolved Python `mcp` client. Unknown is said, never guessed."""
+    try:
+        return importlib.metadata.version("mcp")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown (not installed)"
+
+
+def census(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
+    """The dataset list this run must compare, checked before a byte crosses the network.
+
+    Every assertion here exists to stop the denominator moving quietly. Session 17 measured
+    16 datasets and the seed now holds 17; a run that silently compared 16 of them would
+    report a smaller total that looked like an improvement in the transport.
+
+    The expected count is DERIVED from the manifest -- there is deliberately no literal to
+    fall out of date. The CorpGroup dataset is likewise identified by `owner_groups` in the
+    manifest rather than by a URN written here.
+    """
+    datasets = manifest["datasets"]
+    urns = [d["urn"] for d in datasets]
+    group_owned = [d["urn"] for d in datasets if d.get("owner_groups")]
+
+    if len(urns) != len(datasets):
+        raise SystemExit("census: a manifest entry has no urn")
+    if len(set(urns)) != len(urns):
+        dupes = sorted({u for u in urns if urns.count(u) > 1})
+        raise SystemExit(f"census: duplicate URNs in the manifest: {dupes}")
+    if not group_owned:
+        raise SystemExit(
+            "census: no group-owned dataset in the seed manifest. The CorpGroup-owned "
+            "dataset (2d7eaf9) is the one shape Attest's own reader was blind to until "
+            "an external catalog found it, and a parity run that does not include it "
+            "cannot say whether this transport is blind to it too. Re-seed."
+        )
+    return urns, group_owned
 
 
 def main() -> None:
-    urns = [d["urn"] for d in json.load(open(SEED))["datasets"]]
-    print(f"=== MCP vs GraphQL parity over {len(urns)} seeded datasets ===\n")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--receipt",
+        type=Path,
+        default=None,
+        help=(
+            "write a machine-readable parity receipt here. REFUSES to overwrite an "
+            "existing file: a second run must land somewhere new so that it cannot hide."
+        ),
+    )
+    args = parser.parse_args()
 
+    # Refused UP FRONT as well as at write time. `write_receipt` is the authoritative gate,
+    # but it fires after the whole measurement has run -- and the most likely way to hit it
+    # is re-running a command whose path is already committed evidence. Failing in a second
+    # beats failing after a full parity sweep.
+    if args.receipt is not None and args.receipt.exists():
+        raise SystemExit(
+            f"{args.receipt} already exists and this will not overwrite a receipt.\n"
+            f"A receipt is evidence: overwriting one destroys the artifact a committed "
+            f"number traces to, and there is deliberately no --force.\n"
+            f"Pass --receipt with a NEW path."
+        )
+
+    manifest = json.load(open(SEED))
+    urns, group_owned = census(manifest)
+    print(f"=== MCP vs GraphQL parity over {len(urns)} seeded datasets ===")
+    print(f"census: {len(urns)} from the manifest, {len(group_owned)} group-owned\n")
+
+    # Every enumerated URN must resolve over GraphQL or the run ABORTS. The reference read
+    # is what the measurement is against; a dataset that quietly dropped out here would
+    # shrink both the numerator and the denominator and read as better parity.
     client = DataHubClient()
-    reference = {urn: client.fetch_dataset(urn) for urn in urns}
-    raw = asyncio.run(fetch_all_via_mcp(urns))
+    reference: dict[str, DatasetSnapshot] = {}
+    for urn in urns:
+        try:
+            reference[urn] = client.fetch_dataset(urn)
+        except Exception as exc:  # noqa: BLE001 - any failure here invalidates the census
+            raise SystemExit(
+                f"census: {urn} did not resolve over GraphQL ({type(exc).__name__}: {exc}).\n"
+                f"The reference read is the measurement's denominator. Aborting rather "
+                f"than comparing {len(urns) - 1} of {len(urns)} datasets and reporting a "
+                f"total nobody could line up against another run."
+            ) from exc
+
+    raw, handshake = asyncio.run(fetch_all_via_mcp(urns))
+    missing = [u for u in urns if u not in raw]
+    if missing:
+        raise SystemExit(f"census: MCP returned no payload for {missing}")
 
     total = 0
+    opportunities = 0
     by_kind: dict[str, int] = {}
+    per_dataset: list[dict[str, Any]] = []
     for urn in urns:
         got = snapshot_from_mcp(raw[urn])
-        problems = diff(reference[urn], got)
+        problems, seen = diff(reference[urn], got)
+        opportunities += seen
         short = urn.split(",")[1] if "," in urn else urn
         if problems:
             print(f"[FAIL] {short}  ({len(problems)} mismatches)")
@@ -425,15 +639,102 @@ def main() -> None:
         else:
             print(f"[ OK ] {short}")
         total += len(problems)
+        kinds: dict[str, int] = {}
         for p in problems:
             kind = p.split(":")[0].split("[")[0].replace("field", "field.*")
             by_kind[kind] = by_kind.get(kind, 0) + 1
+            kinds[kind] = kinds.get(kind, 0) + 1
+        per_dataset.append(
+            {
+                "urn": urn,
+                "name": short,
+                "group_owned": urn in group_owned,
+                "mismatches": len(problems),
+                "comparisons": seen,
+                "by_kind": kinds,
+                "detail": problems,
+            }
+        )
 
+    failing = sum(1 for d in per_dataset if d["mismatches"])
     print(f"\n=== {total} mismatches over {len(urns)} datasets ===")
     for kind, n in sorted(by_kind.items(), key=lambda kv: -kv[1]):
         print(f"  {n:4}  {kind}")
+    print(
+        f"\n{failing}/{len(urns)} datasets carry at least one mismatch; "
+        f"mean {total / len(urns):.2f} mismatches per dataset over "
+        f"{opportunities} comparisons."
+    )
 
-    flips = report_verdict_impact(reference, raw)
+    flips, verdict_rows = report_verdict_impact(reference, raw)
+
+    if args.receipt is not None:
+        write_receipt(
+            args.receipt,
+            {
+                "what_this_is": (
+                    "MCP-vs-GraphQL snapshot parity, re-measured over the current seed "
+                    "catalog. NOT a benchmark: nothing here is scored, and no accuracy, "
+                    "macro-F1 or confusion matrix is computed over it. GraphQL is the "
+                    "reference read; MCP is the transport under measurement. "
+                    "See docs/mcp-evaluation.md."
+                ),
+                "reproduce": (
+                    f"python spikes/mcp_reader_probe.py --receipt {args.receipt.as_posix()}"
+                ),
+                "provenance": provenance(
+                    fix_under_test=(
+                        "none. No product code is under test here: the transport, the "
+                        "normalizer and every comparison rule are unchanged from Session "
+                        "17. What moved is the SEED (2d7eaf9 added a CorpGroup-owned "
+                        "dataset, 16 -> 17) and the probe's own error-flag reader."
+                    ),
+                    gms_url=GMS_URL,
+                    extra={
+                        "mcp_server_datahub_version": pinned_server_version(),
+                        "mcp_server_datahub_pin": "PARAMS --from, pinned deliberately",
+                        "mcp_client_version": mcp_client_version(),
+                        "mcp_server_handshake": handshake,
+                        "mcp_server_handshake_note": (
+                            "FastMCP fills in its OWN version when the server does not set "
+                            "one, so this tracks fastmcp rather than mcp-server-datahub. "
+                            "The --from pin is the evidence for which server ran."
+                        ),
+                    },
+                ),
+                "methodology": METHODOLOGY,
+                "census": {
+                    "datasets_enumerated": len(urns),
+                    "datasets_compared": len(per_dataset),
+                    "source": "seed/ground_truth.json",
+                    "group_owned_urns": group_owned,
+                    "urns": urns,
+                },
+                "totals": {
+                    "mismatches_total": total,
+                    "datasets_compared": len(urns),
+                    "datasets_with_mismatches": failing,
+                    "mean_mismatches_per_dataset": round(total / len(urns), 3),
+                    "comparison_opportunities_total": opportunities,
+                    "mismatch_fraction": round(total / opportunities, 6)
+                    if opportunities
+                    else None,
+                    "mismatch_fraction_note": (
+                        "measured, not inferred: the denominator is the count of "
+                        "comparisons this run actually executed, tallied on the same "
+                        "traversal as the mismatches. It is NOT comparable to Session "
+                        "17, which counted no denominator."
+                    ),
+                    "by_kind": dict(sorted(by_kind.items(), key=lambda kv: -kv[1])),
+                    "verdict_flips": flips,
+                    "verdict_cases": len(verdict_rows),
+                },
+                "verdicts": verdict_rows,
+                "per_dataset": per_dataset,
+                "historical": HISTORICAL,
+            },
+        )
+        print(f"\nreceipt: {args.receipt}")
 
     if total or flips:
         print(
