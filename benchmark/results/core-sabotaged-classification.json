@@ -75,6 +75,7 @@
     "correctness_failures": 9,
     "coverage_failures": 4,
     "extraction_failures": 0,
+    "mis_extracted_but_right": [],
     "errors": [
       {
         "case": "class-07",
