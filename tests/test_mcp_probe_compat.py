@@ -15,6 +15,21 @@ measurement could quietly stop being a measurement:
      datasets and the seed now holds 17. A probe that hardcoded a count would compare a
      subset and report a smaller total that reads like the transport improving.
 
+**TWO TIERS IN ONE FILE, and the split is where the evidence lives.** The compatibility and
+census-code pins read the probe's SOURCE, which is committed, so they are offline and gate
+CI. The two pins that read `seed/ground_truth.json` are marked `live`, because that file is
+**generated state** -- `seed/*.json` is gitignored and written by `just seed`, which needs a
+live DataHub. `test_fixture_drift.py` reads the same manifest for the same reason and is
+marked the same way. Getting this wrong is not theoretical: these two were written unmarked
+and CI failed on them with `FileNotFoundError` on a bare runner, which is the offline tier's
+one promise -- that it never reaches for something a bare runner does not have -- broken by
+a test about reaching for things.
+
+The code properties stay offline because they are where the regressions are: a probe that
+reads the wrong field name, or hardcodes a dataset count, is a source defect and is visible
+in the source. Whether today's seed happens to contain a group-owned dataset is a fact about
+the environment, and it belongs where the environment is.
+
 **Why this parses the source instead of importing it.** `spikes/mcp_reader_probe.py` does
 `from mcp import ClientSession` at module scope, and `mcp` is an optional extra that CI
 deliberately does not install -- the offline tier is RUN with the module unimportable to
@@ -27,8 +42,9 @@ its limit is stated: this is a STATIC property. A probe that reached the legacy 
 through `getattr` or a computed name would evade it. What it catches is the regression that
 actually happened, written the way it was actually written.
 
-Truly offline: no DataHub, no MCP server, no model, no network, and nothing here imports
-`mcp` or `src/attest`.
+No DataHub, no MCP server, no model, no network, and nothing here imports `mcp` or
+`src/attest`. The two `live`-marked tests need only the seed ARTIFACT on disk, not a running
+catalog -- but that artifact is produced by a live seed run, so they answer to the same mark.
 """
 
 from __future__ import annotations
@@ -94,6 +110,18 @@ def probe_source() -> str:
 
 @pytest.fixture(scope="module")
 def manifest() -> dict:
+    """The seed manifest, or a loud failure naming how to produce it.
+
+    Never a skip. A pin with nothing to pin against is a failure, not a pass -- the rule
+    `test_fixture_drift.py` states for the same file. The `live` mark is what keeps this off
+    a bare runner; reaching here with no artifact means the LIVE tier was run unseeded, and
+    that is worth being told about rather than quietly passing over.
+    """
+    if not SEED.exists():
+        raise AssertionError(
+            f"{SEED} is missing. It is generated state (`seed/*.json` is gitignored) and is "
+            f"written by `just seed`, which needs a live DataHub. Run `just seed` first."
+        )
     return json.loads(SEED.read_text(encoding="utf-8"))
 
 
@@ -212,6 +240,7 @@ def test_a_hardcoded_census_count_is_caught_by_this_detector() -> None:
     assert countable_literals(pinned) == [17]
 
 
+@pytest.mark.live
 def test_the_seed_manifest_holds_a_group_owned_dataset(manifest: dict) -> None:
     """The fact `census()` refuses to run without.
 
@@ -224,6 +253,7 @@ def test_the_seed_manifest_holds_a_group_owned_dataset(manifest: dict) -> None:
     assert group_owned, "no group-owned dataset in the seed manifest; re-seed"
 
 
+@pytest.mark.live
 def test_every_manifest_urn_is_present_and_unique(manifest: dict) -> None:
     """The two census preconditions, pinned against the manifest itself.
 
