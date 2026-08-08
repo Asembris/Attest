@@ -5,7 +5,7 @@
 That sentence is the whole boundary, and every rule in this package exists to hold one
 clause of it. Attest reads the catalog over GraphQL because a groundedness auditor needs a
 lossless read, and [docs/mcp-evaluation.md](../../../docs/mcp-evaluation.md) measured what
-happens when it does not: 130 field mismatches over 16 datasets, and a TRUE claim about a
+happens when it does not: 136 field mismatches over 17 datasets, and a TRUE claim about a
 correctly-tagged PII column coming back **Contradicted**. That decision is unchanged. This
 module does something else.
 

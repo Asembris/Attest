@@ -102,13 +102,13 @@ class Settings(BaseSettings):
     #
     # THE VERSION IS PINNED (`==0.6.0`), and it is the same argument as the Core pin and the
     # `langgraph-checkpoint-sqlite` pin: **every claim Attest makes about this server is
-    # version-bounded.** The parity finding is 130 mismatches on 0.6.0 (docs/mcp-evaluation.md),
-    # `just spike-mcp` exits non-zero BY DESIGN and is the tripwire that says the day that
-    # finding expires, and PR #182 proposes a fix to this very codebase. Unpinned, `uvx`
-    # resolves whatever is newest at first use — so a judge running the demo next week could
-    # get a server none of those receipts describe, and if our own upstream fix lands, the
-    # tripwire and `just discover` start behaving differently than documented, SILENTLY. A
-    # tripwire wired to a moving target is a green light wired to nothing.
+    # version-bounded.** The parity finding is 136 mismatches over 17 datasets on 0.6.0
+    # (docs/mcp-evaluation.md), `just spike-mcp` exits non-zero BY DESIGN and is the tripwire
+    # that says the day that finding expires, and PR #182 proposes a fix to this very codebase.
+    # Unpinned, `uvx` resolves whatever is newest at first use — so a judge running the demo
+    # next week could get a server none of those receipts describe, and if our own upstream fix
+    # lands, the tripwire and `just discover` start behaving differently than documented,
+    # SILENTLY. A tripwire wired to a moving target is a green light wired to nothing.
     #
     # Pinning is a FREEZE, not a downgrade: 0.6.0 is the current latest on PyPI (checked
     # 2026-08-05), so this changes nothing today and holds it that way. Bump it deliberately,

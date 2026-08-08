@@ -206,11 +206,19 @@ hollow:
   [`docs/external-trial.md`](../docs/external-trial.md) runs 15 claims through the real
   pipeline against DataHub's own `showcase-ecommerce` datapack — 67 datasets over 7
   platforms, whose metadata nobody here wrote. It is emphatically **not** a second benchmark
-  and nothing in it is scored. What it found is that **15 of those 67 datasets cannot be
-  audited at all**: Attest's GraphQL query has no `CorpGroup` arm, and because
-  `generate_seed.py` emits `CorpUser` owners *exclusively*, no fixture, no offline test and
+  and nothing in it is scored. What it found is that **15 of those 67 datasets could not be
+  audited at all**: Attest's GraphQL query had no `CorpGroup` arm, and because
+  `generate_seed.py` emitted `CorpUser` owners *exclusively*, no fixture, no offline test and
   no live test in this repository could ever have surfaced it. That is this bullet, proven
   consequential by the first instrument built to test it.
+
+  The gap is now closed, and the order is the point: a group-owned dataset was **seeded
+  first**, then the `... on CorpGroup` arm was added, then the fixtures were re-captured — so
+  the fix does not rest on the same seed that hid the problem. A two-arm census over one
+  loaded catalog state measures the close instead of asserting it: **67/67 readable with the
+  arm, 52/67 without it**. What does *not* change is this bullet — the seed still cannot
+  exercise a shape it never emits, and the next such gap is invisible from inside for exactly
+  the same reason.
 - **The labels apply the policy; they do not validate it.** If
   "an untagged column on an unreviewed table is Insufficient-Coverage" is the *wrong rule*,
   then the checker and the labels are wrong together and score 100% doing it. That is a

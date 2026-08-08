@@ -520,8 +520,8 @@ def search_catalog(
     **MCP discovers. A human resolves. GraphQL verifies. Deterministic code decides.**
 
     This is the one place Attest talks to the MCP server, and it is not the catalog read.
-    docs/mcp-evaluation.md measured what happens when an MCP response feeds a checker — 130
-    field mismatches over 16 datasets, and a TRUE claim about a correctly-tagged PII column
+    docs/mcp-evaluation.md measured what happens when an MCP response feeds a checker — 136
+    field mismatches over 17 datasets, and a TRUE claim about a correctly-tagged PII column
     coming back **Contradicted** — and that decision stands. What crosses from here into a run
     is exactly one value: a dataset URN a human selected. It is the one field the transport
     returns losslessly, and it still has to appear VERBATIM in `agent_output` and be quoted
