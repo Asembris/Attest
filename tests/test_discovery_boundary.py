@@ -1,7 +1,7 @@
 """THE TRUST BOUNDARY: MCP discovers, a human resolves, GraphQL verifies, code decides.
 
-docs/mcp-evaluation.md measured what an MCP response does to a deterministic checker — 130
-field mismatches over 16 datasets, and a TRUE claim about a correctly-tagged PII column
+docs/mcp-evaluation.md measured what an MCP response does to a deterministic checker — 136
+field mismatches over 17 datasets, and a TRUE claim about a correctly-tagged PII column
 reading back **Contradicted**, which `benchmark/README.md` names as the worst thing this
 product can do. That decision has not changed: the catalog read is GraphQL.
 

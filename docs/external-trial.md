@@ -10,13 +10,14 @@ wrote a line of.
 
 | | |
 | --- | --- |
-| **Status** | Run, with a committed receipt. A measurement, **not a score**. |
-| **Runner** | [`spikes/external_trial.py`](../spikes/external_trial.py) — `just external-trial` |
-| **Receipt** | [`docs/external-trial/results.json`](external-trial/results.json) — every figure below opens here |
+| **Status** | Run twice, with committed receipts either side of a fix. A measurement, **not a score**. |
+| **Runner** | [`spikes/external_trial.py`](../spikes/external_trial.py) — `just external-trial`. The census is [`spikes/external_census.py`](../spikes/external_census.py) — `just external-census` |
+| **Receipts** | Current: [`results-after-corpgroup.json`](external-trial/results-after-corpgroup.json) and [`census-after-corpgroup.json`](external-trial/census-after-corpgroup.json). The pre-fix run is kept **unedited** as [`results.json`](external-trial/results.json), so the before/after pair has a before |
 | **Catalog** | DataHub `showcase-ecommerce` datapack, checksum-pinned — [`external-trial/ingest.md`](external-trial/ingest.md), `just external-ingest` |
-| **Measured against** | DataHub Core **v1.5.0.6**, `gpt-4o-mini`, 2026-08-04. 15 claims, **$0.0077**, 117s |
+| **Measured against** | DataHub Core **v1.5.0.6**, `gpt-4o-mini`. Baseline 2026-08-04, current run 2026-08-07. 15 claims, **$0.0077** |
 
-**Jump to:** [the headline finding](#the-headline-a-gap-our-own-seed-could-never-expose) ·
+**Jump to:** [what moved between the two runs](#what-moved-between-the-two-runs) ·
+[the headline finding](#the-headline-a-gap-our-own-seed-could-never-expose) ·
 [what the catalog carries](#what-the-external-catalog-actually-carries) ·
 [the 15 claims](#the-15-claims) · [what surprised us](#what-surprised-us) ·
 [predictions](#the-predictions-made-before-the-run) ·
@@ -45,26 +46,52 @@ single audit ran.
 
 ---
 
+## What moved between the two runs
+
+The trial ran on **2026-08-04**, found the gap below, and two product commits then landed. It
+was re-run on **2026-08-07** against the same catalog, the same 15 claims and the same
+methodology. Both receipts are committed; neither is derived from the other.
+
+| | Baseline (2026-08-04) | Current (2026-08-07) |
+| --- | --- | --- |
+| Datasets readable | 52 of 67 | **67 of 67** |
+| Outcomes matching the pre-run reading | 15 of 15 | **14 of 15** |
+| Answered the question actually asked | 14 of 15 | **14 of 15** |
+| Right by luck | 1 (`ext-class-01`) | **0** |
+| URNs transcribed verbatim | 15 of 15 | **14 of 15** |
+
+**Read the middle three rows together or they lie.** The match count did not fall because
+Attest got worse. `2d7eaf9` added the `... on CorpGroup` arm, so `ext-own-04` moved from a
+refused question to a decided one — its expectation was moved **before** the run and the move
+is recorded in the receipt. And `f8e4017` added a deterministic family guard, which now
+**refuses** the one claim the decomposer mis-transcribed instead of letting a schema checker
+answer a question nobody asked. That case used to be banked as a match and named as luck; it
+is now a visible `No-Claim`, so it stops counting as matched and stops counting as a verbatim
+URN. **Detecting it cost a point, which is the correct direction** — the two figures have
+converged on the same fourteen rather than one of them improving.
+
+---
+
 ## The headline: a gap our own seed could never expose
 
-**15 of the 67 datasets are unauditable.** `client.fetch_dataset` raises
-`MalformedResponseError` on every one of them, and the trigger is this, straight off the wire:
+**15 of the 67 datasets were unauditable.** `client.fetch_dataset` raised
+`MalformedResponseError` on every one of them, and the trigger was this, straight off the wire:
 
 ```json
 {"owner": {}, "ownershipType": {"urn": "urn:li:ownershipType:__system__technical_owner"}}
 ```
 
-An owner entry whose `owner` object is **empty**. The cause is not the catalog. It is
-Attest's own query — [`client.py`](../src/attest/datahub/client.py)'s `DATASET_QUERY` asks
+An owner entry whose `owner` object is **empty**. The cause was not the catalog. It was
+Attest's own query — [`client.py`](../src/attest/datahub/client.py)'s `DATASET_QUERY` asked
 for:
 
 ```graphql
 owner { ... on CorpUser { urn properties { displayName email } } }
 ```
 
-**There is no `CorpGroup` arm.** A dataset owned by a group matches no inline fragment, GMS
-returns an empty object for it, and Session 23's `_urns` guard — written to stop a
-present-but-URL-less entry being normalized to the empty-string URN `''` — correctly refuses
+**There was no `CorpGroup` arm.** A dataset owned by a group matched no inline fragment, GMS
+returned an empty object for it, and Session 23's `_urns` guard — written to stop a
+present-but-URL-less entry being normalized to the empty-string URN `''` — correctly refused
 to make data out of it.
 
 Three things about that are worth separating, because they are different facts:
@@ -72,36 +99,84 @@ Three things about that are worth separating, because they are different facts:
 - **The guard did its job.** It failed **closed**. The alternative, and the behaviour Session
   23 was written to remove, is a confident `Contradicted`: *"ORG_DATA_PLATFORM is not an
   owner; the catalog lists `''`"*. Nothing wrong reached a verdict.
-- **The diagnosis is wrong.** The error says *malformed catalog response*. The response is
-  fine. The **query** is incomplete, and Attest cannot tell the difference — it sees an empty
-  object and has no way to know it asked for the wrong shape.
-- **No test in this repository could have caught it.** `seed/generate_seed.py` emits owners
+- **The diagnosis was wrong.** The error said *malformed catalog response*. The response was
+  fine. The **query** was incomplete, and Attest could not tell the difference — it saw an
+  empty object and had no way to know it had asked for the wrong shape.
+- **No test in this repository could have caught it.** `seed/generate_seed.py` emitted owners
   through `make_user_urn` exclusively, so every seeded dataset, every captured fixture in
   `tests/fixtures/snapshots/`, and therefore the entire offline tier, the live tier and the
-  12-cell matrix contain **corpuser owners and nothing else**. The offline suite is green.
-  The live suite is green. `test_fixture_drift` is green. The gap is invisible from inside.
+  12-cell matrix contained **corpuser owners and nothing else**. The offline suite was green.
+  The live suite was green. `test_fixture_drift` was green. The gap was invisible from inside.
 
 That is this project's own seeded-catalog caveat, proven consequential by the first
 instrument built to test it. It is the same shape as the rule Session 5 left behind — *a fake
 cannot fail in a way the real thing fails through machinery the fake does not have* — one
 level up: **a seed cannot exercise a shape it never emits.**
 
-**It is documented, not fixed.** Changing the catalog read days from submission, with no
-fixture anywhere that exercises group ownership, would be a change whose correctness rests on
-the same seed that hid the problem. The honest artifact is the finding.
-
-**What it costs, stated precisely.** Ownership claims about group-owned datasets are
-unauditable, and they surface as `ClaimError` — kept out of `audits` entirely, counted in no
+**What it cost, stated precisely.** Ownership claims about group-owned datasets were
+unauditable, and they surfaced as `ClaimError` — kept out of `audits` entirely, counted in no
 verdict tally, named in `errors`. Not a wrong verdict; a refused question. Every other claim
-family on those same 15 datasets is equally blocked, because the read fails before any
-checker sees it.
+family on those same 15 datasets was equally blocked, because the read failed before any
+checker saw it.
+
+### It is fixed now, and the ORDER is the argument
+
+The first write-up of this finding said *documented, not fixed* — on the reasoning that
+changing the catalog read with no fixture anywhere exercising group ownership would rest the
+fix's correctness on the same seed that hid the problem. That reasoning was right, and it is
+what determined the sequence rather than what prevented the work:
+
+1. **A group-owned dataset was seeded first** (`analytics.platform.ingest_metrics`, owned by
+   `urn:li:corpGroup:data-platform`), so a fixture exercising the shape existed *before* any
+   read changed.
+2. **Then** `2d7eaf9` added the `... on CorpGroup { urn }` arm.
+3. **Then** the offline fixtures were re-captured against it.
+
+**And the close is measured, not asserted.** [`spikes/external_census.py`](../spikes/external_census.py)
+walks all 67 datasets twice over one loaded catalog state — once with the shipped query, once
+with the `CorpGroup` line deleted — so the before and the after are not two runs on a moving
+catalog. The result is in
+[`census-after-corpgroup.json`](external-trial/census-after-corpgroup.json):
+
+| | With the `CorpGroup` arm | Without it |
+| --- | --- | --- |
+| Readable | **67 of 67** | 52 of 67 |
+| Refused | **0** | 15 |
+
+15 recovered, **0 still refused**, **0 regressed** — and the hypothesis that the arm was the
+*sole* cause was stated in the receipt **before** the census ran, explicitly *not* as an
+acceptance requirement, so a surviving refusal would have been a finding rather than a
+failure. `ext-own-04`, the claim written to probe this, moved from `ClaimError` to
+**Supported** with the group URN named in its own evidence — which is what the receipt
+required, because a `Supported` verdict alone would not have shown *which* change produced it.
+
+**The seeded-catalog caveat is not retired by any of this.** The seed still cannot exercise a
+shape it never emits, and the next gap of this kind will be invisible from inside for exactly
+the same reason. What changed is that this one is closed and the closing is on the record.
 
 ---
 
 ## What the external catalog actually carries
 
 Read back through Attest's own client after ingestion — never from the pack's documentation.
-**52 of 67 datasets readable** (the other 15 are the finding above).
+
+**Everything in this section was surveyed over the 52 datasets readable at the 2026-08-04
+run — that is, BEFORE the `CorpGroup` arm.** The 15 datasets that arm recovered have **not**
+been re-surveyed for aspect coverage: the census measures *readability*, not which aspects
+each dataset carries, and re-running the survey to produce 67-denominators is a separate
+receipted job that has not been done. So every `/52` below is a live figure about a
+52-dataset subset, not a stale figure about 67.
+
+**And the provenance of the 52 itself is worth stating rather than inheriting.** The baseline
+receipt carried `datasets_readable_by_attest: 52` and `datasets_refused: 15` as **hardcoded
+literals in `build_receipt`** — that run never measured them, and the figures were published
+as if it had. They are now measured, as the *without-arm* half of the two-arm census on
+2026-08-07, and they came back **exactly 52 and 15**. That agreement is why saying so matters
+rather than why it does not: **a number that was right by accident is indistinguishable from
+one that was measured unless you say which it was**, which is the same defect class as a
+claim that is right by luck. The baseline's two fields are now `None`, and
+[`tests/test_external_evidence.py`](../tests/test_external_evidence.py) fails if a literal
+comes back.
 
 | Aspect | Coverage | What it means for the trial |
 | --- | --- | --- |
@@ -152,8 +227,8 @@ DataHub page would say, and **where it disagrees, the disagreement is the findin
 | `ext-own-01` | Tableau dataset owned by `brock1@` | **Supported** | agrees |
 | `ext-own-02` | PowerBI dataset owned by `brock1@` | **Contradicted** | agrees — the owner is `kirk@`, and the list is exhaustive |
 | `ext-own-03` | `customers` owned by `brock1@` | **Insufficient-Coverage** | agrees — unowned |
-| `ext-own-04` | dbt `orders` owned by `ORG_DATA_PLATFORM` | **ClaimError** | **disagrees — a human sees the group owner on the page. Attest cannot.** |
-| `ext-class-01` | `cust_email` labelled `Email_Address` | **Supported** | agrees — **but right by luck, see below** |
+| `ext-own-04` | dbt `orders` owned by `ORG_DATA_PLATFORM` | **Supported** *(was `ClaimError`)* | agrees — **and this row is the fix landing: the expectation was moved to `Supported` before the run, and the evidence names the group URN** |
+| `ext-class-01` | `cust_email` labelled `Email_Address` | **No-Claim** *(was `Supported`, right by luck)* | n/a — the sentence is never checked. The family guard refuses the mis-transcription, **see below** |
 | `ext-class-02` | `cust_email` contains PII | **Insufficient-Coverage** | **disagrees — a human says PII** |
 | `ext-class-03` | `customers` contains no PII | **Insufficient-Coverage** | disagrees (it has `cust_email`, `phone_number`, `dob`) — **but this is the conservative error, not the dangerous one** |
 | `ext-class-04` | `orders` is *not* labelled the `PII` term | **Contradicted** | agrees |
@@ -161,11 +236,17 @@ DataHub page would say, and **where it disagrees, the disagreement is the findin
 | `ext-schema-02` | has an `ssn` column | **Contradicted** | agrees |
 | `ext-schema-03` | `zipcode` is `VARCHAR` | **Contradicted** | agrees — the catalog records `NUMBER(38,0)` |
 
-**All 15 outcomes matched their predeclared expectations — 14 produced an assessment, and one
-produced the expected `ClaimError`, which this architecture deliberately does not count as a
-verdict.** (`ext-own-04`: refusing to answer is not answering, so it is kept out of `audits`
-entirely and tallied in no verdict count.) That sentence is doing less work than it looks like it
-is, and the next section is why.
+**14 of the 15 outcomes matched their predeclared expectations, and the 15th is
+`ext-class-01` — refused as `No-Claim` rather than answered.** In the baseline run all 15
+matched, because that one was banked as a match and named as luck. It is now refused before
+any checker sees it, so it stops counting as matched: **detecting it cost a point, which is
+the correct direction.** The next section is why.
+
+Two rows moved and nothing else did — asserted, not asserted-by-eye. `ext-own-04`'s
+expectation was moved **before** the run, in the runner, with the reason recorded; every other
+case's fields are compared field-by-field back to the committed baseline receipt by
+[`tests/test_external_evidence.py`](../tests/test_external_evidence.py), which fails if any
+of them drifted.
 
 ### 5 Insufficient-Coverage, and two of them a human would argue with
 
@@ -194,26 +275,46 @@ its job. Getting this one "wrong" in the conservative direction is the product w
 
 ## What surprised us
 
-### `ext-class-01` was right by luck, and the receipt says so
+### `ext-class-01` was right by luck — and is now refused instead
 
 The sentence *"The `cust_email` column of `<urn>` is labelled `<term urn>`"* came back from
 the decomposer as a **`schema`** claim — `columns: [{name: "cust_email", native_type: null}]`
 — **not** a classification claim. The `Email_Address` term URN was dropped entirely. The
 schema checker then answered a question nobody asked (*"does this column exist?"*), said
-**Supported**, and that happens to be the verdict the trial expected.
+**Supported**, and that happened to be the verdict the trial expected.
 
-A naive match counter banks this as a success. It was caught by checking extracted claim type
-against intended family, and the receipt now reports **`answered_the_intended_question:
+A naive match counter banks that as a success. It was caught by checking extracted claim type
+against intended family, and the baseline receipt reported **`answered_the_intended_question:
 14/15`** and **`right_by_luck: ["ext-class-01"]`** as figures separate from the outcome match,
 never netted against it. This is `benchmark/README.md`'s own rule — *a case that is right by
 luck is counted correct AND named, because banking those flatters a broken decomposer* —
 firing on the first foreign catalog it met.
 
-**So the honest headline carries two numbers and never nets them: 15/15 outcomes matched what was
-predeclared — 14 of them assessments, the 15th the expected `ClaimError`, which is not a verdict —
-and 14 of the 15 answered the question that was actually asked.** The two 14s count different
-things: the `ClaimError` (`ext-own-04`) *did* answer its intended question, by refusing it exactly
-as predicted; the case that did not is `ext-class-01`.
+**Naming it was the first response; refusing it is the second.**
+[`family.py`](../src/attest/family.py) is a deterministic lexical cross-check between a
+claim's typed family and the sentence it was quoted from, applied after the claim validates
+and before anything can route it to a checker. A sentence whose only family vocabulary is
+*labelled / glossaryTerm* did not produce a schema claim. So this case now comes back
+**`No-Claim`** — a visible gap in the audit — instead of a `Supported` verdict about a
+question the agent never asked. It fails **open** by design: it refuses only where the text
+signals exactly one family and the extraction names another, and it never rewrites a family,
+because correcting the transcription would hand the semantic layer back the thing it just got
+wrong.
+
+**What that does to the numbers, said plainly, because it looks like a regression and is the
+opposite.** The case stops counting as a match, so `matched_expectation` falls **15 → 14**; it
+stops contributing an extracted URN, so `urns_transcribed_verbatim` falls **15 → 14**; and
+`right_by_luck` falls **1 → 0** — not because the luck was converted into an answer, but
+because the mis-transcription is now refused before it can be lucky. **The two figures the
+receipt never nets have converged on the same fourteen: 14 of 15 matched, 14 of 15 answered
+the question actually asked.** Detecting it cost a point, which is the correct direction. A
+run that still read 15/15 would be the flattering number, and it was the one worth losing.
+
+The counterfactual is why this was worth a product change rather than a footnote. `cust_email`
+exists, so the wrong question got a right-looking answer. Had the column *not* existed, the
+schema checker would have returned a confident **Contradicted** about a claim nobody made —
+a Supported↔Contradicted error, which `benchmark/README.md` names as the worst thing this
+product can do.
 
 ### The write-back failed, and the repair path is what fixed it
 
@@ -240,10 +341,12 @@ never will.**
 
 ### The two predictions that failed, failed in Attest's favour
 
-Both are recorded below. Briefly: no URN was garbled (15/15 verbatim, including hex-UUID
-Tableau URNs), and **zero** explanations fell back to the template — though the polarity
-guard rejected 4 first drafts, which then passed on retry. The guard is doing real work on
-foreign evidence, and the second attempt is enough.
+Both are recorded below. Briefly: no URN was garbled (**15/15 verbatim in the baseline run**,
+including hex-UUID Tableau URNs — the current run reads 14/15 only because `ext-class-01` is
+now refused before it produces an extracted URN at all, not because one was mangled), and
+**zero** explanations fell back to the template. The polarity guard rejected 4 first drafts,
+which then passed on retry. The guard is doing real work on foreign evidence, and the second
+attempt is enough.
 
 ### Two claims reached `STOOD_FIRM` on a catalog nobody wrote for us
 
@@ -275,19 +378,33 @@ Two datasets, two freshness claims about **the same** dataset with **opposite** 
 coexisting as distinct artifacts. That is the §10 thesis — one claim, one artifact — holding
 on a catalog it was not designed against.
 
-**`history_length` is 3 on each, and that is not a defect.** The trial was run three times
-during development against the same catalog. The artifact URN is derived from the claim's
-content, so every run appended to the **same** artifact rather than minting a new one, and
-each verdict event is keyed by its own run's timestamp. Three real audits, three recorded
-events, none overwriting another — the append-only history doing precisely what §10 built it
-for, demonstrated by accident.
+**In the baseline run `history_length` was 3 on each, and that was not a defect.** The trial
+had been run three times during development against the same catalog. The artifact URN is
+derived from the claim's content, so every run appended to the **same** artifact rather than
+minting a new one, and each verdict event is keyed by its own run's timestamp. Three real
+audits, three recorded events, none overwriting another — the append-only history doing
+precisely what §10 built it for, demonstrated by accident.
+
+**In the current run it is 1, and the three artifact URNs are byte-for-byte the same three.**
+`just reset` cleared the catalog between the two runs, so the history restarted; the URNs did
+not move, because they are derived from claim content and nothing about these three claims
+changed. That is the content-addressing property stated as a prediction in §10 and observed
+across a full catalog teardown.
+
+**And the write-back failure recurred.** All three claims again failed at `report` on the
+first attempt — `published_on_first_attempt: 0` in the current receipt — and all three again
+came good through the unchanged repair path. A landmine that fires on both runs of a
+bulk-loaded catalog and on neither run of the seeded one is not an anomaly, it is the
+property of the environment.
 
 ---
 
 ## The predictions, made before the run
 
 Recorded in the runner before anything executed, and preserved in the receipt verbatim.
-Reporting the misses is the point.
+Reporting the misses is the point. These four were predeclared for the **baseline** run and
+are reported against it; the current run predeclared its own hypothesis, about the
+`CorpGroup` fix, and that one is [above](#it-is-fixed-now-and-the-order-is-the-argument).
 
 | | Prediction | Held? |
 | --- | --- | --- |
@@ -341,9 +458,16 @@ Stated plainly, because naming the boundary is what makes the rest worth reading
   now, so `ext-fresh-01` and `ext-fresh-02` were chosen with windows far from their
   boundaries (24h against 4530h; 17520h against 4530h) and will hold for years — but they are
   not timeless, and a receipt is a point-in-time measurement.
-- **`just discover` fails while this catalog is loaded**, because its live test asserts a
+- **The aspect-coverage survey has not been re-run since the fix.** Every `/52` figure above
+  describes the datasets readable *before* the `CorpGroup` arm; the 15 it recovered have not
+  been surveyed for which aspects they carry. The census measured readability, not coverage,
+  and producing 67-denominators is a separate receipted job.
+- **`just discover` failed while this catalog was loaded**, because its live test asserts a
   seeded URN is in the top 10 search hits and then resolves every hit over GraphQL — which
-  now includes group-owned dbt datasets that raise. Expected, and cleared by `just reset`.
+  included group-owned dbt datasets that raised. That specific cause is the gap closed above,
+  so it should no longer fire — but **it has not been re-run with this catalog loaded**, and
+  "the cause we named is fixed" is not the same claim as "the test passes". `just reset`
+  clears it either way.
 
 ---
 
@@ -353,6 +477,7 @@ Stated plainly, because naming the boundary is what makes the rest worth reading
 just up                    # DataHub Core v1.5.0.6
 just external-ingest       # download (checksum-pinned), filter for Core, ingest
 just external-trial        # the 15 claims through the real pipeline. ~$0.008
+just external-census       # all 67 datasets, with and without the CorpGroup arm. Free.
 just external-trial --dry-run   # resolve every target, print what the catalog holds. Free.
 just external-ingest --plan     # report what Core refuses; ingest nothing. Free.
 ```
@@ -360,5 +485,9 @@ just external-ingest --plan     # report what Core refuses; ingest nothing. Free
 `just reset` returns the catalog to the seeded state, and removes everything this trial
 ingested and published.
 
-Every figure in this document opens in
-[`docs/external-trial/results.json`](external-trial/results.json).
+Every current figure in this document opens in
+[`results-after-corpgroup.json`](external-trial/results-after-corpgroup.json) or
+[`census-after-corpgroup.json`](external-trial/census-after-corpgroup.json). Figures
+attributed to the baseline run open in
+[`results.json`](external-trial/results.json), which is kept **unedited** — it is the "before"
+half of a before/after pair, and a before that gets tidied to match the after is not evidence.

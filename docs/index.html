@@ -246,7 +246,7 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
         <div class="l">verdicts decided by a model</div>
       </div>
       <div class="stat">
-        <div class="v"><span class="num" data-final="16">16</span>/16</div>
+        <div class="v"><span class="num" data-final="17">17</span>/17</div>
         <div class="l">seeded datasets where the MCP read diverges from the GraphQL one — measured, then written up</div>
       </div>
       <div class="stat">
@@ -345,18 +345,18 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
       <span class="sep" aria-hidden="true">·</span>
       <span>metadata we didn’t author</span>
     </div>
-    <p>Every number above was measured against a catalog we wrote, with labels applying a policy we wrote. The benchmark says that about itself, and it is the honest weak point. So Attest was also run against <strong>DataHub’s own <span class="k">showcase-ecommerce</span> datapack</strong> — 67 datasets over 7 platforms, metadata nobody here wrote a line of. Fifteen claims, $0.0077, 117 seconds.</p>
+    <p>Every number above was measured against a catalog we wrote, with labels applying a policy we wrote. The benchmark says that about itself, and it is the honest weak point. So Attest was also run against <strong>DataHub’s own <span class="k">showcase-ecommerce</span> datapack</strong> — 67 datasets over 7 platforms, metadata nobody here wrote a line of. Fifteen claims, $0.0077.</p>
     <p>Nothing in it is scored: no accuracy, no macro-F1, no confusion matrix. The golden benchmark is a conformance gate where 100% is the expected result, and importing that apparatus onto fifteen unlabelled claims on a foreign catalog would measure nothing. The question was narrower — does Attest produce defensible verdicts against metadata it did not design, and where does it hit its own limits? It found one before a single audit ran.</p>
     <div class="fail-grid">
       <div class="fail">
-        <h3>15 OF 67 DATASETS UNAUDITABLE</h3>
+        <h3>15 OF 67 UNAUDITABLE — THEN CLOSED, AND RE-MEASURED</h3>
         <p class="claim">A gap our own seed could never expose.</p>
-        <p>Attest’s GraphQL query has no <span class="k">CorpGroup</span> arm, so a group-owned dataset arrives with an empty owner object and every claim about it is refused. The guard failed <em>closed</em>, which is correct. Its diagnosis — <em>malformed catalog response</em> — is wrong: the response is fine, the query is incomplete, and Attest cannot tell the difference. No test here could have caught it. The seed emits <span class="k">corpuser</span> owners exclusively, so the offline tier, the live tier and the 12-cell matrix are all green and the gap is invisible from inside. Documented, not fixed: a fix resting on the same seed that hid it is not a fix.</p>
+        <p>Attest’s GraphQL query had no <span class="k">CorpGroup</span> arm, so a group-owned dataset arrived with an empty owner object and every claim about it was refused. The guard failed <em>closed</em>, which is correct. Its diagnosis — <em>malformed catalog response</em> — was wrong: the response is fine, the query was incomplete, and Attest could not tell the difference. No test here could have caught it. The seed emitted <span class="k">corpuser</span> owners exclusively, so the offline tier, the live tier and the 12-cell matrix were all green and the gap was invisible from inside. It is now closed, and closed <em>seed-first</em>: a group-owned dataset was seeded before the query arm was added, so the fix does not rest on the same seed that hid the problem. The close is measured rather than asserted — a two-arm census over one loaded catalog reads <strong>67/67 readable with the arm and 52/67 without it</strong>, 15 recovered, 0 still refused, 0 regressed.</p>
       </div>
       <div class="fail">
-        <h3>ONE CLAIM WAS RIGHT BY LUCK</h3>
-        <p class="claim">Counted correct, and named.</p>
-        <p>A sentence about a column’s glossary label came back from the decomposer as a <em>schema</em> claim, dropping the term URN entirely. The schema checker then answered a question nobody asked — <em>does this column exist?</em> — and returned the verdict the trial expected. So the receipt carries two figures and never nets them: <strong>15/15 outcomes matched what was predeclared</strong>, fourteen assessments and one expected <span class="k">ClaimError</span>, which is not a verdict — and <strong>14 of the 15 answered the question actually asked</strong>. Banking the other one would flatter a broken decomposer.</p>
+        <h3>ONE CLAIM WAS RIGHT BY LUCK — NOW REFUSED</h3>
+        <p class="claim">Detecting it cost a point, which is the correct direction.</p>
+        <p>A sentence about a column’s glossary label came back from the decomposer as a <em>schema</em> claim, dropping the term URN entirely. The schema checker then answered a question nobody asked — <em>does this column exist?</em> — and returned the verdict the trial expected. It was banked as a match and named as luck. A deterministic family guard now refuses that transcription outright, as <span class="k">No-Claim</span>, before any checker sees it. So the two figures the receipt never nets have converged rather than improved: <strong>14 of 15 outcomes matched what was predeclared, and 14 of 15 answered the question actually asked</strong> — the same fourteen. The match count <em>fell</em> from 15 to 14 because a lucky match became a visible refusal. That is the number getting more honest, not the system getting worse.</p>
       </div>
     </div>
     <p style="margin-top:36px">The catalog is a near-miss on all three PII signals Attest recognises: a glossary term named literally <span class="k">PII</span>, filed under a node called <span class="k">Classification</span>; <span class="k">contains_pii</span> where the policy names <span class="k">hasPII</span>; and no completeness marker anywhere. So a column named <span class="k">cust_email</span>, carrying a term whose own description reads “Subject to PII handling requirements”, comes back Insufficient-Coverage where a person would say PII. That is a declared position — structure is a declaration, a name is a guess — meeting a real catalog. The trial does not resolve it. It shows the price, with a receipt.</p>
@@ -364,7 +364,7 @@ footer .row{display:flex;flex-wrap:wrap;gap:12px 28px;font-family:var(--mono);fo
       <p class="ck">What this does not prove</p>
       <p class="muted">One small curated datapack is not “works in production”, fifteen claims are not a sample of anything, and the claims were still written by the same person who wrote the checkers — the trial moves the catalog outside our control, not the claims.</p>
     </div>
-    <p class="muted" style="margin-top:26px;font-size:15px"><a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial.md">The write-up</a>, and <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial/results.json">the receipt every figure opens in</a>.</p>
+    <p class="muted" style="margin-top:26px;font-size:15px"><a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial.md">The write-up</a>, and the receipts every figure opens in — <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial/results-after-corpgroup.json">the trial</a> and <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial/census-after-corpgroup.json">the two-arm census</a>. The pre-fix run is kept as <a href="https://github.com/Asembris/Attest/blob/main/docs/external-trial/results.json">the superseded baseline</a>, unedited, so the before/after pair has a before.</p>
   </div>
 </section>
 

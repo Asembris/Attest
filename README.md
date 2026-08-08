@@ -255,7 +255,7 @@ Every number here is a committed JSON artifact you can open. None is typed by ha
 | **Full pipeline**, prose in, 40 cases | accuracy **1.0**, macro-F1 **1.0**, **40/40** extractions exact with **0** extras and **0** duplicates, **39/40** model-authored explanations, **1** template fallback, **5** guard rejections, **$0.0153102**, pass@3 = 1.0 | [`full.json`](benchmark/results/full.json) · `just bench-full` |
 | **Sabotage** — one checker broken on purpose | accuracy **0.675**, macro-F1 **0.668**, Supported precision **0.536**, **13** errors named | [`core-sabotaged-classification.json`](benchmark/results/core-sabotaged-classification.json) · `just bench-sabotage` |
 | **Cross-family labels** (Nemotron, Llama family) | **39/40 agreement (97.5%)**, 1 disputed | [`calibration.json`](benchmark/results/calibration.json) · `just bench-calibrate` |
-| **External trial** — a catalog we did **not** author, **not scored** | 15 claims, **15/15** outcomes matched the pre-run reading — 14 assessments plus one expected `ClaimError`, which is not a verdict — but only **14/15** answered the question asked; **15/15** URNs verbatim, **0** template fallbacks, **$0.0077** — and **15 of 67 datasets unauditable** | [`results.json`](docs/external-trial/results.json) · `just external-trial` |
+| **External trial** — a catalog we did **not** author, **not scored** | 15 claims, **14/15** outcomes matched the pre-run reading and **14/15** answered the question asked — the same fourteen. The 15th is the case that used to be right by luck; a family guard now refuses it as `No-Claim`, so the match count **fell** 15 → 14 while nothing got worse. **14/15** URNs verbatim, **0** template fallbacks, **$0.0077** — and **0 of 67 datasets unauditable**, measured both ways | [`results-after-corpgroup.json`](docs/external-trial/results-after-corpgroup.json) · [`census-after-corpgroup.json`](docs/external-trial/census-after-corpgroup.json) · `just external-trial` |
 
 **100% is a conformance gate, not a capability score — and it must be read that way.** The checkers
 are deterministic code implementing exactly the rules the labels encode, so anything below 100% is a
@@ -275,10 +275,16 @@ methodology and denominators: [`benchmark/README.md`](benchmark/README.md).
 
 **The first of those is the one we went after.** Attest was also run against a catalog nobody here
 wrote — DataHub's own `showcase-ecommerce` datapack, 67 datasets over 7 platforms — and it found a
-gap our own seed could never expose: **15 of those 67 datasets are unauditable**, because Attest's
-GraphQL query has no `CorpGroup` arm and the seed only ever emits `CorpUser` owners. The guard
-failed *closed*, which is correct, with a *wrong diagnosis*, which is not. That row is not a score
-and is deliberately not scored: [docs/external-trial.md](docs/external-trial.md).
+gap our own seed could never expose: **15 of those 67 datasets were unauditable**, because Attest's
+GraphQL query had no `CorpGroup` arm and the seed only ever emits `CorpUser` owners. The guard
+failed *closed*, which is correct, with a *wrong diagnosis*, which is not.
+
+**That gap is now closed, and closed seed-first** — a group-owned dataset was seeded *before* the
+`... on CorpGroup` arm was added, so the fix does not rest on the same seed that hid the problem.
+The close is measured rather than asserted: a two-arm census over one loaded catalog state reads
+**67/67 readable with the arm and 52/67 without it**, 15 recovered, 0 still refused, 0 regressed.
+That row is not a score and is deliberately not scored:
+[docs/external-trial.md](docs/external-trial.md).
 
 ## Engaging with the MCP Server
 
@@ -560,10 +566,10 @@ wrong verdict has the same confident shape as a right one.
 | | |
 | --- | --- |
 | [benchmark/README.md](benchmark/README.md) | The golden benchmark: 40 hand-labeled claims, methodology, denominators, and why not RAGAS/DeepEval. |
-| [docs/external-trial.md](docs/external-trial.md) | Attest against a catalog it did **not** author: 15 claims over DataHub's showcase datapack, the `CorpGroup` gap the seed could never expose, and what one small external catalog does not prove. |
+| [docs/external-trial.md](docs/external-trial.md) | Attest against a catalog it did **not** author: 15 claims over DataHub's showcase datapack, the `CorpGroup` gap the seed could never expose — found, then closed seed-first and re-measured — and what one small external catalog does not prove. |
 | [docs/architecture.md](docs/architecture.md) | Trust boundaries, the PII policy, the graph, the guards, resume, and the cost projection. |
 | [docs/deployment.md](docs/deployment.md) | The deployment shape, the reset design, the measured bring-up numbers, and the smoke test. |
-| [docs/mcp-evaluation.md](docs/mcp-evaluation.md) | Engaging the MCP Server: the adapter, the 16-dataset parity run, the verdict table, and why the verdict read stays on GraphQL. |
+| [docs/mcp-evaluation.md](docs/mcp-evaluation.md) | Engaging the MCP Server: the adapter, the 17-dataset parity run, the verdict table, and why the verdict read stays on GraphQL. |
 | [docs/upstream/](docs/upstream/) | Three issue write-ups for `acryldata/mcp-server-datahub`, each with a reproduction against 0.6.0 — two filed ([#169](https://github.com/acryldata/mcp-server-datahub/issues/169), [#168](https://github.com/acryldata/mcp-server-datahub/issues/168)), one with a fix proposed at [PR #182](https://github.com/acryldata/mcp-server-datahub/pull/182) (open), the third deliberately kept as a draft. |
 | [docs/datahub-setup.md](docs/datahub-setup.md) | The version pin, the seed, and the environment landmines. |
 | [docs/design/claim-artifact.md](docs/design/claim-artifact.md) | The claim-artifact design, and the probe it was measured against. |

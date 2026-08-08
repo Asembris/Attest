@@ -2556,7 +2556,6 @@ prompt, no frontend and no doc changed.**
 | Item | Today | Why deferred |
 | --- | --- | --- |
 | **Semantic glossary-term matching** | A term implies PII iff it is *filed under the PII node*. A term nobody filed there implies nothing, however personal it reads. **MEASURED IN THE WILD (§23):** an external catalog files `Email_Address` under no node at all, with a description reading "Subject to PII handling requirements", and `cust_email` therefore returns Insufficient-Coverage where a human says PII. | Deciding that an unfiled term *entails* a classification is semantic entailment — the LLM layer's job, evidence-constrained. Structure is a declaration; a name is a guess. The external trial measures the price of that position; it does not change it. |
-| **`CorpGroup` owners cannot be read at all** (§23) | `client.DATASET_QUERY` has only a `... on CorpUser` arm, so a group-owned dataset returns `{"owner": {}}`, `_urns` raises, and every claim about it is a `ClaimError`. **Measured: 15 of 67 datasets in an external catalog, unauditable.** Fails CLOSED (correct) with a wrong diagnosis — it blames the response, and the response is fine. | Found by the external trial days from submission, with **no fixture anywhere that exercises group ownership** — `generate_seed.py` emits `make_user_urn` owners exclusively, which is exactly why nothing caught it. Fixing the read on the strength of the same seed that hid the problem is the wrong trade. **Whoever fixes it must add a group-owned seed dataset FIRST**, then the `... on CorpGroup` arm, then re-capture the fixtures. |
 | **Ownership-type distinctions** | `ownershipType` (technical / business / steward) is ignored; any listed owner satisfies an ownership claim. | "Alice is the *business* owner" is a strictly stronger claim. Checking it needs the role in the claim schema — a schema change, not an `if`. |
 | **Cross-dialect type equivalence** | Both DataHub type vocabularies match exactly; `int8` ~ `BIGINT` does not. | Needs a model of each platform's type system. |
 | **A step's `inputs` / `outputs` across a restart** | Not persisted, so a *replayed* step carries them empty. **The boundary is ASSERTED, not just documented:** `test_nothing_a_reader_sees_depends_on_a_step_s_inputs_or_outputs` strips the summaries out of a real run's trace and demands the record, the receipts, the summary and the trajectory verdict are all unmoved. | They are a log convenience, and nothing a reader sees may read them. If something ever does, a resumed run starts reporting something an unrestarted one does not — silently, only after a restart, with every other test green, because every other test runs in one process and never replays. That is the TLS bug's shape exactly, which is why this one is nailed down rather than trusted. The test is non-vacuous by construction: it first asserts a step summary is **truthy** (`cached: True`, which is why the fixture uses two claims over one dataset — a one-claim run leaves every summary falsy) and only then strips the summaries and demands the record, receipts, printable summary and trajectory verdict are all unmoved, so if a receipt or a trajectory rule began reading `step.outputs` the equality checks would go red. |
@@ -2566,6 +2565,39 @@ prompt, no frontend and no doc changed.**
 | **The claims explorer's dataset dropdown is still the STATIC seeded list** | `ClaimsExplorer` imports `seededDatasets` from `frontend/src/data/catalog.ts` — generated from `seed/ground_truth.json`, so it describes one seeded catalog and offers nothing a real DataHub holds. The URN picker moved to live search in §22; this dropdown did not. | Different component, different question: the picker names a dataset to AUDIT (unbounded — anything in the catalog), the dropdown names one to FILTER PUBLISHED CLAIMS about (bounded — only datasets Attest has already written to, which discovery cannot enumerate). Wiring search into it would offer a judge datasets with no artifacts and a listing that is honestly empty, which reads like a bug. The right fix is a facet over what the catalog actually holds claims for, and that is a retrieval-path change with its own tests — not something to slip in beside the picker. `catalog.ts` therefore stays, still used, rather than becoming dead code that lies. |
 | **The repair spinner fans out across a run** | `ClaimsExplorer` passes `retrying={retrying === claim.audit_run}`, so repairing one claim shows "Repairing…" on every claim from the same audit. | Cosmetic, and the same URN-vs-index shape as the write-back row below: `retryWriteback` is genuinely run-scoped, so the state is keyed by the thing the call actually takes. The fix is a per-claim key the wire type does not carry. |
 | **No BACKGROUND reconciler for a stale verdict tag** (on-read detection now ships — Session 21) | A crash between `report` and `tag` leaves a correct verdict that a tag-filtered search cannot find. It is recorded (`writeback_step`), and since Session 21 **detected on read from the artifact alone** (`RetrievedClaim.stale_tag`, surfaced in `GET /claims` and the UI, visible to a `store=None` reader), and repairable in one call. What is still deferred is a **background sweeper** that scans the catalog for stale tags unprompted. | A production deployment would want a periodic reconcile comparing each claim's latest run event against its verdict tag across the whole catalog. On-read detection covers the claim a reader is actually looking at; a daemon that sweeps for ones nobody asked about is more than this build ships, and it says so rather than shipping a sweeper nobody exercises. |
+
+**`CorpGroup` owners are now READ, and the ORDER this was fixed in is the precedent worth
+keeping.** §23 found it and deferred it: `client.DATASET_QUERY` had only a `... on CorpUser`
+arm, so a group-owned dataset returned `{"owner": {}}`, `_urns` raised, and every claim about
+it was a `ClaimError` — **15 of 67 datasets in an external catalog, unauditable**. The reason
+it was deferred was never that the fix was hard; it was that **no fixture anywhere exercised
+group ownership**, because `generate_seed.py` emitted `make_user_urn` owners exclusively —
+which is exactly why nothing caught it. So the deferral's own instruction was followed
+literally: **a group-owned seed dataset FIRST** (`analytics.platform.ingest_metrics`, owned by
+`urn:li:corpGroup:data-platform`), **then** the `... on CorpGroup { urn }` arm (`2d7eaf9`),
+**then** the fixtures re-captured. A fix whose correctness rests on the same seed that hid the
+problem is not a fix, and the sequence is what makes it one.
+
+**And the close is MEASURED, not asserted.** `spikes/external_census.py` (`just
+external-census`) walks all 67 external datasets twice over ONE loaded catalog state — the
+shipped query, and the same query with the `CorpGroup` line deleted — so before and after are
+not two runs on a moving catalog. Receipt `docs/external-trial/census-after-corpgroup.json`:
+**67/67 readable with the arm, 52/67 without**, 15 recovered, **0 still refused, 0
+regressed**. The hypothesis that the missing arm was the *sole* cause was written into the
+receipt BEFORE the census ran and explicitly **not** as an acceptance requirement — a
+surviving refusal would have been a finding, not a failure. `ext-own-04` moved `ClaimError` →
+**Supported** with the group URN named in its own evidence, which the receipt required
+because a `Supported` verdict alone could not show *which* change produced it.
+
+**What this does NOT retire is the seeded-catalog caveat itself.** A seed still cannot
+exercise a shape it never emits, and the next gap of this kind is invisible from inside for
+exactly the same reason. Also worth knowing: that census is what found the baseline receipt's
+`datasets_readable_by_attest: 52` / `datasets_refused: 15` were **hardcoded literals in
+`build_receipt`** that the 2026-08-04 run never measured. They now measure to exactly 52 and
+15 — which makes stating the provenance MORE important, not less, because a number that was
+right by accident is indistinguishable from one that was measured unless someone says which
+it was. Both fields are now `None` and `tests/test_external_evidence.py` fails if a literal
+returns.
 
 **Durable resume is now BUILT** (Session 5). A run parked at the human checkpoint survives
 the death of its process: the paused graph comes back from `SqliteSaver`, the typed ledger

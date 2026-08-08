@@ -13,6 +13,15 @@ dataset. All three are reproducible against `mcp-server-datahub` **0.6.0** + Dat
 **v1.5.0.6**, and all three are evidenced by [`spikes/mcp_reader_probe.py`](../../spikes/mcp_reader_probe.py)
 (`just spike-mcp`).
 
+> **The drafts quote the ORIGINAL 16-dataset measurement, and they are left that way
+> deliberately.** Drafts 1 and 2 were filed upstream on 2026-08-02 against a 16-dataset seed;
+> the parity run was re-taken on 2026-08-08 over a 17-dataset seed and now reads **136
+> mismatches over 17 datasets** ([`parity-17.json`](../mcp-evaluation/parity-17.json)). The
+> bodies here are not edited to match, because a repo copy that silently disagrees with what
+> maintainers are reading on the issue is worse than one that is dated. Neither total is
+> derived from the other — the denominators differ — and nothing in the mechanism, the root
+> cause or the proposed fix moved.
+
 | Draft | Title | Upstream | Confidence it is a defect |
 | --- | --- | --- | --- |
 | [1](issue-1-schema-field-data-loss.md) | Schema fields drop `type` and return tag/term display names instead of URNs | Filed: [#169](https://github.com/acryldata/mcp-server-datahub/issues/169) | **High.** The data is already in the response; `type` is commented out and its reader still exists. |
