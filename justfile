@@ -90,8 +90,13 @@ spike-claims:
 # Exits NON-ZERO, and is MEANT to: it is the receipt for why the catalog read is not on
 # MCP, so a green run here would mean the finding had expired and the decision is worth
 # revisiting. Needs `pip install mcp` and uvx; downloads the MCP server on first run.
-spike-mcp:
-    python spikes/mcp_reader_probe.py
+#
+# `--receipt <path>` writes the machine-readable parity artifact. It REFUSES to overwrite an
+# existing file and there is no --force, so a second run must name a second path and shows up
+# in `git status` -- which is what stops a measurement being repeated until it reads better.
+# The receipt is written BEFORE the non-zero exit, so the tripwire firing does not cost it.
+spike-mcp *ARGS:
+    python spikes/mcp_reader_probe.py {{ARGS}}
 
 # CATALOG DISCOVERY over the REAL MCP server: the picker's search, and the handoff. Launches
 # the actual mcp-server-datahub over stdio, searches the seeded catalog, and then fetches every
