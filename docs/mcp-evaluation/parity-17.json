@@ -1,0 +1,493 @@
+{
+  "what_this_is": "MCP-vs-GraphQL snapshot parity, re-measured over the current seed catalog. NOT a benchmark: nothing here is scored, and no accuracy, macro-F1 or confusion matrix is computed over it. GraphQL is the reference read; MCP is the transport under measurement. See docs/mcp-evaluation.md.",
+  "reproduce": "python spikes/mcp_reader_probe.py --receipt docs/mcp-evaluation/parity-17.json",
+  "provenance": {
+    "trial_commit": "7512903325e831906b63708b81282a3198f1f272",
+    "trial_tree_dirty": false,
+    "branch": "main",
+    "fix_under_test": "none. No product code is under test here: the transport, the normalizer and every comparison rule are unchanged from Session 17. What moved is the SEED (2d7eaf9 added a CorpGroup-owned dataset, 16 -> 17) and the probe's own error-flag reader.",
+    "datahub_core_version": "v1.5.0.6",
+    "datahub_gms_url": "http://localhost:8080",
+    "python": "3.12.0",
+    "generated_at": "2026-08-08T12:15:22.321375+00:00",
+    "mcp_server_datahub_version": "0.6.0",
+    "mcp_server_datahub_pin": "PARAMS --from, pinned deliberately",
+    "mcp_client_version": "1.16.0",
+    "mcp_server_handshake": "datahub v3.4.6",
+    "mcp_server_handshake_note": "FastMCP fills in its OWN version when the server does not set one, so this tracks fastmcp rather than mcp-server-datahub. The --from pin is the evidence for which server ran."
+  },
+  "methodology": {
+    "version": "parity-v1",
+    "enumeration": "every datasets[].urn in seed/ground_truth.json, in file order; the count is DERIVED from the manifest and never a literal",
+    "reference": "graphql",
+    "measured": "mcp",
+    "compared_fields": "dataset: name, platform, description, last_modified, owners, tags, terms, custom_properties, term_parents, fields-presence, column-set; per matched column: native_type, data_type, description, tags, terms",
+    "mismatch_unit": "one `!=` between the reference value and the measured value. A column-set divergence counts as ONE mismatch however many columns differ.",
+    "comparison_opportunity": "one executed comparison. Counted on the same traversal that counts mismatches, so the denominator cannot drift from the numerator. Columns present in the reference but absent from the measured snapshot are skipped by the traversal and contribute no opportunities -- their loss is already reported by the column-set mismatch.",
+    "absent_empty_rule": "None != () != {}. Absent, empty and malformed stay three distinct states (snapshot.py, CLAUDE.md Session 23).",
+    "pass_fail": "non-zero exit if any mismatch OR any verdict flip. Non-zero is BY DESIGN."
+  },
+  "census": {
+    "datasets_enumerated": 17,
+    "datasets_compared": 17,
+    "source": "seed/ground_truth.json",
+    "group_owned_urns": [
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.platform.ingest_metrics,PROD)"
+    ],
+    "urns": [
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_contact,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.payment_methods,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.product.device_telemetry,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.pipeline_scratch,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD)",
+      "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.platform.ingest_metrics,PROD)"
+    ]
+  },
+  "totals": {
+    "mismatches_total": 136,
+    "datasets_compared": 17,
+    "datasets_with_mismatches": 17,
+    "mean_mismatches_per_dataset": 8.0,
+    "comparison_opportunities_total": 491,
+    "mismatch_fraction": 0.276986,
+    "mismatch_fraction_note": "measured, not inferred: the denominator is the count of comparisons this run actually executed, tallied on the same traversal as the mismatches. It is NOT comparable to Session 17, which counted no denominator.",
+    "by_kind": {
+      "field.*": 106,
+      "last_modified": 16,
+      "custom_properties": 13,
+      "term_parents": 1
+    },
+    "verdict_flips": 4,
+    "verdict_cases": 5
+  },
+  "verdicts": [
+    {
+      "claim": "freshness: customer_profile within 48h",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "graphql": "Supported",
+      "mcp": "Insufficient-Coverage",
+      "flipped": true
+    },
+    {
+      "claim": "freshness: revenue_daily within 24h (stale by a year)",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+      "graphql": "Contradicted",
+      "mcp": "Insufficient-Coverage",
+      "flipped": true
+    },
+    {
+      "claim": "classification: customer_profile.email is PII",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "graphql": "Supported",
+      "mcp": "Contradicted",
+      "flipped": true
+    },
+    {
+      "claim": "classification: marketing_leads.work_email is an EmailAddress",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+      "graphql": "Supported",
+      "mcp": "Insufficient-Coverage",
+      "flipped": true
+    },
+    {
+      "claim": "schema: customer_profile.email is VARCHAR(255)",
+      "target_urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "graphql": "Supported",
+      "mcp": "Supported",
+      "flipped": false
+    }
+  ],
+  "per_dataset": [
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_profile,PROD)",
+      "name": "analytics.customers.customer_profile",
+      "group_owned": false,
+      "mismatches": 12,
+      "comparisons": 36,
+      "by_kind": {
+        "last_modified": 1,
+        "field.*": 11
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "field[customer_id].data_type: graphql='STRING' mcp=None",
+        "field[customer_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[customer_id].terms: graphql=('urn:li:glossaryTerm:CustomerIdentifier',) mcp=('Customer Identifier',)",
+        "field[email].data_type: graphql='STRING' mcp=None",
+        "field[email].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[email].terms: graphql=('urn:li:glossaryTerm:EmailAddress',) mcp=('Email Address',)",
+        "field[full_name].data_type: graphql='STRING' mcp=None",
+        "field[full_name].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[full_name].terms: graphql=('urn:li:glossaryTerm:PersonName',) mcp=('Person Name',)",
+        "field[signup_ts].data_type: graphql='TIME' mcp=None",
+        "field[is_active].data_type: graphql='BOOLEAN' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.customers.customer_contact,PROD)",
+      "name": "analytics.customers.customer_contact",
+      "group_owned": false,
+      "mismatches": 13,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "term_parents": 1,
+        "field.*": 10
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "term_parents: graphql={'urn:li:glossaryTerm:PhoneNumber': ('urn:li:glossaryNode:PII',), 'urn:li:glossaryTerm:EmailAddress': ('urn:li:glossaryNode:PII',), 'urn:li:glossaryTerm:CustomerIdentifier': ()} mcp={'urn:li:glossaryTerm:PhoneNumber': ('urn:li:glossaryNode:PII',), 'urn:li:glossaryTerm:EmailAddress': ('urn:li:glossaryNode:PII',)}",
+        "field[customer_id].data_type: graphql='STRING' mcp=None",
+        "field[customer_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[customer_id].terms: graphql=('urn:li:glossaryTerm:CustomerIdentifier',) mcp=('Customer Identifier',)",
+        "field[phone_number].data_type: graphql='STRING' mcp=None",
+        "field[phone_number].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[phone_number].terms: graphql=('urn:li:glossaryTerm:PhoneNumber',) mcp=('Phone Number',)",
+        "field[email].data_type: graphql='STRING' mcp=None",
+        "field[email].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[email].terms: graphql=('urn:li:glossaryTerm:EmailAddress',) mcp=('Email Address',)",
+        "field[verified_at].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.orders.orders_fact,PROD)",
+      "name": "analytics.orders.orders_fact",
+      "group_owned": false,
+      "mismatches": 9,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "field.*": 8
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "field[order_id].data_type: graphql='STRING' mcp=None",
+        "field[order_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[customer_id].data_type: graphql='STRING' mcp=None",
+        "field[customer_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[customer_id].terms: graphql=('urn:li:glossaryTerm:CustomerIdentifier',) mcp=('Customer Identifier',)",
+        "field[order_total].data_type: graphql='NUMBER' mcp=None",
+        "field[order_total].terms: graphql=('urn:li:glossaryTerm:Revenue',) mcp=('Revenue',)",
+        "field[order_ts].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.marketing.email_campaign_stats,PROD)",
+      "name": "analytics.marketing.email_campaign_stats",
+      "group_owned": false,
+      "mismatches": 8,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 6
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[campaign_id].data_type: graphql='STRING' mcp=None",
+        "field[campaign_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[recipient_email_hash].data_type: graphql='STRING' mcp=None",
+        "field[recipient_email_hash].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[opened].data_type: graphql='BOOLEAN' mcp=None",
+        "field[clicked].data_type: graphql='BOOLEAN' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.finance.revenue_daily,PROD)",
+      "name": "analytics.finance.revenue_daily",
+      "group_owned": false,
+      "mismatches": 6,
+      "comparisons": 26,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 4
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2025, 6, 16, 17, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[revenue_date].data_type: graphql='TIME' mcp=None",
+        "field[region].data_type: graphql='STRING' mcp=None",
+        "field[gross_revenue].data_type: graphql='NUMBER' mcp=None",
+        "field[gross_revenue].terms: graphql=('urn:li:glossaryTerm:Revenue',) mcp=('Revenue',)"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.raw_events,PROD)",
+      "name": "analytics.staging.raw_events",
+      "group_owned": false,
+      "mismatches": 5,
+      "comparisons": 26,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 3
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[event_id].data_type: graphql='STRING' mcp=None",
+        "field[payload].data_type: graphql='STRING' mcp=None",
+        "field[ingested_at].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.users,PROD)",
+      "name": "attest_db.public.users",
+      "group_owned": false,
+      "mismatches": 13,
+      "comparisons": 36,
+      "by_kind": {
+        "last_modified": 1,
+        "field.*": 12
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "field[user_id].data_type: graphql='STRING' mcp=None",
+        "field[user_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[email].data_type: graphql='STRING' mcp=None",
+        "field[email].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[email].terms: graphql=('urn:li:glossaryTerm:EmailAddress',) mcp=('Email Address',)",
+        "field[first_name].data_type: graphql='STRING' mcp=None",
+        "field[first_name].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[first_name].terms: graphql=('urn:li:glossaryTerm:PersonName',) mcp=('Person Name',)",
+        "field[last_name].data_type: graphql='STRING' mcp=None",
+        "field[last_name].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[last_name].terms: graphql=('urn:li:glossaryTerm:PersonName',) mcp=('Person Name',)",
+        "field[created_at].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.payment_methods,PROD)",
+      "name": "attest_db.public.payment_methods",
+      "group_owned": false,
+      "mismatches": 11,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 9
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[payment_method_id].data_type: graphql='STRING' mcp=None",
+        "field[payment_method_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[user_id].data_type: graphql='STRING' mcp=None",
+        "field[user_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[user_id].terms: graphql=('urn:li:glossaryTerm:CustomerIdentifier',) mcp=('Customer Identifier',)",
+        "field[card_last4].data_type: graphql='STRING' mcp=None",
+        "field[card_last4].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[billing_zip].data_type: graphql='STRING' mcp=None",
+        "field[billing_zip].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.support_tickets,PROD)",
+      "name": "attest_db.public.support_tickets",
+      "group_owned": false,
+      "mismatches": 9,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 7
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[ticket_id].data_type: graphql='STRING' mcp=None",
+        "field[ticket_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[user_id].data_type: graphql='STRING' mcp=None",
+        "field[user_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[user_id].terms: graphql=('urn:li:glossaryTerm:CustomerIdentifier',) mcp=('Customer Identifier',)",
+        "field[subject].data_type: graphql='STRING' mcp=None",
+        "field[opened_at].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.legacy_accounts,PROD)",
+      "name": "attest_db.public.legacy_accounts",
+      "group_owned": false,
+      "mismatches": 5,
+      "comparisons": 26,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 3
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2025, 6, 16, 17, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[account_id].data_type: graphql='STRING' mcp=None",
+        "field[email].data_type: graphql='STRING' mcp=None",
+        "field[closed_at].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.hr_headcount,PROD)",
+      "name": "attest_db.public.hr_headcount",
+      "group_owned": false,
+      "mismatches": 10,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 8
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[employee_id].data_type: graphql='STRING' mcp=None",
+        "field[employee_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[home_address].data_type: graphql='STRING' mcp=None",
+        "field[home_address].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[salary_usd].data_type: graphql='NUMBER' mcp=None",
+        "field[salary_usd].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[department].data_type: graphql='STRING' mcp=None",
+        "field[department].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.marketing_leads,PROD)",
+      "name": "attest_db.public.marketing_leads",
+      "group_owned": false,
+      "mismatches": 9,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 7
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[lead_id].data_type: graphql='STRING' mcp=None",
+        "field[lead_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[work_email].data_type: graphql='STRING' mcp=None",
+        "field[work_email].terms: graphql=('urn:li:glossaryTerm:EmailAddress',) mcp=('Email Address',)",
+        "field[contact_name].data_type: graphql='STRING' mcp=None",
+        "field[contact_name].terms: graphql=('urn:li:glossaryTerm:PersonName',) mcp=('Person Name',)",
+        "field[source_campaign].data_type: graphql='STRING' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.product.device_telemetry,PROD)",
+      "name": "analytics.product.device_telemetry",
+      "group_owned": false,
+      "mismatches": 5,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "field.*": 4
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "field[device_id].data_type: graphql='STRING' mcp=None",
+        "field[ip_address].data_type: graphql='STRING' mcp=None",
+        "field[app_version].data_type: graphql='STRING' mcp=None",
+        "field[seen_at].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.audit_log,PROD)",
+      "name": "attest_db.public.audit_log",
+      "group_owned": false,
+      "mismatches": 8,
+      "comparisons": 31,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 6
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[entry_id].data_type: graphql='STRING' mcp=None",
+        "field[entry_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[actor_email].data_type: graphql='STRING' mcp=None",
+        "field[actor_email].tags: graphql=('urn:li:tag:PII',) mcp=('PII',)",
+        "field[action].data_type: graphql='STRING' mcp=None",
+        "field[occurred_at].data_type: graphql='TIME' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.staging.pipeline_scratch,PROD)",
+      "name": "analytics.staging.pipeline_scratch",
+      "group_owned": false,
+      "mismatches": 5,
+      "comparisons": 26,
+      "by_kind": {
+        "custom_properties": 1,
+        "field.*": 4
+      },
+      "detail": [
+        "custom_properties: graphql={} mcp=None",
+        "field[batch_id].data_type: graphql='STRING' mcp=None",
+        "field[batch_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[row_count].data_type: graphql='NUMBER' mcp=None",
+        "field[status].data_type: graphql='STRING' mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:postgres,attest_db.public.external_report,PROD)",
+      "name": "attest_db.public.external_report",
+      "group_owned": false,
+      "mismatches": 2,
+      "comparisons": 10,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None"
+      ]
+    },
+    {
+      "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.platform.ingest_metrics,PROD)",
+      "name": "analytics.platform.ingest_metrics",
+      "group_owned": true,
+      "mismatches": 6,
+      "comparisons": 26,
+      "by_kind": {
+        "last_modified": 1,
+        "custom_properties": 1,
+        "field.*": 4
+      },
+      "detail": [
+        "last_modified: graphql=datetime.datetime(2026, 8, 7, 11, 43, 21, 137000, tzinfo=datetime.timezone.utc) mcp=None",
+        "custom_properties: graphql={} mcp=None",
+        "field[run_id].data_type: graphql='STRING' mcp=None",
+        "field[run_id].tags: graphql=('urn:li:tag:NonPII',) mcp=('NonPII',)",
+        "field[rows_loaded].data_type: graphql='NUMBER' mcp=None",
+        "field[started_at].data_type: graphql='TIME' mcp=None"
+      ]
+    }
+  ],
+  "historical": {
+    "session": 17,
+    "result": "130 mismatches over 16 datasets",
+    "mismatches_total": 130,
+    "datasets_compared": 16,
+    "datasets_with_mismatches": 16,
+    "receipt": null,
+    "receipt_note": "prose-only. The Session 17 probe wrote no receipt; the number lives in this file's docstring and in docs/mcp-evaluation.md. This is the first machine-readable parity receipt, so there is no baseline file to hash.",
+    "described_in": "docs/mcp-evaluation.md",
+    "seed_note": "measured over a 16-dataset seed. The 17th (analytics.platform.ingest_metrics, CorpGroup-owned) arrived with 2d7eaf9, so the two runs do not share a denominator and neither total may be derived from the other by arithmetic."
+  }
+}
