@@ -1,7 +1,15 @@
-// The seeded DataHub catalog, for the Hero URN autocomplete. Generated from
-// seed/ground_truth.json (the same manifest the seed writes, the capture reads, and the
-// anti-drift pin holds to GMS) -- so the URNs offered here are exactly the ones the live
-// backend can resolve. Regenerate when the seed changes.
+// The seeded DataHub catalog, feeding ONE control: the dataset filter in ClaimsExplorer.
+// It is NOT the Hero URN picker (that searches the live catalog over MCP), and it is NOT a
+// fallback for that search -- answering a failed search from this file would show a human a
+// "catalog" that is a build artifact, which `just e2e-sabotage` exists to keep red.
+//
+// HAND-MAINTAINED against the committed snapshots in tests/fixtures/snapshots/ (one per
+// seeded dataset, held equal to live GMS by test_fixture_drift.py). There is no generator.
+// Update it when the seed changes; tests/test_frontend_catalog.py fails if you do not.
+//
+// `owner` is inert UI metadata -- only `urn` and `name` are rendered. A CorpUser owner is
+// carried as a bare id (`alice.chen`); a CorpGroup owner as its canonical URN
+// (`urn:li:corpGroup:data-platform`), so a team is never displayed as if it were a person.
 
 export interface SeededDataset {
   urn: string;
@@ -106,5 +114,11 @@ export const seededDatasets: SeededDataset[] = [
     "name": "attest_db.public.external_report",
     "platform": "postgres",
     "owner": "bob.martinez"
+  },
+  {
+    "urn": "urn:li:dataset:(urn:li:dataPlatform:snowflake,analytics.platform.ingest_metrics,PROD)",
+    "name": "analytics.platform.ingest_metrics",
+    "platform": "snowflake",
+    "owner": "urn:li:corpGroup:data-platform"
   }
 ];
