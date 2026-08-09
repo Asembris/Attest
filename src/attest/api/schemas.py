@@ -328,9 +328,11 @@ class ClaimView(BaseModel):
     )
     history: tuple[VerdictEventView, ...] = Field(
         default=(),
-        description="Every verdict this claim has ever had, newest first. Append-only. "
-        "Capped at 50 events per read; when `history_truncated` is true, the OLDEST are not "
-        "in this list.",
+        description="This claim's verdict events, newest first. Events are append-only in "
+        "DataHub, which keeps all of them; Attest currently retrieves at most 50 per read, "
+        "with `history_total` and `history_truncated` exposing when older events exist. "
+        "When `history_truncated` is true the OLDEST are missing from this list, never from "
+        "the catalog.",
     )
     history_total: int = Field(
         default=0,

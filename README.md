@@ -122,7 +122,9 @@ hidden. The listing **paginates and round-trips the catalog's total**, so a clai
 cap is *named* as truncated rather than silently absent — and one level down, a claim's verdict
 history is read **newest-50-first** (`runEvents(limit: 50)`), with the catalog's own total
 round-tripped beside it, so a longer history reads as `history_truncated` rather than as the whole
-story. The **storage** is append-only and unbounded; this **reader** is bounded, and it says so. An
+story. The **storage** is append-only and unbounded; this **reader** is bounded, and it says so —
+including the `reviewer` and `since` filters, which are evaluated over that same newest-50 window, so
+on a claim whose `history_truncated` is true an older matching event is not visible to them. An
 Insufficient-Coverage verdict's evidence round-trips as **absence** — a `null` that stays `null`,
 never collapsed to empty — because for that verdict the catalog's silence *is* the evidence. And a
 **stale verdict tag is detected from the artifact alone**, so a store-less reader sees it too. What

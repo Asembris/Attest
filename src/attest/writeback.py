@@ -767,7 +767,12 @@ class VerdictEvent:
 
 @dataclass(frozen=True)
 class ClaimArtifact:
-    """One claim as the catalog holds it: what it asserts, and every verdict it has had.
+    """One claim as the catalog holds it: what it asserts, and its verdict events.
+
+    DataHub holds the verdict events append-only and keeps every one of them; `history` is
+    what THIS read returned, which is the newest 50 (`runEvents(limit: 50)`). `history_total`
+    is the catalog's own count and `history_truncated` says when older events exist — in the
+    catalog, never absent from it. Nothing here deletes or supersedes an event.
 
     `complete` is False when the artifact exists but carries no verdict — the write got as
     far as the claim and not as far as the verdict. It is NOT a claim the catalog declined
@@ -879,12 +884,16 @@ def read_dataset_claims(client: DataHubClient, dataset_urn: str) -> tuple[ClaimA
     """Every Attest claim on a dataset, from DataHub alone. THE THESIS QUERY.
 
     This is the answer to "show me what the next agent inherits": every claim ever made
-    about this dataset, what it asserted, at what grain, and every verdict it has ever had —
-    with no Attest process running and no access to Attest's store.
+    about this dataset, what it asserted, at what grain, and its verdict history — with no
+    Attest process running and no access to Attest's store.
 
-    `limit=None`: the thesis query returns EVERYTHING on the dataset, paginating past the
+    `limit=None`: the thesis query returns EVERY CLAIM on the dataset, paginating past the
     50-item page. A capped "everything" would be the silent-absence bug this helper is the
     whole point of avoiding.
+
+    The two limits are INDEPENDENT and only the first is lifted here: the claim listing
+    paginates to exhaustion, while each claim's verdict events come back newest-50 per read
+    (see `ClaimArtifact.history_truncated`). DataHub keeps the older events either way.
     """
     nodes, _total = client.list_dataset_assertions(dataset_urn, limit=None)
     return tuple(
