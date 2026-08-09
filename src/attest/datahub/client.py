@@ -637,7 +637,7 @@ class DataHubClient:
         """Claim artifacts on a dataset, up to `limit`, PLUS the catalog's own total.
 
         THE THESIS QUERY. This is what a second agent inherits from DataHub alone — every
-        claim ever made about this dataset, what it asserted, and every verdict it has had.
+        claim ever made about this dataset, what it asserted, and its verdict history.
         Note it is a relationship read off the dataset, NOT a search: search cannot scope
         assertions to a dataset at all (no assertee field is indexed), so this is the only
         way to ask the question. See docs/design/claim-artifact.md §5.
@@ -646,6 +646,11 @@ class DataHubClient:
         returns `(nodes, total)`. `limit=None` fetches every claim on the dataset — the
         honest reading of "everything the next agent inherits". The `total` is round-tripped
         so a truncated page (`len(nodes) < total`) is never mistaken for a complete one.
+
+        `limit` bounds the CLAIM listing only. Each claim's verdict events are bounded
+        separately and are NOT paginated: the fragment asks `runEvents(limit: 50)`, so a
+        claim audited more than 50 times comes back with its newest 50 and the catalog's own
+        `total` beside them. The older events stay in DataHub; this read does not return them.
         """
         nodes: list[dict[str, Any]] = []
         total = 0

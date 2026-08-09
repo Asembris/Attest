@@ -67,8 +67,11 @@ and NOT a hole in the thesis:
     completely and unambiguously, forever. The ambiguity exists only for a claim written
     seconds ago or written wrongly — never for the catalog's settled contents.
   * **The thesis question does not touch it.** *"Show me what the next agent inherits"* is
-    `dataset.assertions(urn)` returning claims with their verdicts and full history — one
-    server-side query, no Attest process, no ambiguity. What a second agent cannot do is
+    `dataset.assertions(urn)` returning every claim with its verdict history — server-side,
+    no Attest process, no ambiguity. (The claim listing paginates to exhaustion; each
+    claim's events come back newest-50 per read, with the catalog's own total beside them
+    and `history_truncated` naming the cut. DataHub keeps the rest.) What a second agent
+    cannot do is
     diagnose Attest's own half-finished write, which is Attest's problem to report and not
     a fact the catalog owes anyone.
 
@@ -486,11 +489,17 @@ class ClaimReader:
             # (INCOMPLETE, or lagging) matches no verdict filter: it has none to match.
             if artifact.verdict != query.verdict:
                 return False
+        # BOTH predicates below scan `artifact.history`, which is the RETRIEVABLE NEWEST-50
+        # window (`runEvents(limit: 50)`), not the catalog's whole event log. So on a claim
+        # with `history_truncated` set, a matching event older than that window is not
+        # visible here and the claim is not returned. The events are still in DataHub;
+        # lifting this needs timeseries pagination, which is deferred and documented in the
+        # README rather than papered over. Bounded, and named.
         if "reviewer" in local and not any(
             e.reviewer == query.reviewer for e in artifact.history
         ):
-            # ANY verdict in the history, not just the latest: "what did alice sign off"
-            # is a question about the whole history, and a reviewer whose verdict was later
+            # ANY verdict in that window, not just the latest: "what did alice sign off" is
+            # a question about the history, and a reviewer whose verdict was later
             # superseded still signed it.
             return False
         if "since" in local and query.since is not None:
