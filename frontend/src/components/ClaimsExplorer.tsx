@@ -184,7 +184,8 @@ export default function ClaimsExplorer({ onBack }: { onBack: () => void }) {
             <p className="mt-6 max-w-[64ch] text-base lg:text-[17px] font-light leading-relaxed text-ink-300">
               Every claim below is read out of <span className="text-ink-50">DataHub</span> — not out
               of Attest's audit history. One durable artifact per claim, carrying what was asserted,
-              at what grain, and every verdict it has ever had. This is exactly what a second agent
+              at what grain, and its verdict history — the newest 50 events, with the catalog's own
+              total beside them. This is exactly what a second agent
               gets from the catalog <span className="text-ink-50">with no Attest process running</span>.
             </p>
           </Reveal>
